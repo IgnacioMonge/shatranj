@@ -236,6 +236,7 @@ MQTT PUBACK is not treated as a game acknowledgement. Shatranj uses application-
 ## Acknowledgements
 
 - **BRRY pieces**: based on [Chess Pieces 16x16 One-bit](https://berryarray.itch.io/chess-pieces-16x16-one-bit) by [BerryArray](https://berryarray.itch.io).
+- **SPCY pieces**: based on [Chess Pieces](https://spicygame.itch.io/chess-pieces) by [Spicy Game](https://spicygame.itch.io).
 - **PIXL pieces**: based on [Pixel Art Chess Pieces](https://benrosen.github.io/posts/pixel-art-chess-pieces/) by [Ben Rosen](https://benrosen.github.io).
 - **Ikkle font**: [Ikkle 4](https://www.dafont.com/es/ikkle-4.font) by Brixdee, used as the basis for the compact Spectrum UI text.
 - **mcu-max**: MIT-licensed low-resource chess engine by [Gissio](https://github.com/Gissio), kept under `third_party/mcu-max` with its upstream license.

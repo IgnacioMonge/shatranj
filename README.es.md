@@ -230,6 +230,7 @@ El PUBACK de MQTT no cuenta como acknowledgement de partida. Shatranj usa ACK/NA
 ## Agradecimientos
 
 - **Piezas BRRY**: basadas en [Chess Pieces 16x16 One-bit](https://berryarray.itch.io/chess-pieces-16x16-one-bit) de [BerryArray](https://berryarray.itch.io).
+- **Piezas SPCY**: basadas en [Chess Pieces](https://spicygame.itch.io/chess-pieces) de [Spicy Game](https://spicygame.itch.io).
 - **Piezas PIXL**: basadas en [Pixel Art Chess Pieces](https://benrosen.github.io/posts/pixel-art-chess-pieces/) de [Ben Rosen](https://benrosen.github.io).
 - **Fuente Ikkle**: [Ikkle 4](https://www.dafont.com/es/ikkle-4.font) de Brixdee, usada como base para el texto compacto de la UI Spectrum.
 - **mcu-max**: motor de ajedrez para sistemas de pocos recursos, con licencia MIT, de [Gissio](https://github.com/Gissio); se conserva en `third_party/mcu-max` con su licencia upstream.
