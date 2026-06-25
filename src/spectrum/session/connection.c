@@ -1,0 +1,1 @@
+typedef char netchesszx_session_connection_empty_t;

@@ -1,0 +1,63 @@
+#ifndef NETCHESSZX_SPECTRUM_OVERLAY_H
+#define NETCHESSZX_SPECTRUM_OVERLAY_H
+
+#include <stdint.h>
+#include "spectrum/overlay/overlay_context.h"
+
+#define SPECTRUM_OVL_RULES 0u
+#define SPECTRUM_OVL_RULES_PLAY 0u
+#define SPECTRUM_OVL_RULES_CHECK 1u
+#define SPECTRUM_OVL_BOARD 1u
+#define SPECTRUM_OVL_BOARD_APPLY 0u
+#define SPECTRUM_OVL_GUI_LOG 2u
+#define SPECTRUM_OVL_GUI_LOG_ADD_MOVE 0u
+#define SPECTRUM_OVL_GUI_LOG_ADD_CHAT 1u
+#define SPECTRUM_OVL_APP_INPUT SPECTRUM_OVL_GUI_LOG
+#define SPECTRUM_OVL_APP_INPUT_PARSE_MOVE 2u
+#define SPECTRUM_OVL_GUI_LOG_CONNECTION_PANEL 3u
+#define SPECTRUM_OVL_MQTT_CONNECT 3u
+#define SPECTRUM_OVL_MQTT_CONNECT_START 0u
+#define SPECTRUM_OVL_MQTT_CONNECT_ACTIVATE 1u
+#define SPECTRUM_OVL_MQTT_TX 4u
+#define SPECTRUM_OVL_MQTT_TX_SEND_TEXT 0u
+#define SPECTRUM_OVL_MQTT_TX_PUBLISH_SETUP 1u
+#define SPECTRUM_OVL_MQTT_TX_PUBLISH_SESSION 2u
+#define SPECTRUM_OVL_MQTT_TX_SYNC_TIME 3u
+#define SPECTRUM_OVL_DIRECT 5u
+#define SPECTRUM_OVL_DIRECT_LISTEN 0u
+#define SPECTRUM_OVL_DIRECT_CONNECT 1u
+#define SPECTRUM_OVL_DIRECT_WAIT_CONNECT 2u
+#define SPECTRUM_OVL_DIRECT_READ 3u
+#define SPECTRUM_OVL_DIRECT_SEND 4u
+#define SPECTRUM_OVL_MENU_CONFIG 6u
+#define SPECTRUM_OVL_MENU_CONFIG_RUN 0u
+#define SPECTRUM_OVL_MENU_CONFIG_PAINT_ATTRS 1u
+#define SPECTRUM_OVL_MENU_CONFIG_VALIDATE_IP 2u
+#define SPECTRUM_OVL_MENU_CONFIG_EDIT_LINE 3u
+#define SPECTRUM_OVL_MENU_LOGIC 7u
+#define SPECTRUM_OVL_MENU_LOGIC_UPDATE_ROOM 0u
+#define SPECTRUM_OVL_MENU_LOGIC_MOVE_FOCUS 1u
+#define SPECTRUM_OVL_MENU_LOGIC_ROOM_APPEND 2u
+#define SPECTRUM_OVL_MENU_LOGIC_ROOM_EDITABLE 3u
+#define SPECTRUM_OVL_MENU_LOGIC_ROOM_BACKSPACE 4u
+#define SPECTRUM_OVL_MENU_LOGIC_COMPUTE_VISIBLE 5u
+#define SPECTRUM_OVL_MENU_LOGIC_STEP_ROW 6u
+#define SPECTRUM_OVL_HINTS 8u
+#define SPECTRUM_OVL_HINTS_SHOW 0u
+#define SPECTRUM_OVL_HINTS_CLEAR 1u
+#define SPECTRUM_OVL_STATUS SPECTRUM_OVL_MENU_LOGIC
+#define SPECTRUM_OVL_STATUS_PHASE 7u
+
+#define SPECTRUM_OVL_INVALID 0xffu
+#define SPECTRUM_OVL_BLOCK_SIZE 2048u
+
+/* Overlay exec frames the entry under DI and returns through an unconditional
+   EI. Call only from normal app flow, not from a caller-owned DI section. */
+uint8_t spectrum_overlay_exec(uint8_t ovl_id, uint8_t entry_id);
+uint8_t spectrum_overlay_exec_cached(uint8_t ovl_id, uint8_t entry_id);
+uint8_t spectrum_assets_load(void);
+void spectrum_assets_fatal(void);
+extern uint8_t overlay_code_slot[];
+extern uint8_t spectrum_overlay_loaded_id;
+
+#endif

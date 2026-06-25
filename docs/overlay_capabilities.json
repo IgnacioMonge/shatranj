@@ -1,0 +1,42 @@
+{
+  "description": "Source-level overlay resident-symbol capability policy. Debt caps are allowed temporarily but must shrink during the modular refactor. board_view is the resident board presentation adapter exposed to rules/hints overlays; it is currently an explicit, checked alias boundary over GUI-owned redraw/flip state.",
+  "board_view_aliases": {
+    "_spectrum_board_view_flipped": "_spectrum_gui_board_flipped",
+    "_spectrum_board_view_redraw_square": "_spectrum_gui_redraw_square"
+  },
+  "overlays": {
+    "board": {
+      "allowed_caps": ["board", "libc", "runtime"]
+    },
+    "direct": {
+      "allowed_caps": ["config", "direct_state", "input", "libc", "net", "runtime", "text", "uart"]
+    },
+    "gui_log": {
+      "allowed_caps": ["gui", "gui_state", "libc", "render", "runtime", "text", "time"]
+    },
+    "status": {
+      "allowed_caps": ["config", "net", "runtime", "text"],
+      "allowed_symbols": ["spectrum_status_line"]
+    },
+    "hints": {
+      "allowed_caps": ["board", "board_view", "config", "libc", "render", "runtime"]
+    },
+    "menu_config": {
+      "allowed_caps": ["config", "gui", "gui_state", "libc", "net", "render", "runtime", "text"]
+    },
+    "menu_logic": {
+      "allowed_caps": ["config", "gui_state", "libc", "runtime", "text"]
+    },
+    "mqtt_connect": {
+      "allowed_caps": ["config", "libc", "mqtt", "net", "runtime", "text"]
+    },
+    "mqtt_tx": {
+      "allowed_caps": ["config", "libc", "mqtt", "net", "overlay", "runtime", "text"],
+      "allowed_symbols": ["line_buf", "spectrum_uart_send_crlf", "spectrum_uart_send_string"]
+    },
+    "rules": {
+      "allowed_caps": ["board", "board_view", "config", "libc", "render", "runtime"],
+      "allowed_symbols": ["board_theme_hint_inks"]
+    }
+  }
+}
