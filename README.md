@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>Shatranj. The first online chess for a real ZX Spectrum 48K.</strong><br>
+  <strong>Shatranj. The first online chess for a real ZX Spectrum.</strong><br>
   Two machines, anywhere in the world, on the same board.
 </p>
 
