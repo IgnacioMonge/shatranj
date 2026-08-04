@@ -159,7 +159,7 @@ visual customization, and substantially strengthens session reliability.
 - Separate macOS packaging workflow for arm64 and x86_64 application archives.
 - Linux AppImage workflow that installs the application, checks bundled assets
   and shared-library resolution, smoke-starts the package offscreen, uploads a
-  workflow artifact, and attaches it to a published GitHub release.
+  versioned workflow artifact for release publication.
 - Host tests for the shared saved-game wire format, compact chess-rule parity,
   Direct `+IPD` bounds, Classic/Next UART behavior, ESP-AT recovery, Next
   graphics banks, RGB333 colors, sprite-slot flipping, NEX packaging, and TAP
