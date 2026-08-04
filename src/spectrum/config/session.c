@@ -20,8 +20,6 @@ __at(NETCHESSZX_LOWRAM_HINTED_ROWS_ADDR) uint8_t netchesszx_hinted_rows[8];
 #else
 uint8_t netchesszx_hinted_rows[8];
 #endif
-const char netchesszx_text_game_start[] = "GAME START";
-
 void netchesszx_session_configure(uint8_t role,
                                   uint8_t transport,
                                   uint8_t host_color)
@@ -57,7 +55,7 @@ const char *netchesszx_session_start_text(void)
 }
 
 const char netchesszx_mqtt_host[] = NETCHESSZX_MQTT_HOST;
-char netchesszx_mqtt_code[NETCHESSZX_MQTT_CODE_MAX + 1u] = NETCHESSZX_MQTT_CODE;
+char netchesszx_mqtt_code[NETCHESSZX_MQTT_CODE_MAX + 1u];
 const uint16_t netchesszx_mqtt_port = NETCHESSZX_MQTT_PORT;
 char netchesszx_direct_host[NETCHESSZX_DIRECT_HOST_MAX + 1u] = "";
 uint16_t netchesszx_direct_port = NETCHESSZX_PORT;

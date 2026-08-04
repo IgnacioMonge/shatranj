@@ -14,9 +14,10 @@ sys.dont_write_bytecode = True
 from gen_overlay_defs import OPTIONAL_SYMBOLS, REQUIRED_SYMBOLS, parse_map
 
 
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 3
 DEFAULT_API_HEADER = Path("src/spectrum/overlay/overlay_api.h")
 DEFAULT_OVERLAY_HEADER = Path("src/spectrum/overlay/overlay.h")
+DEFAULT_SESSION_HEADER = Path("src/common/session/session.h")
 
 
 def normalize_type(text: str) -> str:
@@ -31,71 +32,105 @@ def asm_symbol_for_c(name: str) -> str:
     return name if name.startswith("_") else "_" + name
 
 
-def parse_api_header(path: Path) -> list[dict[str, object]]:
+def parse_api_header(
+    path: Path,
+    include_root: Path | None = None,
+    seen: set[Path] | None = None,
+) -> list[dict[str, object]]:
     entries: list[dict[str, object]] = []
     extern_re = re.compile(r"^extern\s+(.+?)\s+([A-Za-z_]\w*)(\[[^\]]*\])?\s*;")
-    func_re = re.compile(r"^(.+?)\s+([A-Za-z_]\w*)\((.*)\)\s*(.*);")
+    func_re = re.compile(r"^(.+?[\*\s])([A-Za-z_]\w*)\((.*)\)\s*(.*);")
     include_re = re.compile(r'^#include\s+"([^"]+)"')
+    statement = ""
+    in_preprocessor = False
 
-    for line_no, raw_line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), 1
-    ):
+    if include_root is None:
+        include_root = path.parents[2]
+    if seen is None:
+        seen = set()
+    resolved_path = path.resolve()
+    if resolved_path in seen:
+        return entries
+    seen.add(resolved_path)
+
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
+    text = re.sub(r"//.*", "", text)
+    for raw_line in text.splitlines():
         line = raw_line.strip()
+        if in_preprocessor:
+            in_preprocessor = raw_line.rstrip().endswith("\\")
+            continue
         include_match = include_re.match(line)
-        if include_match and include_match.group(1) == "spectrum/render_status.h":
-            entries.extend(parse_api_header(path.parents[2] / include_match.group(1)))
+        if include_match:
+            include_path = include_root / include_match.group(1)
+            if include_path.exists():
+                entries.extend(parse_api_header(include_path, include_root, seen))
             continue
-        if not line or line.startswith("#"):
+        if line.startswith("#"):
+            in_preprocessor = raw_line.rstrip().endswith("\\")
             continue
+        if not line:
+            continue
+        statement = f"{statement} {line}".strip()
+        while ";" in statement:
+            declaration, statement = statement.split(";", 1)
+            declaration = declaration.strip() + ";"
+            extern_match = extern_re.match(declaration)
+            if extern_match:
+                c_type, name, array_suffix = extern_match.groups()
+                if array_suffix:
+                    c_type = f"{c_type} []"
+                entries.append(
+                    {
+                        "kind": "object",
+                        "name": name,
+                        "asm_name": asm_symbol_for_c(name),
+                        "type": normalize_type(c_type),
+                    }
+                )
+                continue
 
-        extern_match = extern_re.match(line)
-        if extern_match:
-            c_type, name, array_suffix = extern_match.groups()
-            if array_suffix:
-                c_type = f"{c_type} []"
+            func_match = func_re.match(declaration)
+            if not func_match:
+                continue
+            ret_type, name, args_text, attrs = func_match.groups()
+            if name in {"if", "for", "while", "switch"}:
+                continue
+            args = []
+            if args_text.strip() != "void":
+                args = [
+                    normalize_type(arg.strip())
+                    for arg in args_text.split(",")
+                    if arg.strip()
+                ]
             entries.append(
                 {
-                    "kind": "object",
+                    "kind": "function",
                     "name": name,
                     "asm_name": asm_symbol_for_c(name),
-                    "type": normalize_type(c_type),
+                    "return": normalize_type(ret_type),
+                    "args": args,
+                    "calling_convention": "fastcall"
+                    if "__z88dk_fastcall" in attrs
+                    else "z88dk_c",
                 }
             )
-            continue
-
-        func_match = func_re.match(line)
-        if not func_match:
-            continue
-        ret_type, name, args_text, attrs = func_match.groups()
-        if name in {"if", "for", "while", "switch"}:
-            continue
-        args = []
-        if args_text.strip() != "void":
-            args = [
-                normalize_type(arg.strip())
-                for arg in args_text.split(",")
-                if arg.strip()
-            ]
-        entries.append(
-            {
-                "kind": "function",
-                "name": name,
-                "asm_name": asm_symbol_for_c(name),
-                "return": normalize_type(ret_type),
-                "args": args,
-                "calling_convention": "fastcall"
-                if "__z88dk_fastcall" in attrs
-                else "z88dk_c",
-            }
-        )
 
     return entries
 
 
-def parse_overlay_constants(path: Path) -> list[dict[str, object]]:
+def parse_constants(
+    path: Path,
+    prefix: str,
+    values: dict[str, object] | None = None,
+) -> list[dict[str, object]]:
     constants: list[dict[str, object]] = []
-    values: dict[str, object] = {}
-    define_re = re.compile(r"^#define\s+(SPECTRUM_OVL_[A-Za-z0-9_]+)\s+(.+)$")
+    if values is None:
+        values = {}
+    define_re = re.compile(
+        rf"^#define\s+({re.escape(prefix)}[A-Za-z0-9_]+)\s+(.+)$"
+    )
 
     for line_no, raw_line in enumerate(
         path.read_text(encoding="utf-8").splitlines(), 1
@@ -152,13 +187,18 @@ def symbol_entries(
 
 
 def make_manifest(
-    root: Path, map_path: Path, api_header: Path, overlay_header: Path
+    root: Path,
+    map_path: Path,
+    api_header: Path,
+    overlay_header: Path,
+    session_header: Path,
 ) -> dict[str, object]:
     symbols = parse_map(map_path)
     api = parse_api_header(api_header)
     context_header = api_header.with_name("overlay_context.h")
-    if context_header.exists():
-        api.extend(parse_api_header(context_header))
+    lowram_header = context_header.parents[1] / "lowram_map.h"
+    context_values: dict[str, object] = {}
+    parse_constants(lowram_header, "NETCHESSZX_LOWRAM_", context_values)
     api_by_asm = {entry["asm_name"]: entry for entry in api}
     resident_symbols = symbol_entries(symbols, REQUIRED_SYMBOLS, True)
     resident_symbols.extend(symbol_entries(symbols, OPTIONAL_SYMBOLS, False))
@@ -192,11 +232,19 @@ def make_manifest(
             "map": str(map_path),
             "overlay_api": str(api_header),
             "overlay_context": str(context_header),
+            "lowram_map": str(lowram_header),
             "overlay_header": str(overlay_header),
+            "session_header": str(session_header),
         },
         "markers": markers,
         "resident_symbols": resident_symbols,
-        "overlay_constants": parse_overlay_constants(overlay_header),
+        "overlay_constants": parse_constants(overlay_header, "SPECTRUM_OVL_"),
+        "overlay_context_constants": parse_constants(
+            context_header, "SPECTRUM_", context_values
+        ),
+        "session_route_constants": parse_constants(
+            session_header, "SESSION_ROUTE_"
+        ),
         "api": api,
         "missing_required": missing_required,
     }
@@ -242,6 +290,12 @@ def compare_manifests(
 ) -> list[str]:
     errors: list[str] = []
 
+    if baseline.get("version") != current.get("version"):
+        errors.append(
+            f"manifest version changed: {baseline.get('version')!r} -> "
+            f"{current.get('version')!r}"
+        )
+
     for missing in current.get("missing_required", []):
         errors.append(f"required resident symbol missing: {missing}")
 
@@ -258,6 +312,22 @@ def compare_manifests(
             baseline.get("overlay_constants", []),  # type: ignore[arg-type]
             current.get("overlay_constants", []),  # type: ignore[arg-type]
             "overlay constant",
+            ("raw_value", "value"),
+        )
+    )
+    errors.extend(
+        compare_named_list(
+            baseline.get("overlay_context_constants", []),  # type: ignore[arg-type]
+            current.get("overlay_context_constants", []),  # type: ignore[arg-type]
+            "overlay context constant",
+            ("raw_value", "value"),
+        )
+    )
+    errors.extend(
+        compare_named_list(
+            baseline.get("session_route_constants", []),  # type: ignore[arg-type]
+            current.get("session_route_constants", []),  # type: ignore[arg-type]
+            "session route constant",
             ("raw_value", "value"),
         )
     )
@@ -314,6 +384,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--root", type=Path, default=Path("."))
     parser.add_argument("--overlay-api", type=Path, default=DEFAULT_API_HEADER)
     parser.add_argument("--overlay-header", type=Path, default=DEFAULT_OVERLAY_HEADER)
+    parser.add_argument("--session-header", type=Path, default=DEFAULT_SESSION_HEADER)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--write-baseline", type=Path)
@@ -327,6 +398,7 @@ def main(argv: list[str]) -> int:
         args.map_file,
         args.overlay_api,
         args.overlay_header,
+        args.session_header,
     )
 
     if args.output:

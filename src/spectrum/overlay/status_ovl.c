@@ -9,7 +9,7 @@
 #define STATUS_PHASE_CONNECTED 3u
 #define STATUS_PHASE_GAME 4u
 
-extern char spectrum_status_line[SPECTRUM_OVL_STATUS_LINE_SIZE];
+static char status_line_ovl[SPECTRUM_OVL_STATUS_LINE_SIZE];
 
 static char *status_append(char *p, const char *src, char *end)
 {
@@ -87,10 +87,10 @@ static char *status_append_direct_play_ip(char *p, char *end)
 
 static void status_build_phase(uint8_t phase)
 {
-    char *p = spectrum_status_line;
-    char *end = spectrum_status_line + SPECTRUM_OVL_STATUS_LINE_TEXT_SIZE;
+    char *p = status_line_ovl;
+    char *end = status_line_ovl + SPECTRUM_OVL_STATUS_LINE_TEXT_SIZE;
 
-    spectrum_status_line[0] = '\0';
+    status_line_ovl[0] = '\0';
     if (phase == STATUS_PHASE_CONNECTION_SETUP) {
         (void)status_append(p, "CONNECTION SETUP", end);
     } else if (phase == STATUS_PHASE_GAME_SETUP) {
@@ -141,5 +141,6 @@ static void status_build_phase(uint8_t phase)
 uint8_t status_phase_ovl(uint8_t *ctx) __z88dk_fastcall
 {
     status_build_phase(ctx[SPECTRUM_OVL_CTX_STATUS_PHASE]);
+    spectrum_gui_set_status(status_line_ovl);
     return 1u;
 }

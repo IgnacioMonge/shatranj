@@ -11,34 +11,28 @@ PUBLIC _spectrum_render_about
 PUBLIC _netchesszx_piece_set_load
 PUBLIC _spectrum_overlay_loaded_id
 PUBLIC _overlay_code_slot
+PUBLIC _overlay_scratch_base
 PUBLIC _spectrum_overlay_context
+PUBLIC ovl_close_overlay_file
 
 _spectrum_overlay_context EQU 0x5FE0
 _overlay_code_slot EQU 0x6800
+_overlay_scratch_base EQU 0x672B
 ovl_invalid_id EQU 0xff
+INCLUDE "overlay_atlas_table.asm"
 asset_load_addr EQU 0x6000
-asset_load_size EQU 1023
-asset_piece_offset EQU 639
+asset_load_size EQU 1196
+asset_piece_offset EQU 812
 piece_sprite_set_size EQU 384
 piece_sprite_set_size_hi EQU piece_sprite_set_size / 256
 piece_sprite_set_size_lo EQU piece_sprite_set_size - (piece_sprite_set_size_hi * 256)
 asset_load_size_hi EQU asset_load_size / 256
 asset_load_size_lo EQU asset_load_size - (asset_load_size_hi * 256)
 about_board_offset EQU asset_load_size
-about_board_width EQU 18
-about_board_top_y EQU 32
-about_board_height EQU 144
-about_board_block_rows EQU 8
-about_board_char_rows EQU about_board_height / about_board_block_rows
-about_board_block_bytes EQU about_board_width * about_board_block_rows
-about_scratch EQU _overlay_code_slot
-about_board_attr_top EQU 4
-about_board_attr_rows EQU 18
-about_board_attr_tail_start EQU about_board_attr_rows - 2
-about_board_attr_tail_rows EQU about_board_attr_rows - about_board_attr_tail_start
-about_board_attr_tail_bytes EQU about_board_width * about_board_attr_tail_rows
-about_board_size EQU (about_board_width * about_board_height) + (about_board_width * about_board_attr_rows)
+about_board_size EQU 706
 piece_set_extra_offset EQU about_board_offset + about_board_size
+about_ovl_id EQU 12
+about_render_entry EQU 0
 
 SECTION bss_user
 
@@ -46,11 +40,10 @@ ovl_handle:   DEFS 1
 ovl_entry_id: DEFS 1
 ovl_id:       DEFS 1
 ovl_cache_ready: DEFS 1
+ovl_file_open: DEFS 1
 asset_set_index: DEFS 1
-about_row:    DEFS 1
-about_scan:   DEFS 1
-about_block_rows: DEFS 1
 _spectrum_overlay_loaded_id: DEFS 1
+ovl_load_size: DEFS 2
 
 SECTION code_user
 
@@ -62,9 +55,11 @@ _spectrum_overlay_exec_cached:
     ld hl, 2
     add hl, sp
     ld a, (hl)
-    ld (ovl_id), a
     inc hl
-    ld a, (hl)
+    ld b, (hl)
+ovl_args_canonical:
+    ld (ovl_id), a
+    ld a, b
     ld (ovl_entry_id), a
 
     push ix
@@ -77,6 +72,7 @@ _spectrum_overlay_exec_cached:
 _spectrum_assets_load:
     push ix
     push iy
+    call ovl_close_overlay_file
     ld hl, asset_filename
     push hl
     pop ix
@@ -123,6 +119,7 @@ npsl_index_ok:
     ld (asset_set_index), a
     push ix
     push iy
+    call ovl_close_overlay_file
 
     ld hl, asset_filename
     push hl
@@ -215,172 +212,10 @@ assets_fatal_halt:
     jr assets_fatal_halt
 
 _spectrum_render_about:
-    push ix
-    push iy
-    ld hl, asset_filename
+    ld hl, about_ovl_id + (about_render_entry * 256)
     push hl
-    pop ix
-    ld b, 0x01
-    ld a, '*'
-    rst 8
-    defb 0x9a
-    jp c, about_fail
-    ld (ovl_handle), a
-
-    ld a, (ovl_handle)
-    ld de, about_board_offset
-    ld bc, 0
-    ld ix, 0
-    ld l, 0
-    rst 8
-    defb 0x9f
-    jp c, about_fail_close
-
-    xor a
-    ld (ovl_cache_ready), a
-    ld a, ovl_invalid_id
-    ld (_spectrum_overlay_loaded_id), a
-    xor a
-    ld (about_row), a
-
-about_pixel_row:
-    ld a, (about_row)
-    cp about_board_char_rows
-    jr nc, about_attr_start
-    ld bc, about_board_block_bytes
-    call about_read_scratch
-    ld hl, about_scratch
-    ld a, (about_row)
-    add a, a
-    add a, a
-    add a, a
-    ld (about_scan), a
-    ld b, about_board_block_rows
-about_pixel_scan:
-    push bc
-    push hl
-    ld a, (about_scan)
-    call about_screen_addr
-    ex de, hl
-    pop hl
-    ld bc, about_board_width
-    ldir
-    ld a, (about_scan)
-    inc a
-    ld (about_scan), a
+    call _spectrum_overlay_exec
     pop bc
-    djnz about_pixel_scan
-    ld hl, about_row
-    inc (hl)
-    jr about_pixel_row
-
-about_attr_start:
-    xor a
-    ld (about_row), a
-
-about_attr_row:
-    ld a, (about_row)
-    cp about_board_attr_rows
-    jr nc, about_ok
-    ld bc, about_board_block_bytes
-    ld a, (about_row)
-    cp about_board_attr_tail_start
-    jr c, about_attr_read
-    ld bc, about_board_attr_tail_bytes
-    ld a, about_board_attr_tail_rows
-    jr about_attr_rows_ready
-about_attr_read:
-    ld a, about_board_block_rows
-about_attr_rows_ready:
-    ld (about_block_rows), a
-    call about_read_scratch
-    ld hl, about_scratch
-    ld a, (about_block_rows)
-    ld b, a
-about_attr_copy:
-    push bc
-    push hl
-    ld a, (about_row)
-    call about_attr_addr
-    ex de, hl
-    pop hl
-    ld bc, about_board_width
-    ldir
-    ld a, (about_row)
-    inc a
-    ld (about_row), a
-    pop bc
-    djnz about_attr_copy
-    jr about_attr_row
-
-about_read_scratch:
-    push bc
-    ld ix, about_scratch
-    ld a, (ovl_handle)
-    rst 8
-    defb 0x9d
-    jr c, about_read_fail_stacked
-    pop de
-    ld a, b
-    cp d
-    jr nz, about_read_fail
-    ld a, c
-    cp e
-    jr nz, about_read_fail
-    ret
-
-about_read_fail_stacked:
-    pop de
-about_read_fail:
-    pop hl
-    jr about_fail_close
-
-about_ok:
-    call ovl_close
-    pop iy
-    pop ix
-    ld hl, 1
-    ret
-
-about_fail_close:
-    call ovl_close
-about_fail:
-    pop iy
-    pop ix
-    ld hl, 0
-    ret
-
-about_screen_addr:
-    add a, about_board_top_y
-    ld b, a
-    and 0x07
-    add a, 0x40
-    ld h, a
-    ld a, b
-    and 0xc0
-    srl a
-    srl a
-    srl a
-    add a, h
-    ld h, a
-    ld a, b
-    and 0x38
-    add a, a
-    add a, a
-    ld l, a
-    ret
-
-about_attr_addr:
-    add a, about_board_attr_top
-    ld l, a
-    ld h, 0
-    add hl, hl
-    add hl, hl
-    add hl, hl
-    add hl, hl
-    add hl, hl
-    ld de, 0x5800
-    add hl, de
     ret
 
 assets_fatal_bitmap:
@@ -401,13 +236,15 @@ ovl_ensure_loaded:
     ld hl, ovl_id
     cp (hl)
     jr nz, ovl_load
-    xor a
     ret
 
 ovl_load:
     xor a
     ld (ovl_cache_ready), a
 
+    ld a, (ovl_file_open)
+    or a
+    jr nz, ovl_file_ready
     ld hl, ovl_filename
     push hl
     pop ix
@@ -417,39 +254,34 @@ ovl_load:
     defb 0x9a
     jr c, ovl_load_fail
     ld (ovl_handle), a
+    ld a, 1
+    ld (ovl_file_open), a
 
-    ld a, (ovl_id)
-    or a
-    jr z, ovl_read
-    call ovl_seek_block
+ovl_file_ready:
+    call ovl_select_atlas_entry
     jr c, ovl_load_fail_close
 
 ovl_read:
     ld a, (ovl_handle)
     ld ix, _overlay_code_slot
-    ld bc, 2048
+    ld bc, (ovl_load_size)
     rst 8
     defb 0x9d
     jr c, ovl_load_fail_close
 
-    ld a, b
-    cp 8
-    jr nz, ovl_load_fail_close
-    ld a, c
+    ld hl, (ovl_load_size)
     or a
+    sbc hl, bc
     jr nz, ovl_load_fail_close
-
-    call ovl_close
 
     ld a, (ovl_id)
     ld (_spectrum_overlay_loaded_id), a
     ld a, 1
     ld (ovl_cache_ready), a
-    xor a
     ret
 
 ovl_load_fail_close:
-    call ovl_close
+    call ovl_close_overlay_file
 
 ovl_load_fail:
     xor a
@@ -468,7 +300,7 @@ ovl_call_loaded:
     jr c, ovl_fail
     ld e, a
     ld d, 0
-    ld hl, _overlay_code_slot + 2
+    ld hl, _overlay_code_slot + 1
     add hl, de
     ld e, (hl)
     inc hl
@@ -480,22 +312,26 @@ ovl_call_loaded:
     or a
     sbc hl, de
     jr c, ovl_bad_entry
-    ld de, 2048
+    ld de, (ovl_load_size)
     or a
     sbc hl, de
     jr nc, ovl_bad_entry
     pop de
-    ld hl, _spectrum_overlay_context
-    ex de, hl
     pop iy
     pop ix
-    ; Overlay execution is framed under DI. Overlay code must return with IX/IY
-    ; restored and must not be called from a caller-owned DI critical section:
-    ; ovl_return re-enables ROM IM1 for normal app flow.
+    ; C fastcall entries need the context in HL; native ASM entries use DE.
+    ; Stack the target so both registers can carry the same context pointer.
     ld bc, ovl_return
     push bc
+    push de
+    ld de, _spectrum_overlay_context
+    ld h, d
+    ld l, e
+    ; Overlay entry starts under DI and ovl_return unconditionally enables IM1.
+    ; Overlay callees may re-enable interrupts (for example via frame_wait), so
+    ; this is not a whole-overlay DI guarantee.
     di
-    jp (hl)
+    ret
 
 ovl_return:
     ei
@@ -510,16 +346,41 @@ ovl_fail:
     ld (ovl_cache_ready), a
     pop iy
     pop ix
-    ld h, 0
-    ld l, 0
+    ld hl, 0
     ret
 
-ovl_seek_block:
+ovl_select_atlas_entry:
+    ld a, (ovl_id)
+    cp ovl_atlas_count
+    jr nc, ovl_select_bad
     add a, a
-    add a, a
-    add a, a
-    ld d, a
-    ld e, 0
+    ld e, a
+    ld d, 0
+    ld hl, ovl_atlas_table
+    add hl, de
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld c, (hl)
+    inc hl
+    ld b, (hl)
+    ld h, b
+    ld l, c
+    or a
+    sbc hl, de
+    ld (ovl_load_size), hl
+    ld a, h
+    or l
+    jr z, ovl_select_bad
+    ld a, h
+    cp 8
+    jr c, ovl_select_size_ok
+    jr nz, ovl_select_bad
+    ld a, l
+    or a
+    jr nz, ovl_select_bad
+ovl_select_size_ok:
     ld bc, 0
     ld a, (ovl_handle)
     ld ix, 0
@@ -527,12 +388,25 @@ ovl_seek_block:
     rst 8
     defb 0x9f
     ret
+ovl_select_bad:
+    scf
+    ret
+
+ovl_close_overlay_file:
+    ld a, (ovl_file_open)
+    or a
+    ret z
+    call ovl_close
+    xor a
+    ld (ovl_file_open), a
+    ret
 
 ovl_close:
     ld a, (ovl_handle)
     rst 8
     defb 0x9b
     ret
+
 
 ovl_filename:
     DEFM "SHATRANJ.OVL"

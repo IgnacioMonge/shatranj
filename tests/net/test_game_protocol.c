@@ -21,10 +21,30 @@ static void check_text(const char *got, const char *expected, const char *label)
     }
 }
 
+static void test_wire_constants(void)
+{
+    check_text(NETCHESS_PROTO_MOVE_PREFIX, "MOVE ", "move prefix constant");
+    check_text(NETCHESS_PROTO_CHAT_PREFIX, "CHAT ", "chat prefix constant");
+    check_text(NETCHESS_PROTO_ACK_PREFIX, "ACK ", "ack prefix constant");
+    check_text(NETCHESS_PROTO_NACK_PREFIX, "NACK ", "nack prefix constant");
+    check_text(NETCHESS_PROTO_GAME_START, "GAME START", "game start constant");
+    check_text(NETCHESS_PROTO_RESET, "RESET", "reset constant");
+    check_text(NETCHESS_PROTO_BYE, "BYE", "bye constant");
+    check_text(NETCHESS_PROTO_DRAW, "DRAW", "draw constant");
+    check_text(NETCHESS_PROTO_RESIGN, "RESIGN", "resign constant");
+    check_text(NETCHESS_PROTO_TAKEBACK_PREFIX, "TAKEBACK ", "takeback constant");
+    check_text(NETCHESS_PROTO_RESTORE_RQ, "RQ", "restore rq constant");
+    check_text(NETCHESS_PROTO_RESTORE_RY, "RY", "restore ry constant");
+    check_text(NETCHESS_PROTO_RESTORE_RN, "RN", "restore rn constant");
+    check_text(NETCHESS_PROTO_RESTORE_RA, "RA", "restore ra constant");
+    check_text(NETCHESS_PROTO_RESTORE_RS_PREFIX, "RS", "restore rs constant");
+}
+
 static void test_move_parser(void)
 {
     char ply[8];
     char move[8];
+    char spectrum_move[6];
     char notation[8];
 
     check(netchess_proto_parse_move("MOVE 1 e2e4 3000",
@@ -91,6 +111,14 @@ static void test_move_parser(void)
                                      notation,
                                      sizeof(notation)),
           "move rejects bad promotion");
+    check(!netchess_proto_parse_move("MOVE 7 e7e8qjunk",
+                                     ply,
+                                     sizeof(ply),
+                                     spectrum_move,
+                                     sizeof(spectrum_move),
+                                     notation,
+                                     sizeof(notation)),
+          "move rejects truncated Spectrum token");
 }
 
 static void test_chat_parser(void)
@@ -207,6 +235,7 @@ static void test_formatters(void)
 
 int main(void)
 {
+    test_wire_constants();
     test_move_parser();
     test_chat_parser();
     test_ack_nack_parser();

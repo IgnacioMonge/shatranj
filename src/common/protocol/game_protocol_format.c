@@ -74,7 +74,7 @@ uint8_t netchess_proto_format_ack(char *out,
     char *end;
 
     if (!proto_init_out(out, out_cap, &p, &end) ||
-        !proto_append(&p, end, "ACK ") ||
+        !proto_append(&p, end, NETCHESS_PROTO_ACK_PREFIX) ||
         !proto_append(&p, end, ply)) {
         return 0u;
     }
@@ -96,7 +96,7 @@ uint8_t netchess_proto_format_nack(char *out,
     char *end;
 
     if (!proto_init_out(out, out_cap, &p, &end) ||
-        !proto_append(&p, end, "NACK ") ||
+        !proto_append(&p, end, NETCHESS_PROTO_NACK_PREFIX) ||
         !proto_append(&p, end, ply)) {
         return 0u;
     }

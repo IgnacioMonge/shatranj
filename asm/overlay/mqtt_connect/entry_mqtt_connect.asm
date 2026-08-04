@@ -4,16 +4,33 @@ PUBLIC _mqtt_connect_packet_ovl
 PUBLIC _mqtt_will_topic_prefix
 EXTERN _mqtt_connect_start_ovl
 EXTERN _mqtt_activate_side_ovl
-EXTERN _mqtt_packet_ovl
+EXTERN _net_preflight_ovl
+EXTERN _mqtt_probe_seat_ovl
+; Must equal the linked _overlay_scratch_base; check_lowmem_layout.py proves it.
+mqtt_packet_ovl EQU 0x672B
 EXTERN _netchesszx_mqtt_code
 EXTERN _netchesszx_local_color
+EXTERN _netchesszx_session_role
 
-    DW 2
+mqtt_client_id_fixed EQU 7
+mqtt_remaining_base EQU 47
+mqtt_packet_base EQU 49
+
+    DEFB 4
     DW _mqtt_connect_start_ovl
     DW _mqtt_activate_side_ovl
+    DW _net_preflight_ovl
+    DW _mqtt_probe_seat_ovl
 
 mqtt_conn_fixed_header:
-    DEFB 0, 4, "MQTT", 4, $26, 0, 45, 0
+    ; Connect flags $06 = clean session + will, QoS0, will NOT retained.
+    ; A retained will (was $26) would persist an id-less "F <side>" on the
+    ; seat presence topic when a guest dies, clobbering the legitimate
+    ; retained "O <side> <id>" and making the seat look free to a probing
+    ; intruder. Non-retained: the will fires transiently to live subscribers
+    ; only; the seat's retained O stays intact so seat-probe BUSY works.
+    ; keepalive 20s; peer death detected by app-level PING miss (~26s).
+    DEFB 0, 4, "MQTT", 4, $06, 0, 20, 0
 
 _mqtt_connect_packet_ovl:
     ld hl, _netchesszx_mqtt_code
@@ -32,13 +49,13 @@ mqtt_code_len_done:
     jr z, color_is_white
     ld c, 'B'
 color_is_white:
-    ld de, _mqtt_packet_ovl
+    ld de, mqtt_packet_ovl
     ld a, $10
     ld (de), a
     inc de
     ld a, b
     add a, a
-    add a, 45
+    add a, mqtt_remaining_base
     ld (de), a
     inc de
     push bc
@@ -47,16 +64,14 @@ color_is_white:
     ldir
     pop bc
     ld a, b
-    add a, 5
+    add a, mqtt_client_id_fixed
     ld (de), a
     inc de
+mqtt_client_id_begin:
     ld a, 'Z'
     ld (de), a
     inc de
     ld a, 'X'
-    ld (de), a
-    inc de
-    ld a, '-'
     ld (de), a
     inc de
     push bc
@@ -65,12 +80,28 @@ color_is_white:
     ld b, 0
     ldir
     pop bc
-    ld a, '-'
+    ld a, (_netchesszx_session_role)
+    add a, a
+    add a, 'H'
     ld (de), a
     inc de
-    ld a, c
-    ld (de), a
-    inc de
+    push bc
+    ld hl, ($5c78)
+    ld b, 2
+mqtt_client_nonce_loop:
+    ld a, h
+    ld h, l
+    push af
+    rrca
+    rrca
+    rrca
+    rrca
+    call mqtt_conn_hex_digit
+    pop af
+    call mqtt_conn_hex_digit
+    djnz mqtt_client_nonce_loop
+    pop bc
+mqtt_client_id_end:
     xor a
     ld (de), a
     inc de
@@ -89,6 +120,7 @@ color_is_white:
     ld hl, mqtt_will_topic_tail
     call mqtt_conn_copy_z
     ld a, c
+    or $20               ; topic suffix is lowercase (pres_w/pres_b); subscribers never see pres_W
     ld (de), a
     inc de
     xor a
@@ -104,9 +136,20 @@ color_is_white:
     inc de
     ld a, b
     add a, a
-    add a, 47
+    add a, mqtt_packet_base
     ld l, a
     ld h, 0
+    ret
+
+mqtt_conn_hex_digit:
+    and $0f
+    add a, '0'
+    cp $3a
+    jr c, mqtt_conn_hex_store
+    add a, 7
+mqtt_conn_hex_store:
+    ld (de), a
+    inc de
     ret
 
 mqtt_conn_copy_z:

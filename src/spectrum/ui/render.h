@@ -33,6 +33,15 @@ void spectrum_render_chat_scroll(void);
 void spectrum_render_input(const char *text) __z88dk_fastcall;
 void spectrum_render_input_cell(const char *spec) __z88dk_fastcall;
 uint8_t spectrum_render_about(void);
+#ifdef NETCHESSZX_NEXT_BANKING
+void spectrum_render_about_off(void);
+#endif
+#ifdef NETCHESSZX_NEXT_BANKING
+void spectrum_next_sprites_hide_all(void);
+#endif
+void spectrum_render_ikkle_at(const char *spec) __z88dk_fastcall;
+void spectrum_render_fileui_frame(void);
+void spectrum_render_fileui_select(uint16_t slot_on) __z88dk_fastcall;
 
 uint8_t spectrum_key_edit_pressed(void);
 uint8_t spectrum_key_poll(void);

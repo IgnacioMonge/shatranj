@@ -5,11 +5,12 @@
 #include "spectrum/ui/gui.h"
 
 static uint8_t runtime_clock_ready;
+static uint16_t runtime_fat_date;
+static uint16_t runtime_fat_time;
 
 void spectrum_net_runtime_wait_frame(void)
 {
     spectrum_frame_wait();
-    spectrum_gui_latch_control_keys();
     spectrum_link_background_drain();
     spectrum_gui_tick();
 }
@@ -17,7 +18,6 @@ void spectrum_net_runtime_wait_frame(void)
 void spectrum_net_runtime_wait_frame_plain(void)
 {
     spectrum_frame_wait();
-    spectrum_gui_latch_control_keys();
     spectrum_gui_tick();
 }
 
@@ -35,7 +35,18 @@ uint8_t spectrum_net_runtime_clock_ready(void)
     return runtime_clock_ready;
 }
 
-void spectrum_net_runtime_publish_ip_status(const char *ip)
+void spectrum_net_runtime_set_fat_stamp(uint16_t date, uint16_t time)
 {
-    (void)ip;
+    runtime_fat_date = date;
+    runtime_fat_time = time;
+}
+
+uint16_t spectrum_net_runtime_fat_date(void)
+{
+    return runtime_fat_date;
+}
+
+uint16_t spectrum_net_runtime_fat_time(void)
+{
+    return runtime_fat_time;
 }

@@ -9,6 +9,30 @@
 #define NETCHESSZX_FASTCALL
 #endif
 
+const char NETCHESS_PROTO_ACK_PREFIX[] = "ACK ";
+const char NETCHESS_PROTO_NACK_PREFIX[] = "NACK ";
+const char NETCHESS_PROTO_MOVE_PREFIX[] = "MOVE ";
+const char NETCHESS_PROTO_CHAT_PREFIX[] = "CHAT ";
+const char NETCHESS_PROTO_DRAW[] = "DRAW";
+const char NETCHESS_PROTO_CANCEL_DRAW[] = "CANCEL DRAW";
+const char NETCHESS_PROTO_CANCEL_RESET[] = "CANCEL RESET";
+const char NETCHESS_PROTO_ACK_RESIGN[] = "ACK RESIGN";
+const char NETCHESS_PROTO_GAME_START[] = "GAME START";
+const char NETCHESS_PROTO_NACK_RESET[] = "NACK RESET";
+const char NETCHESS_PROTO_BYE[] = "BYE";
+const char NETCHESS_PROTO_TAKEBACK_PREFIX[] = "TAKEBACK ";
+const char NETCHESS_PROTO_ACK_PING[] = "ACK PING";
+
+#ifdef NETCHESSZX_SDCC_IY
+uint8_t netchesszx_asm_proto_copy_token(const char **p,
+                                        char *out,
+                                        uint8_t cap);
+uint8_t netchesszx_asm_move_syntax_ok(const char *move, uint8_t len);
+#define proto_copy_token netchesszx_asm_proto_copy_token
+#define move_syntax_ok netchesszx_asm_move_syntax_ok
+#endif
+
+#ifndef NETCHESSZX_SDCC_IY
 const char *netchess_after_prefix(const char *text, const char *prefix)
 {
     while (*prefix != '\0') {
@@ -18,7 +42,9 @@ const char *netchess_after_prefix(const char *text, const char *prefix)
     }
     return text;
 }
+#endif
 
+#ifndef NETCHESSZX_SDCC_IY
 static uint8_t proto_copy_token(const char **p, char *out, uint8_t cap)
 {
     uint8_t n = 0u;
@@ -60,7 +86,9 @@ static uint8_t move_syntax_ok(const char *move, uint8_t len)
     }
     return (uint8_t)(len == 4u || is_promotion_char(move[4]));
 }
+#endif
 
+#ifndef NETCHESSZX_SDCC_IY
 uint8_t netchess_proto_copy_digits(const char **p, char *out, uint8_t cap)
 {
     uint8_t n = 0u;
@@ -75,7 +103,9 @@ uint8_t netchess_proto_copy_digits(const char **p, char *out, uint8_t cap)
     out[n] = '\0';
     return n;
 }
+#endif
 
+#ifndef NETCHESSZX_SDCC_IY
 void netchess_proto_copy_rest(const char *p, char *out, uint8_t cap)
 {
     uint8_t n = 0u;
@@ -88,6 +118,7 @@ void netchess_proto_copy_rest(const char *p, char *out, uint8_t cap)
     }
     out[n] = '\0';
 }
+#endif
 
 uint8_t netchess_proto_parse_move(const char *rx,
                                   char *ply,
@@ -101,7 +132,7 @@ uint8_t netchess_proto_parse_move(const char *rx,
     uint8_t n;
     uint8_t move_len;
 
-    if (netchess_after_prefix(rx, "MOVE ") == 0) {
+    if (netchess_after_prefix(rx, NETCHESS_PROTO_MOVE_PREFIX) == 0) {
         return 0u;
     }
 
@@ -113,7 +144,7 @@ uint8_t netchess_proto_parse_move(const char *rx,
     ++p;
 
     move_len = proto_copy_token(&p, move, move_cap);
-    if (!move_syntax_ok(move, move_len)) {
+    if ((*p != '\0' && *p != ' ') || !move_syntax_ok(move, move_len)) {
         return 0u;
     }
 
@@ -134,7 +165,7 @@ uint8_t netchess_proto_parse_chat(const char *rx,
                                   char *text,
                                   uint8_t text_cap)
 {
-    if (text_cap == 0u || netchess_after_prefix(rx, "CHAT ") == 0) {
+    if (text_cap == 0u || netchess_after_prefix(rx, NETCHESS_PROTO_CHAT_PREFIX) == 0) {
         return 0u;
     }
     netchess_proto_copy_rest(rx + 5u, text, text_cap);

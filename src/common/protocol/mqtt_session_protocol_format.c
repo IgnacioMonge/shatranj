@@ -75,7 +75,7 @@ uint8_t netchess_mqtt_session_format_host(char *out,
 
     if (session_id == 0u ||
         !mqtt_session_init_out(out, out_cap, &p, &end) ||
-        !mqtt_session_append_text(&p, end, "H ") ||
+        !mqtt_session_append_text(&p, end, NETCHESS_MQTT_SESSION_HOST_PREFIX) ||
         !mqtt_session_append_char(&p, end,
                                   netchess_mqtt_session_color_char(host_color)) ||
         !mqtt_session_append_char(&p, end, ' ') ||
@@ -94,7 +94,7 @@ uint8_t netchess_mqtt_session_format_join(char *out,
 
     if (session_id == 0u ||
         !mqtt_session_init_out(out, out_cap, &p, &end) ||
-        !mqtt_session_append_text(&p, end, "J ") ||
+        !mqtt_session_append_text(&p, end, NETCHESS_MQTT_SESSION_JOIN_PREFIX) ||
         !mqtt_session_append_u16(&p, end, session_id)) {
         return 0u;
     }
@@ -111,7 +111,9 @@ uint8_t netchess_mqtt_session_format_side(char *out,
     char *p;
     char *end;
 
-    if ((verb != 'O' && verb != 'F') || (side != 'W' && side != 'B') ||
+    if ((verb != NETCHESS_MQTT_SESSION_VERB_ONLINE &&
+         verb != NETCHESS_MQTT_SESSION_VERB_OFFLINE) ||
+        (side != 'W' && side != 'B') ||
         !mqtt_session_init_out(out, out_cap, &p, &end) ||
         !mqtt_session_append_char(&p, end, verb) ||
         !mqtt_session_append_char(&p, end, ' ') ||

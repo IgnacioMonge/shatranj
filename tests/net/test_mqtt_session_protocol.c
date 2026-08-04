@@ -21,6 +21,18 @@ static void check_text(const char *got, const char *expected, const char *label)
     }
 }
 
+static void test_wire_constants(void)
+{
+    check(NETCHESS_MQTT_SESSION_VERB_HOST == 'H', "host verb constant");
+    check(NETCHESS_MQTT_SESSION_VERB_JOIN == 'J', "join verb constant");
+    check(NETCHESS_MQTT_SESSION_VERB_ONLINE == 'O', "online verb constant");
+    check(NETCHESS_MQTT_SESSION_VERB_OFFLINE == 'F', "offline verb constant");
+    check_text(NETCHESS_MQTT_SESSION_HOST_PREFIX, "H ", "host prefix constant");
+    check_text(NETCHESS_MQTT_SESSION_JOIN_PREFIX, "J ", "join prefix constant");
+    check_text(NETCHESS_MQTT_SESSION_ONLINE_WHITE_PREFIX, "O W ", "online white prefix constant");
+    check_text(NETCHESS_MQTT_SESSION_ONLINE_BLACK_PREFIX, "O B ", "online black prefix constant");
+}
+
 static void test_host_payload(void)
 {
     uint8_t color = 9u;
@@ -175,6 +187,7 @@ static void test_formatters(void)
 
 int main(void)
 {
+    test_wire_constants();
     test_host_payload();
     test_join_payload();
     test_side_payload();

@@ -45,6 +45,16 @@ RULES = [
         re.compile(r"^spectrum/"),
     ),
     (
+        "common-session-no-pc-qt",
+        re.compile(r"^src/common/session/.*\.[ch]$"),
+        re.compile(r"^(?:pc/|Qt|Q[A-Z])"),
+    ),
+    (
+        "common-session-no-toolchain",
+        re.compile(r"^src/common/session/.*\.[ch]$"),
+        re.compile(r"^(?:z88dk|sdcc|arch/)"),
+    ),
+    (
         "protocol-no-ui",
         re.compile(r"^src/(common/protocol|spectrum/session)/.*\.[ch]$"),
         re.compile(r"^spectrum/ui/"),
@@ -67,7 +77,7 @@ RULES = [
     (
         "session-no-transport-internals",
         re.compile(r"^src/spectrum/session/.*\.[ch]$"),
-        re.compile(r"^spectrum/transport/(net|mqtt_min)\.h$"),
+        re.compile(r"^spectrum/transport/(net|mqtt_min|esp_at)\.h$"),
     ),
     (
         "app-no-overlay",
@@ -77,7 +87,7 @@ RULES = [
     (
         "app-no-transport-internals",
         re.compile(r"^src/spectrum/app/.*\.[ch]$"),
-        re.compile(r"^spectrum/transport/(net|mqtt_min)\.h$"),
+        re.compile(r"^spectrum/transport/(net|mqtt_min|esp_at)\.h$"),
     ),
 ]
 
@@ -86,14 +96,19 @@ TRANSPORT_RE = re.compile(r"^src/spectrum/transport/.*\.[ch]$")
 OVERLAY_INCLUDE_RE = re.compile(r"^spectrum/overlay/")
 OVERLAY_FACADE_INCLUDES = {
     "spectrum/overlay/overlay.h",
+    "spectrum/overlay/overlay_api.h",
     "spectrum/overlay/overlay_context.h",
 }
-OVERLAY_DISPATCHER_RE = re.compile(r"^src/spectrum/(board|transport)/.*\.[ch]$")
+OVERLAY_DISPATCHER_RE = re.compile(
+    r"^src/spectrum/(board|transport|fileui|saveload|restore)/.*\.[ch]$"
+)
 UI_INCLUDE_RE = re.compile(r"^spectrum/ui/")
+UI_SOURCE_RE = re.compile(r"^src/spectrum/ui/.*\.[ch]$")
+UI_BOARD_VIEW_OWNER = "src/spectrum/ui/gui.c"
+UI_BOARD_VIEW_TOKEN = "NETCHESSZX_LOWRAM_CHESS_BOARD_ADDR"
 OVERLAY_SOURCE_RE = re.compile(r"^src/spectrum/overlay/.*\.[ch]$")
 OVERLAY_UI_INCLUDE_ALLOWLIST = {
     ("src/spectrum/overlay/gui_log_ovl.c", "spectrum/ui/layout.h"),
-    ("src/spectrum/overlay/menu_config_ovl.c", "spectrum/ui/layout.h"),
     ("src/spectrum/overlay/overlay.c", "spectrum/ui/gui.h"),
     ("src/spectrum/overlay/overlay_api.h", "spectrum/ui/info_panel.h"),
 }
@@ -103,10 +118,16 @@ NET_RUNTIME_BRIDGE_OWNERS = {
     "src/spectrum/transport/net.c",
 }
 LOWRAM_MAP_OWNER = "src/spectrum/lowram_map.h"
+OVERLAY_CONTEXT_OWNER = "src/spectrum/overlay/overlay_context.h"
 LOWRAM_LITERAL_RE = re.compile(r"\b0x5[0-9A-Fa-f]{3}\b")
-LOWRAM_DEFINE_RE = re.compile(r"^#define\s+([A-Z0-9_]+)\s+(0x[0-9A-Fa-f]+)\b")
-ASM_EQU_RE = re.compile(r"^\s*([A-Za-z0-9_]+)\s+EQU\s+(0x[0-9A-Fa-f]+)\b")
+C_INT_RE = r"(?:0x[0-9A-Fa-f]+|[0-9]+)[uU]?"
+LOWRAM_DEFINE_RE = re.compile(rf"^#define\s+([A-Z0-9_]+)\s+({C_INT_RE})\b")
+ASM_EQU_RE = re.compile(rf"^\s*([A-Za-z0-9_]+)\s+EQU\s+({C_INT_RE})\b")
 ASM_LOWRAM_EQUS = {
+    (
+        "asm/overlay/board/entry_board.asm",
+        "NETCHESSZX_CHESS_BOARD",
+    ): "NETCHESSZX_LOWRAM_CHESS_BOARD_ADDR",
     (
         "asm/spectrum/screen.asm",
         "NETCHESSZX_RULES_BOARD_BASE",
@@ -116,12 +137,48 @@ ASM_LOWRAM_EQUS = {
         "NETCHESSZX_OVERLAY_CONTEXT",
     ): "NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_ADDR",
     (
+        "asm/spectrum/screen.asm",
+        "SPECTRUM_OVL_CTX_HINTS_BOARD_LO",
+    ): "SPECTRUM_OVL_CTX_HINTS_BOARD_LO",
+    (
+        "asm/spectrum/screen.asm",
+        "SPECTRUM_OVL_CTX_HINTS_BOARD_HI",
+    ): "SPECTRUM_OVL_CTX_HINTS_BOARD_HI",
+    (
+        "asm/spectrum/screen.asm",
+        "SPECTRUM_OVL_CTX_HINTS_SIDE_TO_MOVE",
+    ): "SPECTRUM_OVL_CTX_HINTS_SIDE_TO_MOVE",
+    (
+        "asm/spectrum/screen.asm",
+        "SPECTRUM_OVL_CTX_HINTS_SQUARE",
+    ): "SPECTRUM_OVL_CTX_HINTS_SQUARE",
+    (
+        "asm/spectrum/screen.asm",
+        "SPECTRUM_OVL_CTX_HINTS_CASTLE",
+    ): "SPECTRUM_OVL_CTX_HINTS_CASTLE",
+    (
+        "asm/spectrum/screen.asm",
+        "SPECTRUM_OVL_CTX_HINTS_EP",
+    ): "SPECTRUM_OVL_CTX_HINTS_EP",
+    (
         "asm/esxdos/overlay_loader.asm",
         "_spectrum_overlay_context",
     ): "NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_ADDR",
     (
-        "asm/overlay/rules/entry_rules.asm",
+        "asm/esxdos/overlay_loader.asm",
+        "_overlay_scratch_base",
+    ): "NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR",
+    (
+        "asm/next/overlay_loader_next.asm",
         "_spectrum_overlay_context",
+    ): "NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_ADDR",
+    (
+        "asm/next/overlay_loader_next.asm",
+        "_overlay_scratch_base",
+    ): "NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR",
+    (
+        "asm/overlay/setup/entry_setup.asm",
+        "CTX",
     ): "NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_ADDR",
     (
         "asm/overlay/gui_log/entry_gui_log.asm",
@@ -131,8 +188,18 @@ ASM_LOWRAM_EQUS = {
 BANNED_LINE_RULES = [
     (
         "esp-at-no-public-line-buffer-globals",
-        "src/spectrum/transport/esp_at.h",
+        re.compile(r"^src/spectrum/transport/esp_at\.h$"),
         re.compile(r"^\s*extern\s+.*\b(line_buf|last_ip|line_pos)\b"),
+    ),
+    (
+        "ui-no-board-symbol",
+        re.compile(r"^src/spectrum/ui/.*\.[ch]$"),
+        re.compile(r"\bspectrum_board_cells\b"),
+    ),
+    (
+        "app-no-extern-function-declarations",
+        re.compile(r"^src/spectrum/app/.*\.[ch]$"),
+        re.compile(r"^\s*extern\s+.*\([^;]*\)"),
     ),
 ]
 ASM_SDCC_IY_TOKEN_RE = re.compile(r"\b[A-Z0-9_]*SDCC[A-Z0-9_]*IY[A-Z0-9_]*\b")
@@ -148,15 +215,20 @@ def is_fixed_lowram_literal(token: str) -> bool:
     return 0x5CB6 <= value <= 0x5FFF
 
 
+def parse_c_int(token: str) -> int:
+    return int(token.rstrip("uU"), 0)
+
+
 def load_lowram_map(root: Path) -> dict[str, int]:
-    path = root / LOWRAM_MAP_OWNER
     constants: dict[str, int] = {}
-    if not path.exists():
-        return constants
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        match = LOWRAM_DEFINE_RE.match(line)
-        if match:
-            constants[match.group(1)] = int(match.group(2), 16)
+    for rel_path in (LOWRAM_MAP_OWNER, OVERLAY_CONTEXT_OWNER):
+        path = root / rel_path
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            match = LOWRAM_DEFINE_RE.match(line)
+            if match:
+                constants[match.group(1)] = parse_c_int(match.group(2))
     return constants
 
 
@@ -212,8 +284,16 @@ def find_violations(
                 for token in LOWRAM_LITERAL_RE.findall(line):
                     if is_fixed_lowram_literal(token):
                         violations.append(("lowram-map-owner", rel, line_no, token))
-            for rule_id, banned_rel, banned_re in BANNED_LINE_RULES:
-                if rel == banned_rel and banned_re.search(line):
+            if (
+                UI_SOURCE_RE.match(rel)
+                and UI_BOARD_VIEW_TOKEN in line
+                and rel != UI_BOARD_VIEW_OWNER
+            ):
+                violations.append(
+                    ("ui-board-live-view-owner", rel, line_no, UI_BOARD_VIEW_TOKEN)
+                )
+            for rule_id, banned_path_re, banned_re in BANNED_LINE_RULES:
+                if banned_path_re.match(rel) and banned_re.search(line):
                     violations.append((rule_id, rel, line_no, "<declaration>"))
             extern_var = EXTERN_VAR_RE.match(line)
             if extern_var and OVERLAY_C_RE.match(rel):
@@ -228,6 +308,11 @@ def find_violations(
             if not match:
                 continue
             include = match.group(1)
+            include_parts = include.replace("\\", "/").split("/")
+            if any(part in {".", ".."} for part in include_parts):
+                violations.append(
+                    ("noncanonical-relative-include", rel, line_no, include)
+                )
             if (
                 OVERLAY_DISPATCHER_RE.match(rel)
                 and OVERLAY_INCLUDE_RE.match(include)
@@ -267,7 +352,7 @@ def find_violations(
                 if expected_name is not None:
                     seen_asm_lowram.add(key)
                     expected = lowram_constants.get(expected_name)
-                    actual = int(equ_match.group(2), 16)
+                    actual = parse_c_int(equ_match.group(2))
                     if expected is None or actual != expected:
                         violations.append(
                             (

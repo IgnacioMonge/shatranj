@@ -8,6 +8,7 @@
 #include "spectrum/lowram_map.h"
 #include "spectrum/platform/platform.h"
 #include "spectrum/platform/text.h"
+#include "spectrum/platform/uart.h"
 
 #include <string.h>
 
@@ -17,11 +18,18 @@
 
 #define GUI_KEY_LEFT 0x83u
 #define GUI_KEY_RIGHT 0x84u
-#define MENU_OPTION_COUNT 5u
-#define CONTROL_LATCH_MENU 0x01u
+#define MENU_OPTION_COUNT 6u
 
-const char *spectrum_board_cells(void);
 static void render_clock_only(void);
+
+#ifdef NETCHESSZX_SDCC_IY
+void netchesszx_asm_put_timer_digit(char *dst, uint8_t value);
+void netchesszx_asm_timer_tick_one_second(uint8_t *hour,
+                                          uint8_t *minute,
+                                          uint8_t *second);
+#define put_timer_digit netchesszx_asm_put_timer_digit
+#define timer_tick_one_second netchesszx_asm_timer_tick_one_second
+#endif
 
 #define CLOCK_TEXT_SAVE_SIZE 8u
 #define GAME_TIMER_SAVE_SIZE 24u
@@ -63,11 +71,9 @@ static uint8_t move_timer_minute;
 static uint8_t move_timer_second;
 static uint8_t clock_force_redraw;
 static uint8_t timer_force_redraw;
-static uint8_t edit_was_down;
 static uint8_t menu_visible;
 static uint8_t menu_focus;
 static uint8_t about_visible;
-static uint8_t control_latch;
 static uint16_t notice_ticks;
 static uint8_t notice_error;
 static uint8_t notice_success;
@@ -82,6 +88,8 @@ static uint8_t side_panels_visible;
 static uint8_t active_coord_valid;
 static uint8_t active_coord_row;
 static uint8_t active_coord_col;
+/* Sole UI-side, read-only view of the board-owned low-RAM cells. */
+#define gui_live_board ((const char *)NETCHESSZX_LOWRAM_CHESS_BOARD_ADDR)
 
 static void build_status_line(char *status_line, const char *text)
 {
@@ -109,6 +117,7 @@ void spectrum_gui_set_status(const char *text) NETCHESSZX_FASTCALL
     render_clock_only();
 }
 
+#ifndef NETCHESSZX_SDCC_IY
 static void put_timer_digit(char *dst, uint8_t value)
 {
     uint8_t tens = 0u;
@@ -120,6 +129,7 @@ static void put_timer_digit(char *dst, uint8_t value)
     dst[0] = (char)('0' + tens);
     dst[1] = (char)('0' + value);
 }
+#endif
 
 static void put_hhmm(char *dst)
 {
@@ -153,6 +163,7 @@ static void reset_move_timer(void)
     clock_frames = 0u;
 }
 
+#ifndef NETCHESSZX_SDCC_IY
 static void timer_tick_one_second(uint8_t *hour, uint8_t *minute, uint8_t *second)
 {
     if (*hour == 99u && *minute == 59u) {
@@ -170,6 +181,7 @@ static void timer_tick_one_second(uint8_t *hour, uint8_t *minute, uint8_t *secon
     *minute = 0u;
     ++*hour;
 }
+#endif
 
 static void build_game_timer_line(char *game_timer_line)
 {
@@ -184,15 +196,17 @@ static void build_game_timer_line(char *game_timer_line)
     }
 }
 
-static void render_game_timer_delta(const char *game_timer_line, uint8_t menu_mode)
+static uint8_t render_game_timer_delta(const char *game_timer_line, uint8_t menu_mode)
 {
     char game_timer_char_spec[3];
     uint8_t i;
+    uint8_t changed = 0u;
 
     for (i = 0u; i < NETCHESSZX_GAME_TIMER_TEXT_SIZE; ++i) {
         if (game_timer_line[i] == last_game_timer_line[i]) {
             continue;
         }
+        changed = 1u;
         game_timer_char_spec[0] = (char)i;
         game_timer_char_spec[1] = game_timer_line[i];
         game_timer_char_spec[2] = (char)(game_timer_line[i] == ' ');
@@ -202,18 +216,7 @@ static void render_game_timer_delta(const char *game_timer_line, uint8_t menu_mo
             spectrum_render_game_timer_char(game_timer_char_spec);
         }
     }
-}
-
-static void render_menu_timer_only(void)
-{
-    char game_timer_line[24];
-
-    build_game_timer_line(game_timer_line);
-    if (strcmp(game_timer_line, last_game_timer_line) == 0) {
-        return;
-    }
-    render_game_timer_delta(game_timer_line, 1u);
-    memcpy(last_game_timer_line, game_timer_line, GAME_TIMER_SAVE_SIZE);
+    return changed;
 }
 
 static void render_game_timer_only(void)
@@ -224,23 +227,21 @@ static void render_game_timer_only(void)
     if (menu_visible) {
         /* Timer pixels are shared between menu/closed states; the taboption
            open/close paths only retint attrs, so no forced redraw needed. */
-        render_menu_timer_only();
+        build_game_timer_line(game_timer_line);
+        if (render_game_timer_delta(game_timer_line, 1u)) {
+            memcpy(last_game_timer_line, game_timer_line, GAME_TIMER_SAVE_SIZE);
+        }
         return;
     }
 
     build_game_timer_line(game_timer_line);
 
-    if (!timer_force_redraw &&
-        strcmp(game_timer_line, last_game_timer_line) == 0) {
-        return;
-    }
     force = timer_force_redraw;
     timer_force_redraw = 0u;
     if (force) {
         memcpy(last_game_timer_line, game_timer_line, GAME_TIMER_SAVE_SIZE);
         spectrum_render_game_timer_clear(game_timer_line);
-    } else {
-        render_game_timer_delta(game_timer_line, 0u);
+    } else if (render_game_timer_delta(game_timer_line, 0u)) {
         memcpy(last_game_timer_line, game_timer_line, GAME_TIMER_SAVE_SIZE);
     }
 }
@@ -272,11 +273,6 @@ static void render_clock_only(void)
     spectrum_render_clock(clock_line);
 }
 
-static void render_menu_bar(void)
-{
-    spectrum_render_menu((uint8_t)(menu_focus + 1u));
-}
-
 static void render_menu_focus(uint8_t old_focus) NETCHESSZX_FASTCALL
 {
     spectrum_render_menu((uint8_t)(0x80u | (uint8_t)(old_focus << 3) | menu_focus));
@@ -296,7 +292,7 @@ static void toggle_menu_bar(void)
         spectrum_render_menu(0u);
     } else {
         menu_visible = 1u;
-        render_menu_bar();
+        spectrum_render_menu((uint8_t)(menu_focus + 1u));
     }
 }
 
@@ -505,41 +501,6 @@ void spectrum_gui_input_cell(uint8_t pos, char c, uint8_t cursor)
     spectrum_render_input_cell(spec);
 }
 
-static void render_move_lines(void)
-{
-    spectrum_render_moves(move_lines);
-}
-
-static void render_chat_lines(void)
-{
-    spectrum_render_chat(chat_lines);
-}
-
-static char *gui_move_line_at(uint8_t index)
-{
-    char *line = move_lines;
-
-    while (index != 0u) {
-        line += NETCHESSZX_MOVE_SLOT_SIZE;
-        --index;
-    }
-    return line;
-}
-
-void spectrum_gui_mark_last_move_error(void)
-{
-    char *line;
-
-    if (move_line_count == 0u) {
-        return;
-    }
-    line = gui_move_line_at((uint8_t)(move_line_count - 1u));
-    line[0] = (char)((uint8_t)line[0] | 0x80u);
-    if (side_panels_visible) {
-        spectrum_render_move_at(line);
-    }
-}
-
 static uint8_t display_coord(uint8_t coord) NETCHESSZX_FASTCALL
 {
     return spectrum_gui_board_flipped ? (uint8_t)(7u - coord) : coord;
@@ -547,13 +508,10 @@ static uint8_t display_coord(uint8_t coord) NETCHESSZX_FASTCALL
 
 static char gui_board_cell(uint8_t row, uint8_t col)
 {
-    const char *cells;
-
     if (row >= 8u || col >= 8u) {
         return '.';
     }
-    cells = spectrum_board_cells();
-    return cells[(uint8_t)((row << 3) + col)];
+    return gui_live_board[(uint8_t)((row << 3) + col)];
 }
 
 void spectrum_gui_set_board_view(uint8_t local_black) NETCHESSZX_FASTCALL
@@ -619,6 +577,26 @@ uint8_t spectrum_gui_show_about(void)
 uint8_t spectrum_gui_about_visible(void)
 {
     return about_visible;
+}
+
+/* The FILE browser shares the about_visible gate (value 2) so every
+   board-area suppression path keeps working unchanged. */
+uint8_t spectrum_gui_show_fileui(void)
+{
+    uint8_t was_menu_visible = menu_visible;
+
+    menu_visible = 0u;
+    active_coord_valid = 0u;
+    if (was_menu_visible) {
+        spectrum_render_menu(0u);
+    }
+    about_visible = 2u;
+    return 1u;
+}
+
+uint8_t spectrum_gui_fileui_visible(void)
+{
+    return (uint8_t)(about_visible == 2u);
 }
 
 static void spectrum_gui_mark_cursor_coords(uint8_t row, uint8_t col)
@@ -695,39 +673,18 @@ void spectrum_gui_redraw_board_squares(void)
     }
 }
 
-static uint8_t board_flip_square_unchanged(uint8_t row, uint8_t col)
-{
-    uint8_t mirror_row = (uint8_t)(7u - row);
-    uint8_t mirror_col = (uint8_t)(7u - col);
-    uint8_t hint;
-    uint8_t mirror_hint;
-    const char *cells;
-
-    if (!board_pieces_visible) {
-        return 0u;
-    }
-    cells = spectrum_board_cells();
-    if (cells[(uint8_t)((row << 3) + col)] != '.' ||
-        cells[(uint8_t)((mirror_row << 3) + mirror_col)] != '.') {
-        return 0u;
-    }
-    if (!netchesszx_movement_hints) {
-        return 1u;
-    }
-    hint = (uint8_t)((netchesszx_hinted_rows[row] >> col) & 1u);
-    mirror_hint = (uint8_t)((netchesszx_hinted_rows[mirror_row] >> mirror_col) & 1u);
-    return (uint8_t)(hint == mirror_hint);
-}
-
 static void spectrum_gui_redraw_board_flip_squares(void)
 {
+    uint8_t pass;
     uint8_t row;
     uint8_t col;
 
-    for (row = 0u; row < 8u; ++row) {
-        for (col = 0u; col < 8u; ++col) {
-            if (!board_flip_square_unchanged(row, col)) {
-                render_square_from_board(row, col);
+    for (pass = 0u; pass < 2u; ++pass) {
+        for (row = 0u; row < 8u; ++row) {
+            for (col = 0u; col < 8u; ++col) {
+                if ((uint8_t)(gui_live_board[(uint8_t)((row << 3) + col)] != '.') == pass) {
+                    render_square_from_board(row, col);
+                }
             }
         }
     }
@@ -759,41 +716,12 @@ uint8_t spectrum_gui_poll_key(void)
     return spectrum_key_poll();
 }
 
-void spectrum_gui_latch_control_keys(void)
+uint8_t spectrum_gui_handle_menu_key(uint8_t key) NETCHESSZX_FASTCALL
 {
-    uint8_t edit_down = spectrum_key_edit_pressed();
-
-    if (!about_visible && edit_down && !edit_was_down) {
-        control_latch |= CONTROL_LATCH_MENU;
-    }
-    edit_was_down = edit_down;
-}
-
-void spectrum_gui_clear_control_latches(void)
-{
-    control_latch = 0u;
-}
-
-uint8_t spectrum_gui_poll_menu_key(void)
-{
-    uint8_t edit_down;
-    uint8_t key;
-
-    if (!about_visible && (control_latch & CONTROL_LATCH_MENU) != 0u) {
-        control_latch &= (uint8_t)~CONTROL_LATCH_MENU;
+    if (!about_visible && key == SPECTRUM_GUI_KEY_MENU) {
         toggle_menu_bar();
         return 0u;
     }
-
-    edit_down = spectrum_key_edit_pressed();
-    if (!about_visible && edit_down && !edit_was_down) {
-        toggle_menu_bar();
-        edit_was_down = edit_down;
-        return 0u;
-    }
-    edit_was_down = edit_down;
-
-    key = spectrum_key_poll();
     if (!menu_visible) {
         return key;
     }
@@ -810,7 +738,7 @@ uint8_t spectrum_gui_poll_menu_key(void)
         render_menu_focus(old_focus);
     } else if (key == 13u || key == 32u) {
         if (menu_focus == 0u) {
-            return menu_action_key(SPECTRUM_GUI_KEY_MENU_ABOUT);
+            return menu_action_key(SPECTRUM_GUI_KEY_MENU_FILE);
         }
         if (menu_focus == 1u) {
             return menu_action_key(SPECTRUM_GUI_KEY_MENU_DISCC);
@@ -824,6 +752,9 @@ uint8_t spectrum_gui_poll_menu_key(void)
         if (menu_focus == 4u) {
             return menu_action_key(SPECTRUM_GUI_KEY_MENU_THEME);
         }
+        if (menu_focus == 5u) {
+            return menu_action_key(SPECTRUM_GUI_KEY_MENU_ABOUT);
+        }
     }
     return 0u;
 }
@@ -832,7 +763,9 @@ static void wait_frames(uint8_t frames) NETCHESSZX_FASTCALL
 {
     while (frames-- != 0u) {
         spectrum_frame_wait();
+        spectrum_uart_background_pump();
         spectrum_gui_tick();
+        spectrum_uart_background_pump();
     }
 }
 
@@ -854,26 +787,27 @@ static void flash_square(uint8_t row, uint8_t col)
 
 void spectrum_gui_prepare_move(const char *move) NETCHESSZX_FASTCALL
 {
-    uint8_t from_col;
-    uint8_t from_row;
-    uint8_t to_col;
-    uint8_t to_row;
+    uint16_t coords;
+    uint8_t from_idx;
 
     if (about_visible) {
         return;
     }
-    if (!netchesszx_move_parse_coords(move, &from_row, &from_col, &to_row, &to_col)) {
+    coords = netchesszx_move_parse_coords(move);
+    if (coords == NETCHESSZX_MOVE_COORDS_INVALID) {
         return;
     }
-    (void)to_row;
-    (void)to_col;
-    if (gui_board_cell(from_row, from_col) != '.') {
-        flash_square(from_row, from_col);
+    from_idx = NETCHESSZX_MOVE_FROM_INDEX(coords);
+    if (gui_board_cell((uint8_t)(from_idx >> 3),
+                       (uint8_t)(from_idx & 7u)) != '.') {
+        flash_square((uint8_t)(from_idx >> 3),
+                     (uint8_t)(from_idx & 7u));
     }
 }
 
 void spectrum_gui_apply_move(const char *move) NETCHESSZX_FASTCALL
 {
+    uint16_t coords;
     uint8_t from_col;
     uint8_t from_row;
     uint8_t to_col;
@@ -883,9 +817,16 @@ void spectrum_gui_apply_move(const char *move) NETCHESSZX_FASTCALL
     if (about_visible) {
         return;
     }
-    if (!netchesszx_move_parse_coords(move, &from_row, &from_col, &to_row, &to_col)) {
+    coords = netchesszx_move_parse_coords(move);
+    if (coords == NETCHESSZX_MOVE_COORDS_INVALID) {
         return;
     }
+    from_col = NETCHESSZX_MOVE_FROM_INDEX(coords);
+    to_col = NETCHESSZX_MOVE_TO_INDEX(coords);
+    from_row = (uint8_t)(from_col >> 3);
+    to_row = (uint8_t)(to_col >> 3);
+    from_col &= 7u;
+    to_col &= 7u;
 
     render_square_from_board(from_row, from_col);
     render_square_from_board(to_row, to_col);
@@ -910,14 +851,16 @@ void spectrum_gui_apply_move(const char *move) NETCHESSZX_FASTCALL
 void spectrum_gui_draw_board(void)
 {
     about_visible = 0u;
-    spectrum_render_board(spectrum_board_cells());
+    spectrum_render_board(gui_live_board);
     /* render_board wipes row 2 via hide_menu; keep the C state in sync so
        the timer force-redraw below actually repaints it. */
     menu_visible = 0u;
     active_coord_valid = 0u;
     side_panels_visible = 0u;
     board_coords_dirty = 0u;
-    spectrum_gui_redraw_board_squares();
+    if (!board_pieces_visible || spectrum_gui_board_flipped || netchesszx_movement_hints) {
+        spectrum_gui_redraw_board_squares();
+    }
     clock_force_redraw = 1u;
     spectrum_gui_set_connected(connected_state);
     timer_force_redraw = 1u;
@@ -937,7 +880,12 @@ void spectrum_gui_restore_board_area(void)
 {
     about_visible = 0u;
     if (board_pieces_visible) {
-        spectrum_render_board_area(spectrum_board_cells());
+        spectrum_render_board_area(gui_live_board);
+        /* render_board_area paints raw cells; repaint honoring the flipped
+           view (and hint marks), same as spectrum_gui_draw_board does. */
+        if (spectrum_gui_board_flipped || netchesszx_movement_hints) {
+            spectrum_gui_redraw_board_squares();
+        }
     } else {
         spectrum_render_board_coords();
         spectrum_gui_redraw_board_squares();
@@ -990,8 +938,8 @@ void spectrum_gui_restore_side_panels(void)
     about_visible = 0u;
     side_panels_visible = 1u;
     spectrum_info_show_game();
-    render_move_lines();
-    render_chat_lines();
+    spectrum_render_moves(move_lines);
+    spectrum_render_chat(chat_lines);
 }
 
 uint8_t spectrum_gui_side_panels_visible(void)

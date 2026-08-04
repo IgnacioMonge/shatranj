@@ -2,22 +2,27 @@
 
 #include "spectrum/config/session.h"
 
-uint8_t netchesszx_session_mqtt_offline_matches_peer(const char *payload)
+uint8_t netchesszx_session_mqtt_side_relation(const char *payload, char verb)
 {
     char side;
     uint16_t session_id;
     uint8_t has_session_id;
+    uint8_t relation;
 
     if (!netchess_mqtt_session_parse_side(payload,
-                                          'F',
+                                          verb,
                                           &side,
                                           &session_id,
-                                          &has_session_id) ||
-        side != netchesszx_remote_side_char()) {
+                                          &has_session_id)) {
         return 0u;
     }
-    return has_session_id ? (uint8_t)(session_id == netchesszx_mqtt_session_id)
-                          : 1u;
+    relation = side == netchesszx_local_side_char()
+        ? NETCHESSZX_SESSION_MQTT_SIDE_LOCAL
+        : NETCHESSZX_SESSION_MQTT_SIDE_REMOTE;
+    if (has_session_id && session_id == netchesszx_mqtt_session_id) {
+        relation |= NETCHESSZX_SESSION_MQTT_SIDE_CURRENT;
+    }
+    return relation;
 }
 
 uint8_t netchesszx_session_mqtt_payload_is_foreign_host(const char *payload)

@@ -1,19 +1,9 @@
 SECTION code_user
 
-PUBLIC l_and
 PUBLIC _abs_delta
 PUBLIC _piece_side
 PUBLIC _rules_piece_from_char
 PUBLIC _promotion_piece
-
-l_and:
-    ld a, l
-    and e
-    ld l, a
-    ld a, h
-    and d
-    ld h, a
-    ret
 
 _abs_delta:
     ; SDCC/IY packed uint8 args: a@sp+2, b@sp+3.

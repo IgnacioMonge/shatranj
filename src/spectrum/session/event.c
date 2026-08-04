@@ -1,93 +1,48 @@
 #include "spectrum/session/event.h"
 
 #include "common/protocol/direct_session_protocol.h"
-#include "common/protocol/game_protocol.h"
+#include "common/protocol/mqtt_session_protocol.h"
 #include "spectrum/config/session.h"
 #include "spectrum/session/mqtt.h"
 #include "spectrum/transport/keepalive_protocol.h"
 
-static uint8_t session_peer_ready;
-
-static const uint8_t retained_ignore_map[] = {
-    0u, /* UNKNOWN */
-    0u, /* DIRECT_HELLO */
-    0u, /* PING */
-    0u, /* ACK_PING */
-    1u, /* ACK */
-    1u, /* NACK */
-    1u, /* BYE */
-    1u, /* RESET */
-    1u, /* GAME_START */
-    1u, /* MOVE */
-    1u, /* CHAT */
-    0u, /* MQTT_EMPTY */
-    1u, /* MQTT_PEER_OFFLINE */
-    1u, /* MQTT_FOREIGN_HOST */
-    0u, /* MQTT_HOST */
-    0u, /* MQTT_PEER_READY */
-    1u  /* MQTT_TEXT */
-};
-
-static netchesszx_session_event_t netchesszx_session_classify_game_payload(
-    const char *payload)
-{
-    if (netchess_after_prefix(payload, "MOVE ") != 0) {
-        return NETCHESSZX_SESSION_EVENT_MOVE;
-    }
-    if (netchess_after_prefix(payload, "CHAT ") != 0) {
-        return NETCHESSZX_SESSION_EVENT_CHAT;
-    }
-    if (netchess_proto_is_ack(payload)) {
-        return NETCHESSZX_SESSION_EVENT_ACK;
-    }
-    if (netchess_proto_is_nack(payload)) {
-        return NETCHESSZX_SESSION_EVENT_NACK;
-    }
-    if (netchess_proto_is_bye(payload)) {
-        return NETCHESSZX_SESSION_EVENT_BYE;
-    }
-    if (netchess_proto_is_reset(payload)) {
-        return NETCHESSZX_SESSION_EVENT_RESET;
-    }
-    if (netchess_after_prefix(payload, "GAME START") != 0) {
-        return NETCHESSZX_SESSION_EVENT_GAME_START;
-    }
-    return NETCHESSZX_SESSION_EVENT_UNKNOWN;
-}
+uint8_t netchesszx_session_peer_ready_state;
 
 void netchesszx_session_peer_reset(void)
 {
-    session_peer_ready = 0u;
+    netchesszx_session_peer_ready_state = 0u;
 }
 
 void netchesszx_session_peer_mark_ready(void)
 {
-    session_peer_ready = 1u;
+    netchesszx_session_peer_ready_state = 1u;
 }
 
 uint8_t netchesszx_session_peer_ready(void)
 {
-    return session_peer_ready;
+    return netchesszx_session_peer_ready_state;
 }
 
 uint8_t netchesszx_session_mqtt_can_accept_game_start(void)
 {
-    return (uint8_t)(session_peer_ready &&
+    return (uint8_t)(netchesszx_session_peer_ready_state &&
                      netchesszx_host_color_ready &&
                      netchesszx_mqtt_session_id != 0u);
 }
 
 uint8_t netchesszx_session_event_ignores_retained(netchesszx_session_event_t event,
-                                                  uint8_t retained)
+                                                   uint8_t retained)
 {
-    if (!retained) {
-        return 0u;
-    }
-    if ((uint8_t)event >= sizeof(retained_ignore_map)) {
-        return 0u;
-    }
-    return retained_ignore_map[(uint8_t)event];
+    uint8_t e = (uint8_t)event;
+
+    return (uint8_t)(retained &&
+        ((e >= (uint8_t)NETCHESSZX_SESSION_EVENT_PING &&
+          e <= (uint8_t)NETCHESSZX_SESSION_EVENT_HOST_BUSY) ||
+         e == (uint8_t)NETCHESSZX_SESSION_EVENT_MQTT_PEER_OFFLINE ||
+         e == (uint8_t)NETCHESSZX_SESSION_EVENT_MQTT_FOREIGN_HOST ||
+         e == (uint8_t)NETCHESSZX_SESSION_EVENT_MQTT_TEXT));
 }
+
 
 uint8_t netchesszx_session_mqtt_host_flags(const char *payload,
                                            uint8_t game_active,
@@ -122,7 +77,7 @@ uint8_t netchesszx_session_mqtt_host_flags(const char *payload,
         return 0u;
     }
     if (new_live_session) {
-        session_peer_ready = 0u;
+        netchesszx_session_peer_ready_state = 0u;
     }
     if (color_changed) {
         flags |= NETCHESSZX_SESSION_MQTT_HOST_COLOR_CHANGED;
@@ -130,11 +85,11 @@ uint8_t netchesszx_session_mqtt_host_flags(const char *payload,
     if (host_color == 2u) {
         flags |= NETCHESSZX_SESSION_MQTT_HOST_ACTIVATE_SIDE;
     }
-    if ((host_color == 1u || host_color == 2u) && !session_peer_ready) {
+    if ((host_color == 1u || host_color == 2u) && !netchesszx_session_peer_ready_state) {
         if (host_color == 1u) {
             flags |= NETCHESSZX_SESSION_MQTT_HOST_PUBLISH_SETUP;
         }
-        session_peer_ready = 1u;
+        netchesszx_session_peer_ready_state = 1u;
         flags |= NETCHESSZX_SESSION_MQTT_HOST_READY_WAIT;
     }
     return flags;
@@ -172,11 +127,21 @@ netchesszx_session_event_t netchesszx_session_classify_event(
         return NETCHESSZX_SESSION_EVENT_MQTT_EMPTY;
     }
     switch (payload[0]) {
-    case 'F':
-        if (netchesszx_session_mqtt_offline_matches_peer(payload)) {
+    case 'F': {
+        uint8_t relation =
+            netchesszx_session_mqtt_side_relation(payload, 'F');
+
+        /* F without the current session id is a stray client's will and
+           cannot kill a live game. */
+        if (relation == (NETCHESSZX_SESSION_MQTT_SIDE_REMOTE |
+                         NETCHESSZX_SESSION_MQTT_SIDE_CURRENT)) {
             return NETCHESSZX_SESSION_EVENT_MQTT_PEER_OFFLINE;
         }
+        if ((relation & NETCHESSZX_SESSION_MQTT_SIDE_LOCAL) != 0u) {
+            return NETCHESSZX_SESSION_EVENT_MQTT_LOCAL_OFFLINE;
+        }
         break;
+    }
     case 'H':
         if (is_host &&
             netchesszx_session_mqtt_payload_is_foreign_host(payload)) {
@@ -194,7 +159,16 @@ netchesszx_session_event_t netchesszx_session_classify_event(
         }
         break;
     case 'M':
+        break;
     case 'O':
+        /* Only a retained O for our own side AND the probed session proves
+           occupancy. Stale sessions and live echoes fall through. */
+        if (retained && !is_host &&
+            netchesszx_session_mqtt_side_relation(payload, 'O') ==
+                (NETCHESSZX_SESSION_MQTT_SIDE_LOCAL |
+                 NETCHESSZX_SESSION_MQTT_SIDE_CURRENT)) {
+            return NETCHESSZX_SESSION_EVENT_MQTT_SEAT_TAKEN;
+        }
         break;
     default:
         return NETCHESSZX_SESSION_EVENT_MQTT_TEXT;

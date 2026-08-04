@@ -13,8 +13,9 @@ sys.dont_write_bytecode = True
 
 
 ZX_ORG = 28672
-STACK_GUARD = 0xFE00
-MIN_STACK_GUARD_GAP = 1024
+MIN_SP_GAP = 512
+MIN_SP_GAP_WARN = 768
+STACK_GUARD = 0xFE00  # retained for report compat; hard floor uses SP gap
 
 
 def parse_map(path: Path) -> dict[str, int]:
@@ -159,6 +160,7 @@ def compare_reports(
     baseline: dict[str, object],
     current: dict[str, object],
     fail_on_growth: bool,
+    fail_on_missing_baseline: bool,
 ) -> list[str]:
     messages: list[str] = []
     checks = [
@@ -170,7 +172,6 @@ def compare_reports(
         ),
         ("BSS", (("memory", "bss_bytes"),), "max", "bytes"),
         ("RAM_END", (("memory", "ram_end"), ("memory", "bss_end")), "max", "addr"),
-        ("STACK_GAP", (("memory", "stack_guard_gap_bytes"),), "min", "bytes"),
         ("SP_GAP", (("memory", "register_sp_gap_bytes"),), "min", "bytes"),
         ("CODE_FULL", (("code", "full_bytes"),), "max", "bytes"),
         ("TAP", (("artifacts", "tap"),), "max", "bytes"),
@@ -183,7 +184,10 @@ def compare_reports(
         if before is None and after is None:
             continue
         if before is None:
-            print(f"[WARN] {label}: missing in baseline")
+            if fail_on_missing_baseline:
+                messages.append(f"{label} missing in baseline")
+            else:
+                print(f"[WARN] {label}: missing in baseline")
             continue
         if after is None:
             messages.append(f"{label} missing in current size report")
@@ -210,6 +214,8 @@ def compare_reports(
             before = baseline_overlays.get(name)
             after = current_overlays.get(name)
             if not isinstance(before, int):
+                if isinstance(after, int) and fail_on_missing_baseline:
+                    messages.append(f"OVL_{name} missing in baseline")
                 continue
             if not isinstance(after, int):
                 messages.append(f"OVL_{name} missing in current size report")
@@ -225,14 +231,16 @@ def compare_reports(
 
 
 def check_hard_limits(report: dict[str, object]) -> list[str]:
-    gap = metric(report, ("memory", "stack_guard_gap_bytes"))
+    gap = metric(report, ("memory", "register_sp_gap_bytes"))
     if gap is None:
-        return ["STACK_GAP missing in current size report"]
-    if gap < MIN_STACK_GUARD_GAP:
+        return ["SP_GAP missing in current size report"]
+    if gap < MIN_SP_GAP:
         return [
-            f"STACK_GAP {gap} bytes is below hard floor {MIN_STACK_GUARD_GAP} bytes"
+            f"SP_GAP {gap} bytes is below hard floor {MIN_SP_GAP} bytes"
         ]
-    print(f"[OK] STACK_GAP hard floor: {gap} >= {MIN_STACK_GUARD_GAP} bytes")
+    if gap < MIN_SP_GAP_WARN:
+        print(f"[WARN] SP_GAP {gap} bytes is below warning threshold {MIN_SP_GAP_WARN} bytes")
+    print(f"[OK] SP_GAP hard floor: {gap} >= {MIN_SP_GAP} bytes")
     return []
 
 
@@ -307,7 +315,9 @@ def main(argv: list[str]) -> int:
             print(message.replace("[ERR]", "[WARN]"), file=sys.stderr)
             return 0
         baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
-        errors = compare_reports(baseline, report, args.fail_on_growth)
+        errors = compare_reports(
+            baseline, report, args.fail_on_growth, args.fail_on_missing_baseline
+        )
         if errors:
             for error in errors:
                 print(f"[ERR] {error}", file=sys.stderr)

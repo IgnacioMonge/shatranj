@@ -4,7 +4,7 @@
 ; ZX-Uno compatible UART.
 ;
 ; Keep this close to SpectalkZX's proven SDCC/IY backend. Shatranj exposes
-; ready/read wrappers, so those wrappers cache a short burst around uartRead.
+; ready/read wrappers, so those wrappers cache one byte around uartRead.
 
 SECTION code_user
 
@@ -18,19 +18,14 @@ PUBLIC uartRead
 
 UART_DATA_REG     EQU 0xC6
 UART_STAT_REG     EQU 0xC7
-UART_BYTE_RECIVED EQU 0x80
+UART_BYTE_RECEIVED EQU 0x80
 UART_BYTE_SENDING EQU 0x40
 ZXUNO_ADDR        EQU 0xFC3B
-ZXUNO_REG         EQU 0xFD3B
-UART_RX_CACHE_SIZE EQU 8
-UART_RX_CACHE_MASK EQU UART_RX_CACHE_SIZE - 1
 
 SECTION bss_user
 
-_rx_count:   DEFS 1
-_rx_head:    DEFS 1
-_rx_tail:    DEFS 1
-_rx_cache:   DEFS UART_RX_CACHE_SIZE
+_is_recv:    DEFS 1
+_rx_byte:    DEFS 1
 
 SECTION code_user
 
@@ -58,9 +53,8 @@ uartRead:
 
 _net_uart_init:
     xor a
-    ld (_rx_count), a
-    ld (_rx_head), a
-    ld (_rx_tail), a
+    ld (_is_recv), a
+    ld (_rx_byte), a
 
     ; Prime status/data register reads, as in SpectalkZX.
     ld bc, ZXUNO_ADDR
@@ -79,18 +73,16 @@ _net_uart_init:
 uartInit_wait:
     push bc
     call uartRead
-    pop bc
     call _spectrum_frame_wait
+    pop bc
     djnz uartInit_wait
 
-    ld bc, 0x0200
+    ld de, 0x0200
 uartInit_flush:
-    push bc
     call uartRead
-    pop bc
-    dec bc
-    ld a, b
-    or c
+    dec de
+    ld a, d
+    or e
     jr nz, uartInit_flush
 
     ret
@@ -104,34 +96,47 @@ _net_uart_send:
     out (c), a
 
     inc b
+    ld d, 0
 uartSend_wait_tx:
     in a, (c)
     and UART_BYTE_SENDING
+    jr z, uartSend_ready_tx
+    dec d
     jr nz, uartSend_wait_tx
+    ld l, 1              ; timed out: report so caller retries, not silent drop
+    ret
 
+uartSend_ready_tx:
     dec b
     ld a, UART_DATA_REG
     out (c), a
 
     inc b
     out (c), l
+    ld l, 0             ; sent
     ret
 
 ; _net_uart_ready
 ;   Returns L=1 if one byte is available, else L=0
 
 _net_uart_ready:
-    call uartCache_drain
-    ld a, (_rx_count)
+    ld a, (_is_recv)
     or a
     jr nz, uartReady_yes
 
-uartReady_no:
-    ld l, 0
-    ret
+    call uartRead
+    jr nc, uartReady_no
+
+    ld (_rx_byte), a
+    ld a, 1
+    ld (_is_recv), a
 
 uartReady_yes:
-    ld l, 1
+    ld l, a
+    ret
+
+uartReady_no:
+    ld l, 0
     ret
 
 DEFC _net_uart_ready_fast = _net_uart_ready
@@ -140,23 +145,14 @@ DEFC _net_uart_ready_fast = _net_uart_ready
 ;   Returns L=byte if available, else L=0
 
 _net_uart_read:
-    ld a, (_rx_count)
+    ld a, (_is_recv)
     or a
     jr z, uartRead_direct
 
-    ld a, (_rx_head)
-    ld e, a
-    ld d, 0
-    ld hl, _rx_cache
-    add hl, de
-    ld c, (hl)
-    ld a, (_rx_head)
-    inc a
-    and UART_RX_CACHE_MASK
-    ld (_rx_head), a
-    ld hl, _rx_count
-    dec (hl)
-    ld l, c
+    ld a, (_rx_byte)
+    ld l, a
+    xor a
+    ld (_is_recv), a
     ret
 
 uartRead_direct:
@@ -167,31 +163,4 @@ uartRead_direct:
 
 uartRead_none:
     ld l, 0
-    ret
-
-uartCache_drain:
-    ld a, (_rx_count)
-    cp UART_RX_CACHE_SIZE
-    ret nc
-
-uartCache_drain_loop:
-    call uartRead
-    ret nc
-
-    ld c, a
-    ld a, (_rx_tail)
-    ld e, a
-    ld d, 0
-    ld hl, _rx_cache
-    add hl, de
-    ld (hl), c
-    ld a, (_rx_tail)
-    inc a
-    and UART_RX_CACHE_MASK
-    ld (_rx_tail), a
-    ld hl, _rx_count
-    inc (hl)
-    ld a, (hl)
-    cp UART_RX_CACHE_SIZE
-    jr c, uartCache_drain_loop
     ret

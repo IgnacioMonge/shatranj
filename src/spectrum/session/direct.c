@@ -46,6 +46,10 @@ uint8_t netchesszx_session_direct_apply_hello(const char *payload)
     if (!netchess_direct_parse_host_hello(payload, &white_owner)) {
         return 0u;
     }
+    if (netchesszx_host_color_ready &&
+        netchesszx_host_color != white_owner) {
+        return 0u;
+    }
     return direct_apply_white_owner(white_owner);
 }
 

@@ -1,5 +1,12 @@
 #include "spectrum/transport/mqtt_min.h"
+#include "spectrum/transport/link.h"
 
+#ifdef NETCHESSZX_SDCC_IY
+uint8_t netchesszx_asm_mqtt_strlen8(const char *s) NETCHESSZX_FASTCALL;
+void netchesszx_asm_mqtt_copy(uint8_t *dst, const uint8_t *src, uint8_t len);
+#define mqtt_strlen8 netchesszx_asm_mqtt_strlen8
+#define mqtt_copy netchesszx_asm_mqtt_copy
+#else
 static uint8_t mqtt_strlen8(const char *s)
 {
     uint8_t n = 0u;
@@ -11,75 +18,28 @@ static void mqtt_copy(uint8_t *dst, const uint8_t *src, uint8_t len)
 {
     while (len-- != 0u) { *dst++ = *src++; }
 }
-
-#ifdef NETCHESSZX_SDCC_IY
-#define NETCHESSZX_FASTCALL __z88dk_fastcall
-#else
-#define NETCHESSZX_FASTCALL
 #endif
 
-static uint8_t *mqtt_out;
-static uint8_t mqtt_cap;
-static uint8_t mqtt_pos;
-
-static uint8_t put_u8(uint8_t value) NETCHESSZX_FASTCALL
+void spectrum_mqtt_broker_keepalive_reset(
+    spectrum_mqtt_broker_keepalive_t *keepalive) NETCHESSZX_FASTCALL
 {
-    if (mqtt_pos >= mqtt_cap) {
-        return 0u;
-    }
-    mqtt_out[mqtt_pos] = value;
-    ++mqtt_pos;
-    return 1u;
+    keepalive->idle_ticks = 0u;
+    keepalive->misses = 0u;
 }
 
-static uint8_t put_u16(uint16_t value) NETCHESSZX_FASTCALL
+uint8_t spectrum_mqtt_broker_keepalive_timeout(
+    spectrum_mqtt_broker_keepalive_t *keepalive) NETCHESSZX_FASTCALL
 {
-    if (!put_u8((uint8_t)(value >> 8))) {
-        return 0u;
+    ++keepalive->idle_ticks;
+    if (keepalive->idle_ticks < SPECTRUM_MQTT_KEEPALIVE_POLL_TICKS) {
+        return SPECTRUM_MQTT_KEEPALIVE_NONE;
     }
-    return put_u8((uint8_t)value);
-}
-
-static uint8_t put_bytes(const uint8_t *src, uint8_t len)
-{
-    if (len > mqtt_cap || mqtt_pos > (uint8_t)(mqtt_cap - len)) {
-        return 0u;
+    keepalive->idle_ticks = 0u;
+    if (keepalive->misses >= SPECTRUM_MQTT_KEEPALIVE_MISSES_MAX) {
+        return SPECTRUM_MQTT_KEEPALIVE_LOST;
     }
-    mqtt_copy(mqtt_out + mqtt_pos, src, len);
-    mqtt_pos = (uint8_t)(mqtt_pos + len);
-    return 1u;
-}
-
-static uint8_t put_string(const char *text) NETCHESSZX_FASTCALL
-{
-    uint8_t len = mqtt_strlen8(text);
-
-    return (uint8_t)(put_u16(len) &&
-                     put_bytes((const uint8_t *)text, len));
-}
-
-static uint8_t encode_remaining(uint8_t value, uint8_t *out)
-{
-    if (value < 128u) {
-        out[0] = value;
-        return 1u;
-    }
-    out[0] = (uint8_t)((value & 0x7fu) | 0x80u);
-    out[1] = 1u;
-    return 2u;
-}
-
-static uint8_t start_packet(uint8_t header, uint8_t remaining)
-{
-    uint8_t enc[3];
-    uint8_t enc_len = encode_remaining(remaining, enc);
-
-    if (enc_len == 0u || mqtt_cap < (uint8_t)(1u + enc_len + remaining)) {
-        return 0u;
-    }
-    mqtt_pos = 0u;
-    return (uint8_t)(put_u8(header) &&
-                     put_bytes(enc, enc_len));
+    ++keepalive->misses;
+    return SPECTRUM_MQTT_KEEPALIVE_SEND;
 }
 
 uint8_t spectrum_mqtt_subscribe(uint8_t *out,
@@ -89,20 +49,21 @@ uint8_t spectrum_mqtt_subscribe(uint8_t *out,
 {
     uint8_t topic_len = mqtt_strlen8(topic);
     uint8_t remaining = (uint8_t)(2u + 2u + topic_len + 1u);
-
-    mqtt_out = out;
-    mqtt_cap = cap;
+    uint8_t packet_len = (uint8_t)(2u + remaining);
 
     if (packet_id == 0u || topic_len > SPECTRUM_MQTT_TOPIC_MAX ||
-        !start_packet(0x82u, remaining)) {
+        cap < packet_len) {
         return 0u;
     }
-    if (!put_u16(packet_id) ||
-        !put_string(topic) ||
-        !put_u8(1u)) {
-        return 0u;
-    }
-    return mqtt_pos;
+    out[0u] = 0x82u;
+    out[1u] = remaining;
+    out[2u] = (uint8_t)(packet_id >> 8);
+    out[3u] = (uint8_t)packet_id;
+    out[4u] = 0u;
+    out[5u] = topic_len;
+    mqtt_copy(out + 6u, (const uint8_t *)topic, topic_len);
+    out[6u + topic_len] = 1u;
+    return packet_len;
 }
 
 uint8_t spectrum_mqtt_publish(uint8_t *out,
@@ -115,21 +76,27 @@ uint8_t spectrum_mqtt_publish(uint8_t *out,
     uint8_t topic_len = mqtt_strlen8(topic);
     uint8_t payload_len = mqtt_strlen8(payload);
     uint8_t remaining = (uint8_t)(2u + topic_len + 2u + payload_len);
-
-    mqtt_out = out;
-    mqtt_cap = cap;
+    uint8_t pos = (uint8_t)(remaining < 128u ? 2u : 3u);
+    uint8_t packet_len = (uint8_t)(pos + remaining);
 
     if (packet_id == 0u || topic_len > SPECTRUM_MQTT_TOPIC_MAX ||
         payload_len > SPECTRUM_MQTT_PAYLOAD_MAX ||
-        !start_packet((uint8_t)(0x32u | (retain ? 1u : 0u)), remaining)) {
+        cap < packet_len) {
         return 0u;
     }
-    if (!put_string(topic) ||
-        !put_u16(packet_id) ||
-        !put_bytes((const uint8_t *)payload, payload_len)) {
-        return 0u;
+    out[0u] = (uint8_t)(0x32u | (retain ? 1u : 0u));
+    out[1u] = remaining;
+    if (pos == 3u) {
+        out[2u] = 1u;
     }
-    return mqtt_pos;
+    out[pos++] = 0u;
+    out[pos++] = topic_len;
+    mqtt_copy(out + pos, (const uint8_t *)topic, topic_len);
+    pos = (uint8_t)(pos + topic_len);
+    out[pos++] = (uint8_t)(packet_id >> 8);
+    out[pos++] = (uint8_t)packet_id;
+    mqtt_copy(out + pos, (const uint8_t *)payload, payload_len);
+    return packet_len;
 }
 
 uint8_t spectrum_mqtt_type(const uint8_t *packet, uint8_t len)
@@ -145,7 +112,7 @@ int16_t spectrum_mqtt_parse_publish(const uint8_t *packet,
                                     char *payload,
                                     uint8_t payload_cap,
                                     uint16_t *packet_id,
-                                    uint8_t *retained)
+                                    uint8_t *flags)
 {
     uint8_t remaining;
     uint8_t pos;
@@ -156,11 +123,11 @@ int16_t spectrum_mqtt_parse_publish(const uint8_t *packet,
     uint8_t b;
 
     *packet_id = 0u;
-    *retained = 0u;
+    *flags = 0u;
     if (len < 4u || (packet[0] >> 4) != SPECTRUM_MQTT_PUBLISH) {
         return -1;
     }
-    *retained = (uint8_t)(packet[0] & 1u);
+    *flags = (uint8_t)(packet[0] & SPECTRUM_LINK_PAYLOAD_RETAINED);
     b = packet[1u];
     remaining = (uint8_t)(b & 0x7fu);
     pos = 2u;
@@ -189,6 +156,15 @@ int16_t spectrum_mqtt_parse_publish(const uint8_t *packet,
     pos = (uint8_t)(pos + 2u);
     if (topic_len > (uint8_t)(end - pos)) {
         return -1;
+    }
+    if (topic_len >= 4u) {
+        const uint8_t *suffix = packet + pos + topic_len - 4u;
+
+        if (suffix[0] == '/' &&
+            ((suffix[1] == 'w' && suffix[2] == '2' && suffix[3] == 'b') ||
+             (suffix[1] == 'b' && suffix[2] == '2' && suffix[3] == 'w'))) {
+            *flags |= SPECTRUM_LINK_PAYLOAD_GAME_ROUTE;
+        }
     }
     pos = (uint8_t)(pos + topic_len);
     if (qos != 0u) {

@@ -104,6 +104,36 @@
       "reason": "DIRECT overlay updates resident link state."
     },
     {
+      "path": "src/spectrum/overlay/direct_ovl.c",
+      "symbol": "direct_peer_valid",
+      "owner": "transport/direct",
+      "reason": "DIRECT overlay sends BUSY only after resident session code validates peer HELLO."
+    },
+    {
+      "path": "src/spectrum/overlay/direct_ovl.c",
+      "symbol": "direct_intruder_link",
+      "owner": "transport/direct",
+      "reason": "DIRECT overlay flags a third-party link to reject with BUSY."
+    },
+    {
+      "path": "src/spectrum/overlay/direct_ovl.c",
+      "symbol": "spectrum_net_at_cipserver_0",
+      "owner": "transport/esp-at",
+      "reason": "DIRECT overlay reuses an immutable resident ESP-AT command."
+    },
+    {
+      "path": "src/spectrum/overlay/direct_ovl.c",
+      "symbol": "spectrum_net_at_cipclose",
+      "owner": "transport/esp-at",
+      "reason": "DIRECT overlay reuses an immutable resident ESP-AT command."
+    },
+    {
+      "path": "src/spectrum/overlay/direct_ovl.c",
+      "symbol": "spectrum_net_at_cipmux_0",
+      "owner": "transport/esp-at",
+      "reason": "DIRECT overlay reuses an immutable resident ESP-AT command."
+    },
+    {
       "path": "src/spectrum/overlay/gui_log_ovl.c",
       "symbol": "last_ply_seen",
       "owner": "ui/gui-log",
@@ -182,6 +212,30 @@
       "reason": "MQTT_CONNECT overlay reads resident MQTT topic prefix."
     },
     {
+      "path": "src/spectrum/overlay/mqtt_connect_ovl.c",
+      "symbol": "spectrum_net_at_cipserver_0",
+      "owner": "transport/esp-at",
+      "reason": "MQTT_CONNECT overlay reuses an immutable resident ESP-AT command."
+    },
+    {
+      "path": "src/spectrum/overlay/mqtt_connect_ovl.c",
+      "symbol": "spectrum_net_at_cipclose",
+      "owner": "transport/esp-at",
+      "reason": "MQTT_CONNECT overlay reuses an immutable resident ESP-AT command."
+    },
+    {
+      "path": "src/spectrum/overlay/mqtt_connect_ovl.c",
+      "symbol": "spectrum_net_at_cipmux_0",
+      "owner": "transport/esp-at",
+      "reason": "MQTT_CONNECT overlay reuses an immutable resident ESP-AT command."
+    },
+    {
+      "path": "src/spectrum/overlay/mqtt_connect_ovl.c",
+      "symbol": "spectrum_net_at_cipmode_0",
+      "owner": "transport/esp-at",
+      "reason": "MQTT_CONNECT overlay reuses an immutable resident ESP-AT command."
+    },
+    {
       "path": "src/spectrum/overlay/mqtt_tx_ovl.c",
       "symbol": "line_buf",
       "owner": "transport/mqtt",
@@ -194,10 +248,94 @@
       "reason": "MQTT_TX overlay updates resident MQTT packet id."
     },
     {
-      "path": "src/spectrum/overlay/status_ovl.c",
-      "symbol": "spectrum_status_line",
-      "owner": "ui/status",
-      "reason": "STATUS overlay builds text into resident buffer; resident renders after overlay returns."
+      "path": "src/spectrum/overlay/input_edit_ovl.c",
+      "symbol": "local_input_len",
+      "owner": "app/input-edit",
+      "reason": "INPUT_EDIT overlay owns cold text editor mutation."
+    },
+    {
+      "path": "src/spectrum/overlay/input_edit_ovl.c",
+      "symbol": "local_input_cursor",
+      "owner": "app/input-edit",
+      "reason": "INPUT_EDIT overlay owns cold text editor cursor state."
+    },
+    {
+      "path": "src/spectrum/overlay/input_edit_ovl.c",
+      "symbol": "local_input_mode",
+      "owner": "app/input-edit",
+      "reason": "INPUT_EDIT overlay owns cold text editor mode state."
+    },
+    {
+      "path": "src/spectrum/overlay/input_edit_ovl.c",
+      "symbol": "input_history_count",
+      "owner": "app/input-edit",
+      "reason": "INPUT_EDIT overlay owns cold input history mutation."
+    },
+    {
+      "path": "src/spectrum/overlay/input_edit_ovl.c",
+      "symbol": "input_history_pos",
+      "owner": "app/input-edit",
+      "reason": "INPUT_EDIT overlay owns cold input history navigation."
+    },
+    {
+      "path": "src/spectrum/overlay/saveload_ovl.c",
+      "symbol": "esx_handle",
+      "owner": "saveload/esxdos",
+      "reason": "SAVELOAD overlay links esxDOS file I/O state from its overlay-local asm object."
+    },
+    {
+      "path": "src/spectrum/overlay/saveload_ovl.c",
+      "symbol": "esx_buf",
+      "owner": "saveload/esxdos",
+      "reason": "SAVELOAD overlay links esxDOS file I/O state from its overlay-local asm object."
+    },
+    {
+      "path": "src/spectrum/overlay/saveload_ovl.c",
+      "symbol": "esx_count",
+      "owner": "saveload/esxdos",
+      "reason": "SAVELOAD overlay links esxDOS file I/O state from its overlay-local asm object."
+    },
+    {
+      "path": "src/spectrum/overlay/saveload_ovl.c",
+      "symbol": "esx_result",
+      "owner": "saveload/esxdos",
+      "reason": "SAVELOAD overlay links esxDOS file I/O state from its overlay-local asm object."
+    },
+    {
+      "path": "src/spectrum/overlay/fileui_ovl.c",
+      "symbol": "esx_handle",
+      "owner": "saveload/esxdos",
+      "reason": "FILEUI overlay probes save slots via its overlay-local esxDOS asm object."
+    },
+    {
+      "path": "src/spectrum/overlay/fileui_ovl.c",
+      "symbol": "esx_buf",
+      "owner": "saveload/esxdos",
+      "reason": "FILEUI overlay probes save slots via its overlay-local esxDOS asm object."
+    },
+    {
+      "path": "src/spectrum/overlay/fileui_ovl.c",
+      "symbol": "esx_count",
+      "owner": "saveload/esxdos",
+      "reason": "FILEUI overlay probes save slots via its overlay-local esxDOS asm object."
+    },
+    {
+      "path": "src/spectrum/overlay/fileui_ovl.c",
+      "symbol": "esx_result",
+      "owner": "saveload/esxdos",
+      "reason": "FILEUI overlay probes save slots via its overlay-local esxDOS asm object."
+    },
+    {
+      "path": "src/spectrum/overlay/fileui_ovl.c",
+      "symbol": "spectrum_fileui_count",
+      "owner": "fileui",
+      "reason": "FILEUI overlay publishes the scanned file count for the resident nav and selection-attr helper."
+    },
+    {
+      "path": "src/spectrum/overlay/fileui_ovl.c",
+      "symbol": "spectrum_fileui_used_mask",
+      "owner": "fileui",
+      "reason": "FILEUI overlay publishes occupied save slots so PICK can generate the first free timestamped 8.3 name without rescanning the SD."
     }
   ]
 }

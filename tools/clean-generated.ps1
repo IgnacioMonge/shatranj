@@ -89,8 +89,11 @@ Remove-GeneratedPath "aider-pro"
 
 if (-not $ClientOnly) {
     Remove-GeneratedPath "build"
+    Remove-GeneratedPath "build-next"
+    Remove-GeneratedPath "build-nex"
     Remove-GeneratedPath "dist"
-    Remove-GeneratedGlob "src\spectrum\*.c.asm"
+    Get-ChildItem -Path (Join-Path $Root "src") -Recurse -Filter "*.c.asm" -Force -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
     Remove-GeneratedPath "release\NCHESSZX.tap"
     Remove-GeneratedPath "release\NCHESSZX.OVL"
     Remove-GeneratedPath "release\NCHESSZX.DAT"
@@ -108,6 +111,9 @@ if (-not $ClientOnly) {
     Remove-GeneratedPath "release\MQTTWKEY"
     Remove-GeneratedPath "release\MQTTBKEY"
     Remove-GeneratedPath "release\ZXCHNET.tap"
+    Remove-GeneratedPath "release\next"
+    Remove-GeneratedPath "release\nex"
+    Remove-GeneratedPath "release\Next"
     Remove-GeneratedPath "asm\overlay\rules\entry_rules.o"
     Remove-GeneratedPath "asm\overlay\rules\rules_stub.o"
     Remove-GeneratedPath "experimentos\banner-tall-demo\banner_demo.bin"
@@ -125,7 +131,6 @@ if (-not $ClientOnly) {
 if (-not $SpectrumOnly) {
     Remove-GeneratedPath "client\build"
     Remove-GeneratedPath "client\build_manual"
-    Remove-GeneratedPath "client\build_qmake"
     Remove-GeneratedPath "client\build_verify"
     Remove-GeneratedPath "client\dist"
     Remove-GeneratedPath "release\shatranj-client"

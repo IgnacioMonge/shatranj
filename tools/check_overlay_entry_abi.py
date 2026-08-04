@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check overlay ASM wrappers that pass spectrum_overlay_context to C fastcall."""
+"""Check overlay entry tables, aliases, and dispatcher register ABI."""
 
 from __future__ import annotations
 
@@ -8,10 +8,15 @@ from pathlib import Path
 import re
 import sys
 
+from gen_overlay_atlas import ORDER
+
 
 LABEL_RE = re.compile(r"^([A-Za-z0-9_.$]+):")
-JUMP_C_RE = re.compile(r"^\s+jp\s+(_[A-Za-z0-9_]+_ovl)\s*$")
+DEFC_RE = re.compile(
+    r"^\s*DEFC\s+([A-Za-z0-9_.$]+)\s*=\s*([A-Za-z0-9_.$]+)\s*$"
+)
 DW_RE = re.compile(r"^\s+DW\s+([A-Za-z0-9_.$]+)\s*$")
+DEFB_COUNT_RE = re.compile(r"^\s+DEFB\s+(\d+)\s*$")
 DEFINE_RE = re.compile(r"^#define\s+(SPECTRUM_OVL_[A-Za-z0-9_]+)\s+(.+)$")
 EQU_RE = re.compile(r"^(SPECTRUM_OVL_[A-Za-z0-9_]+)\s+EQU\s+(\d+)\s*$")
 ASM_EQU_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s+EQU\s+(0x[0-9A-Fa-f]+|\d+)\s*$")
@@ -20,10 +25,89 @@ LOWRAM_DEFINE_RE = re.compile(
     r"(0x[0-9A-Fa-f]+|\d+)\s*$"
 )
 
+C_WRAPPERS = {
+    "asm/overlay/board/entry_board.asm::_board_apply_ovl_entry":
+        "_board_apply_trusted_ovl",
+    "asm/overlay/board/entry_board.asm::_board_snapshot_restore_ovl_entry":
+        "_board_snapshot_restore_ovl",
+    "asm/overlay/board/entry_board.asm::_board_undo_restore_ovl_entry":
+        "_board_undo_restore_ovl",
+    "asm/overlay/control/entry_control.asm::_control_classify_ovl_entry":
+        "_control_classify_ovl",
+    "asm/overlay/direct/entry_direct.asm::_direct_read_payload_ovl_entry":
+        "_direct_read_payload_ovl",
+    "asm/overlay/direct/entry_direct.asm::_direct_send_text_ovl_entry":
+        "_direct_send_text_ovl",
+    "asm/overlay/fileui/entry_fileui.asm::_fileui_render_ovl_entry":
+        "_fileui_render_ovl",
+    "asm/overlay/fileui/entry_fileui.asm::_fileui_pick_ovl_entry":
+        "_fileui_pick_ovl",
+    "asm/overlay/gui_log/entry_gui_log.asm::_gui_log_add_move_ovl_entry":
+        "_gui_log_add_move_ovl",
+    "asm/overlay/gui_log/entry_gui_log.asm::_gui_log_add_chat_ovl_entry":
+        "_gui_log_add_chat_ovl",
+    "asm/overlay/gui_log/entry_gui_log.asm::_gui_log_notify_msg_ovl_entry":
+        "_gui_log_notify_msg_ovl",
+    "asm/overlay/gui_log/entry_gui_log.asm::_gui_log_remove_last_move_ovl_entry":
+        "_gui_log_remove_last_move_ovl",
+    "asm/overlay/input_edit/entry_input_edit.asm::_input_edit_render_ovl_entry":
+        "_input_edit_render_ovl",
+    "asm/overlay/input_edit/entry_input_edit.asm::_input_edit_begin_empty_ovl_entry":
+        "_input_edit_begin_empty_ovl",
+    "asm/overlay/input_edit/entry_input_edit.asm::_input_edit_stop_clear_ovl_entry":
+        "_input_edit_stop_clear_ovl",
+    "asm/overlay/input_edit/entry_input_edit.asm::_input_edit_key_ovl_entry":
+        "_input_edit_key_ovl",
+    "asm/overlay/input_edit/entry_input_edit.asm::_input_edit_history_add_ovl_entry":
+        "_input_edit_history_add_ovl",
+    "asm/overlay/menu_logic/entry_menu_logic.asm::_status_phase_ovl_entry":
+        "_status_phase_ovl",
+    "asm/overlay/mqtt_tx/entry_mqtt_tx.asm::_mqtt_tx_send_text_ovl_entry":
+        "_mqtt_tx_send_text_ovl",
+    "asm/overlay/mqtt_tx/entry_mqtt_tx.asm::_mqtt_tx_publish_setup_ovl_entry":
+        "_mqtt_tx_publish_setup_ovl",
+    "asm/overlay/restore/entry_restore.asm::_restore_build_frame_ovl_entry":
+        "_restore_build_frame_ovl",
+    "asm/overlay/restore/entry_restore.asm::_restore_decode_ovl_entry":
+        "_restore_decode_ovl",
+    "asm/overlay/saveload/entry_saveload.asm::_saveload_load_nczs_ovl_entry":
+        "_saveload_load_nczs_ovl",
+    "asm/overlay/saveload/entry_saveload.asm::_saveload_save_nczs_ovl_entry":
+        "_saveload_save_nczs_ovl",
+    "asm/overlay/saveload/entry_saveload.asm::_saveload_erase_nczs_ovl_entry":
+        "_saveload_erase_nczs_ovl",
+}
+
+ASM_ENTRIES = {
+    "asm/overlay/about/entry_about.asm::_about_render_ovl_entry",
+    "asm/overlay/board/entry_board.asm::_board_snapshot_save_ovl_entry",
+    "asm/overlay/input_edit/entry_input_edit.asm::input_edit_parse_move_ovl_entry",
+    "asm/overlay/menu_config/entry_menu_config.asm::_menu_config_run_ovl_entry",
+    "asm/overlay/menu_config/entry_menu_config.asm::_menu_config_paint_attrs_ovl_entry",
+    "asm/overlay/menu_config/entry_menu_config.asm::_menu_config_edit_line_ovl_entry",
+    "asm/overlay/menu_config/entry_menu_config.asm::_menu_config_validate_ip_ovl_entry",
+    "asm/overlay/menu_config/entry_menu_config.asm::_menu_config_render_ovl_entry",
+    "asm/overlay/setup/entry_setup.asm::_setup_compute_visible_ovl_entry",
+    "asm/overlay/setup/entry_setup.asm::_setup_step_ovl_entry",
+}
+
+PRIVATE_ENTRY_MACROS = {
+    "SPECTRUM_OVL_INPUT_EDIT_PARSE_MOVE_PRIVATE",
+    "SPECTRUM_OVL_SETUP_COMPUTE_VISIBLE_PRIVATE",
+}
 
 ENTRY_TABLES = {
+    "asm/overlay/about/entry_about.asm": [
+        ("SPECTRUM_OVL_ABOUT_RENDER", "_about_render_ovl_entry"),
+    ],
     "asm/overlay/board/entry_board.asm": [
         ("SPECTRUM_OVL_BOARD_APPLY", "_board_apply_ovl_entry"),
+        ("SPECTRUM_OVL_BOARD_SNAPSHOT_SAVE", "_board_snapshot_save_ovl_entry"),
+        ("SPECTRUM_OVL_BOARD_SNAPSHOT_RESTORE", "_board_snapshot_restore_ovl_entry"),
+        ("SPECTRUM_OVL_BOARD_UNDO_RESTORE", "_board_undo_restore_ovl_entry"),
+    ],
+    "asm/overlay/control/entry_control.asm": [
+        ("SPECTRUM_OVL_CONTROL_CLASSIFY", "_control_classify_ovl_entry"),
     ],
     "asm/overlay/direct/entry_direct.asm": [
         ("SPECTRUM_OVL_DIRECT_LISTEN", "_direct_listen_ovl"),
@@ -35,80 +119,245 @@ ENTRY_TABLES = {
     "asm/overlay/gui_log/entry_gui_log.asm": [
         ("SPECTRUM_OVL_GUI_LOG_ADD_MOVE", "_gui_log_add_move_ovl_entry"),
         ("SPECTRUM_OVL_GUI_LOG_ADD_CHAT", "_gui_log_add_chat_ovl_entry"),
-        ("SPECTRUM_OVL_APP_INPUT_PARSE_MOVE", "_app_input_parse_move_ovl_entry"),
-        ("SPECTRUM_OVL_GUI_LOG_CONNECTION_PANEL", "_connection_panel_ovl_entry"),
-    ],
-    "asm/overlay/hints/entry_hints.asm": [
-        ("SPECTRUM_OVL_HINTS_SHOW", "_rules_hints_ovl"),
-        ("SPECTRUM_OVL_HINTS_CLEAR", "_rules_hints_clear_ovl"),
+        ("SPECTRUM_OVL_GUI_LOG_NOTIFY_MSG", "_gui_log_notify_msg_ovl_entry"),
+        (
+            "SPECTRUM_OVL_GUI_LOG_REMOVE_LAST_MOVE",
+            "_gui_log_remove_last_move_ovl_entry",
+        ),
     ],
     "asm/overlay/menu_config/entry_menu_config.asm": [
         ("SPECTRUM_OVL_MENU_CONFIG_RUN", "_menu_config_run_ovl_entry"),
         ("SPECTRUM_OVL_MENU_CONFIG_PAINT_ATTRS", "_menu_config_paint_attrs_ovl_entry"),
         ("SPECTRUM_OVL_MENU_CONFIG_VALIDATE_IP", "_menu_config_validate_ip_ovl_entry"),
         ("SPECTRUM_OVL_MENU_CONFIG_EDIT_LINE", "_menu_config_edit_line_ovl_entry"),
+        ("SPECTRUM_OVL_MENU_CONFIG_RENDER", "_menu_config_render_ovl_entry"),
     ],
     "asm/overlay/menu_logic/entry_menu_logic.asm": [
-        ("SPECTRUM_OVL_MENU_LOGIC_UPDATE_ROOM", "_menu_logic_update_room_ovl_entry"),
-        ("SPECTRUM_OVL_MENU_LOGIC_MOVE_FOCUS", "_menu_logic_move_focus_ovl_entry"),
-        ("SPECTRUM_OVL_MENU_LOGIC_ROOM_APPEND", "_menu_logic_room_append_ovl_entry"),
-        (
-            "SPECTRUM_OVL_MENU_LOGIC_ROOM_EDITABLE",
-            "_menu_logic_room_editable_ovl_entry",
-        ),
-        (
-            "SPECTRUM_OVL_MENU_LOGIC_ROOM_BACKSPACE",
-            "_menu_logic_room_backspace_ovl_entry",
-        ),
-        (
-            "SPECTRUM_OVL_MENU_LOGIC_COMPUTE_VISIBLE",
-            "_menu_logic_compute_visible_ovl_entry",
-        ),
-        ("SPECTRUM_OVL_MENU_LOGIC_STEP_ROW", "_menu_logic_step_row_ovl_entry"),
         ("SPECTRUM_OVL_STATUS_PHASE", "_status_phase_ovl_entry"),
     ],
     "asm/overlay/mqtt_connect/entry_mqtt_connect.asm": [
         ("SPECTRUM_OVL_MQTT_CONNECT_START", "_mqtt_connect_start_ovl"),
         ("SPECTRUM_OVL_MQTT_CONNECT_ACTIVATE", "_mqtt_activate_side_ovl"),
+        ("SPECTRUM_OVL_NET_PREFLIGHT", "_net_preflight_ovl"),
+        ("SPECTRUM_OVL_MQTT_CONNECT_PROBE_SEAT", "_mqtt_probe_seat_ovl"),
     ],
     "asm/overlay/mqtt_tx/entry_mqtt_tx.asm": [
         ("SPECTRUM_OVL_MQTT_TX_SEND_TEXT", "_mqtt_tx_send_text_ovl_entry"),
         ("SPECTRUM_OVL_MQTT_TX_PUBLISH_SETUP", "_mqtt_tx_publish_setup_ovl_entry"),
-        ("SPECTRUM_OVL_MQTT_TX_PUBLISH_SESSION", "_mqtt_tx_publish_session_ovl"),
         ("SPECTRUM_OVL_MQTT_TX_SYNC_TIME", "_mqtt_tx_sync_time_ovl"),
+        ("SPECTRUM_OVL_MQTT_TX_PUBLISH_PRESENCE", "_mqtt_tx_publish_presence_ovl"),
+    ],
+    "asm/overlay/restore/entry_restore.asm": [
+        ("SPECTRUM_OVL_RESTORE_BUILD_FRAME", "_restore_build_frame_ovl_entry"),
+        ("SPECTRUM_OVL_RESTORE_DECODE", "_restore_decode_ovl_entry"),
     ],
     "asm/overlay/rules/entry_rules.asm": [
-        ("SPECTRUM_OVL_RULES_PLAY", "_rules_play_with_context"),
-        ("SPECTRUM_OVL_RULES_CHECK", "_rules_check_with_context"),
+        ("SPECTRUM_OVL_RULES_PLAY", "_rules_play_ovl"),
+        ("SPECTRUM_OVL_RULES_CHECK", "_rules_check_ovl"),
+        ("SPECTRUM_OVL_HINTS_SHOW", "_rules_hints_ovl"),
+        ("SPECTRUM_OVL_HINTS_CLEAR", "_rules_hints_clear_ovl"),
+    ],
+    "asm/overlay/fileui/entry_fileui.asm": [
+        ("SPECTRUM_OVL_FILEUI_RENDER", "_fileui_render_ovl_entry"),
+        ("SPECTRUM_OVL_FILEUI_PICK", "_fileui_pick_ovl_entry"),
+    ],
+    "asm/overlay/saveload/entry_saveload.asm": [
+        ("SPECTRUM_OVL_SAVELOAD_LOAD_NCZS", "_saveload_load_nczs_ovl_entry"),
+        ("SPECTRUM_OVL_SAVELOAD_SAVE_NCZS", "_saveload_save_nczs_ovl_entry"),
+        ("SPECTRUM_OVL_SAVELOAD_ERASE_NCZS", "_saveload_erase_nczs_ovl_entry"),
+    ],
+    "asm/overlay/input_edit/entry_input_edit.asm": [
+        ("SPECTRUM_OVL_INPUT_EDIT_RENDER", "_input_edit_render_ovl_entry"),
+        ("SPECTRUM_OVL_INPUT_EDIT_BEGIN_EMPTY", "_input_edit_begin_empty_ovl_entry"),
+        ("SPECTRUM_OVL_INPUT_EDIT_STOP_CLEAR", "_input_edit_stop_clear_ovl_entry"),
+        ("SPECTRUM_OVL_INPUT_EDIT_KEY", "_input_edit_key_ovl_entry"),
+        ("SPECTRUM_OVL_INPUT_EDIT_HISTORY_ADD", "_input_edit_history_add_ovl_entry"),
+        (
+            "SPECTRUM_OVL_INPUT_EDIT_PARSE_MOVE_PRIVATE",
+            "input_edit_parse_move_ovl_entry",
+        ),
+    ],
+    "asm/overlay/setup/entry_setup.asm": [
+        ("SPECTRUM_OVL_SETUP_STEP", "_setup_step_ovl_entry"),
+        (
+            "SPECTRUM_OVL_SETUP_COMPUTE_VISIBLE_PRIVATE",
+            "_setup_compute_visible_ovl_entry",
+        ),
     ],
 }
 
 
-def check_file(path: Path) -> list[str]:
+def check_wrappers(root: Path) -> list[str]:
+    errors: list[str] = []
+    seen: set[str] = set()
+    for path in sorted((root / "asm" / "overlay").glob("*/entry_*.asm")):
+        rel = path.relative_to(root).as_posix()
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for i, line in enumerate(lines):
+            alias = DEFC_RE.match(line)
+            if alias and alias.group(1).endswith("_ovl_entry"):
+                symbol, callee = alias.groups()
+                key = f"{rel}::{symbol}"
+                seen.add(key)
+                expected = C_WRAPPERS.get(key)
+                if expected is None:
+                    errors.append(f"{path}:{i + 1}: unclassified overlay entry {symbol}")
+                elif callee != expected:
+                    errors.append(
+                        f"{path}:{i + 1}: {symbol} aliases {callee} != {expected}"
+                    )
+                continue
+            match = LABEL_RE.match(line)
+            if not match or not match.group(1).endswith("_ovl_entry"):
+                continue
+            symbol = match.group(1)
+            key = f"{rel}::{symbol}"
+            seen.add(key)
+            if key not in ASM_ENTRIES:
+                errors.append(f"{path}:{i + 1}: {symbol} must be a DEFC alias")
+    for key in sorted((set(C_WRAPPERS) | ASM_ENTRIES) - seen):
+        errors.append(f"missing classified overlay entry {key}")
+    return errors
+
+
+def check_dispatchers(root: Path) -> list[str]:
+    errors: list[str] = []
+    expected_decode = [
+        "ld hl, 2",
+        "add hl, sp",
+        "ld a, (hl)",
+        "inc hl",
+        "ld b, (hl)",
+    ]
+    expected = [
+        "pop de",
+        "pop iy",
+        "pop ix",
+        "ld bc, ovl_return",
+        "push bc",
+        "push de",
+        "ld de, _spectrum_overlay_context",
+        "ld h, d",
+        "ld l, e",
+        "di",
+        "ret",
+    ]
+    for rel in (
+        "asm/esxdos/overlay_loader.asm",
+        "asm/next/overlay_loader_next.asm",
+    ):
+        path = root / rel
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if instructions_after_label(lines, "_spectrum_overlay_exec_cached") != expected_decode:
+            errors.append(f"{path}: dispatcher must decode packed overlay arguments directly")
+        canonical = instructions_after_label(lines, "ovl_args_canonical")
+        if canonical[:3] != ["ld (ovl_id), a", "ld a, b", "ld (ovl_entry_id), a"]:
+            errors.append(f"{path}: canonical overlay and entry ids must be stored together")
+        try:
+            start = lines.index("ovl_call_loaded:")
+        except ValueError:
+            errors.append(f"{path}: missing ovl_call_loaded")
+            continue
+        instructions: list[str] = []
+        for raw_line in lines[start + 1:]:
+            if LABEL_RE.match(raw_line):
+                break
+            instruction = raw_line.split(";", 1)[0].strip().lower()
+            if instruction:
+                instructions.append(re.sub(r"\s+", " ", instruction))
+        if instructions[-len(expected):] != expected:
+            errors.append(f"{path}: dispatcher must pass context in both DE and HL")
+        if instructions[:2] != ["ld a, (ovl_entry_id)", "ld hl, _overlay_code_slot"]:
+            errors.append(f"{path}: dispatcher must consume the canonical entry id directly")
+
+        selector = instructions_after_label(lines, "ovl_select_atlas_entry")
+        if selector[:4] != [
+            "ld a, (ovl_id)",
+            "cp ovl_atlas_count",
+            "jr nc, ovl_select_bad",
+            "add a, a",
+        ]:
+            errors.append(f"{path}: atlas selector must consume the canonical overlay id directly")
+    return errors
+
+
+def instructions_after_label(lines: list[str], label: str) -> list[str]:
+    try:
+        start = lines.index(f"{label}:")
+    except ValueError:
+        return []
+    instructions: list[str] = []
+    for raw_line in lines[start + 1:]:
+        if LABEL_RE.match(raw_line):
+            break
+        instruction = raw_line.split(";", 1)[0].strip().lower()
+        if instruction:
+            instructions.append(re.sub(r"\s+", " ", instruction))
+    return instructions
+
+
+def check_rules_stack_contract(root: Path) -> list[str]:
+    path = root / "asm" / "overlay" / "rules" / "rules_stub.asm"
     lines = path.read_text(encoding="utf-8").splitlines()
     errors: list[str] = []
-    for i, line in enumerate(lines):
-        m = LABEL_RE.match(line)
-        if not m or not m.group(1).endswith("_ovl_entry"):
-            continue
-        saw_ex = False
-        j = i + 1
-        while j < len(lines):
-            next_line = lines[j]
-            if LABEL_RE.match(next_line):
-                break
-            stripped = next_line.strip().lower()
-            if stripped == "ex de, hl":
-                saw_ex = True
-            jm = JUMP_C_RE.match(next_line)
-            if jm:
-                if not saw_ex:
-                    errors.append(
-                        f"{path}:{i + 1}: {m.group(1)} jumps to {jm.group(1)} "
-                        "without 'ex de, hl'"
-                    )
-                break
-            j += 1
+    expected_prefix = ["push ix", "push iy", "call rules_import_board"]
+
+    for entry in ("_rules_hints_ovl", "_rules_play_ovl", "_rules_check_ovl"):
+        instructions = instructions_after_label(lines, entry)
+        if instructions[:3] != expected_prefix:
+            errors.append(f"{path}: {entry} must save IX/IY before importing board")
+
+    helper = instructions_after_label(lines, "rules_import_board")
+    if not helper or helper[-1] != "ret":
+        errors.append(f"{path}: rules_import_board must return directly")
+    if any(instruction.startswith(("push ", "pop ")) for instruction in helper):
+        errors.append(f"{path}: rules_import_board must not change the caller stack")
+    return errors
+
+
+def check_setup_editability(root: Path) -> list[str]:
+    path = root / "asm" / "overlay" / "setup" / "entry_setup.asm"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    errors: list[str] = []
+    endpoint = instructions_after_label(lines, "su_room_editable")
+    if endpoint != [
+        "ld a, (_setup_cursor)",
+        "sub 2",
+        "jr nz, su_re_port",
+        "ld hl, (_setup_choice)",
+        "ld a, h",
+        "or l",
+        "ret",
+    ]:
+        errors.append(f"{path}: HOST DIRECT IP must remain read-only")
+    port = instructions_after_label(lines, "su_re_port")
+    if port[:5] != [
+        "dec a",
+        "jr nz, su_re_false",
+        "ld a, (_setup_choice + 1)",
+        "or a",
+        "jr z, su_re_true",
+    ]:
+        errors.append(f"{path}: DIRECT port must remain editable")
+    auto_room = instructions_after_label(lines, "su_link_auto_room")
+    if auto_room[-3:] != [
+        "ld a, 2",
+        "ld (su_clear_from), a",
+        "jp su_define_row_and_finish",
+    ]:
+        errors.append(f"{path}: HOST DIRECT must advance past the read-only IP")
+    focus = instructions_after_label(lines, "su_visible_a")
+    if focus != [
+        "ld e, a",
+        "ld d, 0",
+        "cp 2",
+        "jr nz, su_va_mask",
+        "ld hl, (_setup_choice)",
+        "ld a, h",
+        "or l",
+        "ret z",
+    ]:
+        errors.append(f"{path}: HOST DIRECT navigation must skip the read-only IP")
     return errors
 
 
@@ -190,7 +439,6 @@ def check_lowram_addresses(root: Path) -> list[str]:
     lowram = parse_lowram_defines(root / "src" / "spectrum" / "lowram_map.h")
     screen = parse_asm_equ(root / "asm" / "spectrum" / "screen.asm")
     loader = parse_asm_equ(root / "asm" / "esxdos" / "overlay_loader.asm")
-    rules_entry = parse_asm_equ(root / "asm" / "overlay" / "rules" / "entry_rules.asm")
     context = lowram.get("NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_ADDR")
     rules_board = lowram.get("NETCHESSZX_LOWRAM_RULES_BOARD_ADDR")
 
@@ -215,13 +463,6 @@ def check_lowram_addresses(root: Path) -> list[str]:
         loader,
         "_spectrum_overlay_context",
     )
-    check_expected_addr(
-        errors,
-        "asm/overlay/rules/entry_rules.asm",
-        context,
-        rules_entry,
-        "_spectrum_overlay_context",
-    )
     return errors
 
 
@@ -230,17 +471,17 @@ def parse_entry_table(path: Path) -> tuple[int, list[str]] | None:
     count: int | None = None
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.split(";", 1)[0]
+        if count is None:
+            count_match = DEFB_COUNT_RE.match(line)
+            if count_match:
+                count = int(count_match.group(1))
+            continue
         match = DW_RE.match(line)
         if not match:
-            if count is not None and entries:
+            if entries:
                 break
             continue
         value = match.group(1)
-        if count is None:
-            if not value.isdigit():
-                continue
-            count = int(value)
-            continue
         entries.append(value)
         if len(entries) == count:
             break
@@ -256,18 +497,33 @@ def check_entry_tables(root: Path) -> list[str]:
     )
     screen_values = parse_screen_equ(root / "asm" / "spectrum" / "screen.asm")
 
+    for index, name in enumerate(ORDER):
+        macro = "SPECTRUM_OVL_STATUS" if name == "MENU_LOGIC" else f"SPECTRUM_OVL_{name}"
+        if overlay_values.get(macro) != index:
+            errors.append(
+                f"tools/gen_overlay_atlas.py: {name} index {index} != {macro} {overlay_values.get(macro)!r}"
+            )
+
     for rel, expected in ENTRY_TABLES.items():
         path = root / rel
         parsed = parse_entry_table(path)
         if parsed is None:
-            errors.append(f"{path}: missing DW entry table")
+            errors.append(f"{path}: missing DEFB count + DW entry table")
             continue
         count, entries = parsed
         if count != len(expected):
-            errors.append(f"{path}: DW count {count} != expected {len(expected)}")
+            errors.append(f"{path}: DEFB count {count} != expected {len(expected)}")
         if entries != [symbol for _, symbol in expected]:
             errors.append(f"{path}: entry table order mismatch: {entries}")
         for index, (macro, _) in enumerate(expected):
+            if macro in PRIVATE_ENTRY_MACROS:
+                if macro in overlay_values:
+                    errors.append(f"{path}: private entry {macro} leaked into overlay.h")
+                if screen_values.get(macro) != index:
+                    errors.append(
+                        f"{path}: private {macro} in screen.asm is {screen_values.get(macro)!r}, expected {index}"
+                    )
+                continue
             if overlay_values.get(macro) != index:
                 errors.append(
                     f"{path}: {macro} in overlay.h is {overlay_values.get(macro)!r}, expected {index}"
@@ -286,8 +542,10 @@ def main(argv: list[str]) -> int:
 
     root = Path(args.root)
     errors: list[str] = []
-    for path in sorted((root / "asm" / "overlay").glob("*/entry_*.asm")):
-        errors.extend(check_file(path))
+    errors.extend(check_wrappers(root))
+    errors.extend(check_dispatchers(root))
+    errors.extend(check_rules_stack_contract(root))
+    errors.extend(check_setup_editability(root))
     errors.extend(check_entry_tables(root))
     errors.extend(check_lowram_addresses(root))
 
@@ -295,7 +553,7 @@ def main(argv: list[str]) -> int:
         for error in errors:
             print(f"[ERR] {error}", file=sys.stderr)
         return 1
-    print("[OK] overlay entry ABI wrappers")
+    print("[OK] overlay entry ABI")
     return 0
 
 

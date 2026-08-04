@@ -3,18 +3,13 @@ SECTION code_user
 PUBLIC _spectrum_append_text
 PUBLIC _spectrum_append_u16
 
-; char *spectrum_append_text(char *dst, const char *src)
-; SDCC/IY stack: SP+2 = dst, SP+4 = src.
+; char *spectrum_append_text(char *dst, const char *src) __z88dk_callee
+; SDCC/IY stack: [return][dst][src]; leave only return for RET.
 _spectrum_append_text:
-    ld hl, 2
-    add hl, sp
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
+    pop af
+    pop de
+    pop bc
+    push af
 append_text_loop:
     ld a, (bc)
     inc bc
@@ -26,19 +21,13 @@ append_text_loop:
     ex de, hl
     ret
 
-; char *spectrum_append_u16(char *dst, uint16_t value)
-; SDCC/IY stack: SP+2 = dst, SP+4 = value.
+; char *spectrum_append_u16(char *dst, uint16_t value) __z88dk_callee
+; SDCC/IY stack: [return][dst][value]; leave only return for RET.
 _spectrum_append_u16:
-    ld hl, 2
-    add hl, sp
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld a, (hl)
-    inc hl
-    ld h, (hl)
-    ld l, a
+    pop af
+    pop de
+    pop hl
+    push af
 
     ld bc, 10000
     call append_count_digit

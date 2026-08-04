@@ -1,7 +1,5 @@
 SECTION code_user
 
-EXTERN _netchesszx_version_banner_msg
-
 PUBLIC _spectrum_render_board
 PUBLIC _spectrum_render_board_area
 PUBLIC _spectrum_render_status
@@ -23,7 +21,6 @@ PUBLIC _spectrum_info_show_game_setup
 PUBLIC _spectrum_info_show_preflight
 PUBLIC _spectrum_info_clear_tail
 PUBLIC _spectrum_info_line
-PUBLIC _spectrum_setup_board_swatches
 PUBLIC _spectrum_render_board_coords
 PUBLIC _spectrum_render_square
 PUBLIC _spectrum_render_square_attr
@@ -48,24 +45,27 @@ PUBLIC _spectrum_render_input
 PUBLIC _spectrum_render_input_cell
 PUBLIC _spectrum_key_edit_pressed
 PUBLIC _spectrum_key_poll
+PUBLIC _spectrum_input_frame_tick
+PUBLIC _spectrum_input_poll_event
+PUBLIC _spectrum_input_flush_until_release
+PUBLIC _spectrum_input_suppress_until_release
 PUBLIC _netchesszx_board_theme_apply
-PUBLIC _spectrum_info_panel_overlay_line
 PUBLIC _spectrum_input_parse_move
-PUBLIC _netchesszx_setup_update_room_code
 PUBLIC _netchesszx_setup_render_edit_line
 PUBLIC _netchesszx_setup_compute_visible
-PUBLIC _netchesszx_setup_step_row
 PUBLIC _netchesszx_setup_paint_attrs
 PUBLIC _netchesszx_setup_render_rows
-PUBLIC _netchesszx_setup_room_editable
-PUBLIC _netchesszx_setup_room_backspace
-PUBLIC _netchesszx_setup_room_append
-PUBLIC _netchesszx_setup_move_focus
-PUBLIC _netchesszx_setup_validate_ip
+PUBLIC _netchesszx_setup_render_overlay
+PUBLIC _netchesszx_setup_step_overlay
 PUBLIC _spectrum_board_clear_legal_hints
 PUBLIC _spectrum_board_view_redraw_square
 PUBLIC _spectrum_board_view_flipped
 PUBLIC board_theme_hint_inks
+IFDEF NETCHESSZX_NEXT
+PUBLIC _spectrum_next_sprites_hide_all
+EXTERN nextreg_read
+EXTERN nextreg_write
+ENDIF
 
 EXTERN _spectrum_gui_board_flipped
 EXTERN _spectrum_gui_redraw_square
@@ -85,28 +85,26 @@ ATTR_BASE   EQU 0x5800
 NETCHESSZX_ASSET_BASE EQU 0x6000
 NETCHESSZX_RULES_BOARD_BASE EQU 0x5fa0
 NETCHESSZX_OVERLAY_CONTEXT EQU 0x5fe0
-SPECTRUM_OVL_GUI_LOG EQU 2
-SPECTRUM_OVL_APP_INPUT EQU 2
-SPECTRUM_OVL_APP_INPUT_PARSE_MOVE EQU 2
-SPECTRUM_OVL_GUI_LOG_CONNECTION_PANEL EQU 3
+SPECTRUM_OVL_INPUT_EDIT EQU 9
+SPECTRUM_OVL_INPUT_EDIT_PARSE_MOVE_PRIVATE EQU 5
 SPECTRUM_OVL_MENU_CONFIG EQU 6
 SPECTRUM_OVL_MENU_CONFIG_RUN EQU 0
 SPECTRUM_OVL_MENU_CONFIG_PAINT_ATTRS EQU 1
 SPECTRUM_OVL_MENU_CONFIG_VALIDATE_IP EQU 2
 SPECTRUM_OVL_MENU_CONFIG_EDIT_LINE EQU 3
-SPECTRUM_OVL_MENU_LOGIC EQU 7
-SPECTRUM_OVL_MENU_LOGIC_UPDATE_ROOM EQU 0
-SPECTRUM_OVL_MENU_LOGIC_MOVE_FOCUS EQU 1
-SPECTRUM_OVL_MENU_LOGIC_ROOM_APPEND EQU 2
-SPECTRUM_OVL_MENU_LOGIC_ROOM_EDITABLE EQU 3
-SPECTRUM_OVL_MENU_LOGIC_ROOM_BACKSPACE EQU 4
-SPECTRUM_OVL_MENU_LOGIC_COMPUTE_VISIBLE EQU 5
-SPECTRUM_OVL_MENU_LOGIC_STEP_ROW EQU 6
-SPECTRUM_OVL_HINTS EQU 8
-SPECTRUM_OVL_HINTS_SHOW EQU 0
-SPECTRUM_OVL_HINTS_CLEAR EQU 1
-SPECTRUM_OVL_STATUS EQU SPECTRUM_OVL_MENU_LOGIC
-SPECTRUM_OVL_STATUS_PHASE EQU 7
+SPECTRUM_OVL_MENU_CONFIG_RENDER EQU 4
+SPECTRUM_OVL_HINTS EQU 0
+SPECTRUM_OVL_HINTS_SHOW EQU 2
+SPECTRUM_OVL_HINTS_CLEAR EQU 3
+SPECTRUM_OVL_SETUP EQU 8
+SPECTRUM_OVL_SETUP_STEP EQU 0
+SPECTRUM_OVL_SETUP_COMPUTE_VISIBLE_PRIVATE EQU 1
+SPECTRUM_OVL_CTX_HINTS_BOARD_LO EQU 0
+SPECTRUM_OVL_CTX_HINTS_BOARD_HI EQU 1
+SPECTRUM_OVL_CTX_HINTS_SIDE_TO_MOVE EQU 2
+SPECTRUM_OVL_CTX_HINTS_SQUARE EQU 3
+SPECTRUM_OVL_CTX_HINTS_CASTLE EQU 4
+SPECTRUM_OVL_CTX_HINTS_EP EQU 5
 DEFC _spectrum_board_view_redraw_square = _spectrum_gui_redraw_square
 DEFC _spectrum_board_view_flipped = _spectrum_gui_board_flipped
 expand_2x EQU NETCHESSZX_ASSET_BASE
@@ -127,10 +125,55 @@ game_setup_msg EQU NETCHESSZX_ASSET_BASE + 589
 preflight_setup_msg EQU NETCHESSZX_ASSET_BASE + 600
 input_prompt_msg EQU NETCHESSZX_ASSET_BASE + 622
 white_turn_msg EQU NETCHESSZX_ASSET_BASE + 625
-piece_sprites_16x16 EQU NETCHESSZX_ASSET_BASE + 639
+black_turn_msg EQU NETCHESSZX_ASSET_BASE + 639
+white_check_msg EQU NETCHESSZX_ASSET_BASE + 653
+black_check_msg EQU NETCHESSZX_ASSET_BASE + 665
+menu_cursor_masks EQU NETCHESSZX_ASSET_BASE + 677
+tab_label_file EQU NETCHESSZX_ASSET_BASE + 701
+tab_label_discc EQU NETCHESSZX_ASSET_BASE + 706
+tab_label_reset EQU NETCHESSZX_ASSET_BASE + 712
+tab_label_flip EQU NETCHESSZX_ASSET_BASE + 718
+tab_label_theme EQU NETCHESSZX_ASSET_BASE + 723
+tab_label_about EQU NETCHESSZX_ASSET_BASE + 729
+moves_white_msg EQU NETCHESSZX_ASSET_BASE + 735
+moves_black_msg EQU NETCHESSZX_ASSET_BASE + 741
+banner_info_top_msg EQU NETCHESSZX_ASSET_BASE + 747
+board_theme_mark_inks EQU NETCHESSZX_ASSET_BASE + 781
+board_theme_light_attrs EQU NETCHESSZX_ASSET_BASE + 786
+board_theme_dark_attrs EQU NETCHESSZX_ASSET_BASE + 791
+version_banner_msg EQU NETCHESSZX_ASSET_BASE + 796
+piece_sprites_16x16 EQU NETCHESSZX_ASSET_BASE + 812
 
 NETCHESSZX_GAME_BOARD_TOP_ROW EQU 5
 NETCHESSZX_GAME_BOARD_LEFT_COL EQU 1
+IFDEF NETCHESSZX_NEXT
+NEXT_SPRITE_Y_BASE EQU 32 + (NETCHESSZX_GAME_BOARD_TOP_ROW * 8)
+NEXT_SPRITE_X_BASE EQU 32 + (NETCHESSZX_GAME_BOARD_LEFT_COL * 8)
+NEXT_SPRITE_SLOT_PORT EQU 0x303B
+NEXT_SPRITE_ATTR_PORT EQU 0x0057
+NEXT_SPRITE_VISIBLE EQU 0x80
+NEXT_BOARD_SPRITE_SLOT_BASE EQU 0
+NEXT_PIECE_SPRITE_SLOT_BASE EQU 64
+NEXT_MARKER_SPRITE_SLOT_BASE EQU 96
+NEXT_BOARD_PATTERN_BASE EQU 12
+NEXT_MARKER_PATTERN_BASE EQU 22
+NEXT_MARKER_FLAG_HINT EQU 1
+NEXT_MARKER_FLAG_MARK EQU 2
+NEXT_MARKER_FLAG_SELECTED EQU 4
+NEXT_EMPTY_SLOT EQU 0xff
+NEXTREG_SELECT_PORT EQU 0x243b
+NEXTREG_DATA_PORT EQU 0x253b
+NEXTREG_PALETTE_INDEX EQU 0x40
+NEXTREG_PALETTE_CONTROL EQU 0x43
+NEXTREG_PALETTE_VALUE_9 EQU 0x44
+NEXTREG_ULA_CONTROL EQU 0x68
+NEXT_BOARD_COORD_LINE_ATTR EQU 0x81
+NEXT_BOARD_COORD_SELECTED_ATTR EQU 0x8a
+NEXT_BOARD_COORD_INK1_INDEX EQU 225
+NEXT_BOARD_COORD_INK2_INDEX EQU 226
+NEXT_BOARD_COORD_PAPER0_INDEX EQU 232
+NEXT_BOARD_COORD_PAPER1_INDEX EQU 233
+ENDIF
 NETCHESSZX_INFO_PANEL_COL EQU 18
 NETCHESSZX_INFO_TEXT_COL  EQU (NETCHESSZX_INFO_PANEL_COL * 2) + 1
 NETCHESSZX_INFO_HEADER_ROW EQU 5
@@ -238,13 +281,22 @@ sprite_ptr:   DEFS 2
 mark_mode:    DEFS 1
 key_last:     DEFS 1
 key_repeat_timer: DEFS 1
+key_event:    DEFS 1
+key_raw:      DEFS 1
+key_suppress: DEFS 1
+IFDEF NETCHESSZX_NEXT
+piece_slot_squares: DEFS 32
+marker_slot_squares: DEFS 32
+marker_slot_flags: DEFS 32
+ENDIF
 
 SECTION code_user
 
-EXTERN _netchesszx_version_banner_msg
-
 _spectrum_render_board:
     ld (board_ptr), hl
+IFDEF NETCHESSZX_NEXT
+    call next_board_coord_palette_sync
+ENDIF
     call clear_screen
     call draw_banner
     call hide_menu
@@ -277,6 +329,14 @@ _spectrum_render_board_coord_mark:
     ld a, (hl)
     or a
     jr z, srcm_text
+IFDEF NETCHESSZX_NEXT
+    ld a, (_netchesszx_board_theme_index)
+    or a
+    jr z, srcm_selected_classic
+    ld a, NEXT_BOARD_COORD_SELECTED_ATTR
+    jr srcm_attr_ready
+srcm_selected_classic:
+ENDIF
     ld a, (_netchesszx_board_light_attr)
     jr srcm_attr_ready
 srcm_text:
@@ -433,14 +493,13 @@ _spectrum_render_turn_label:
     cp 3
     jr z, srtl_black_check
     or a
-    jr nz, srtl_black
-    ld a, ATTR_TIMER
-    ld (current_attr), a
     ld a, NETCHESSZX_TOP_TURN_CLEAR_COL
+    jr nz, srtl_black
     ld hl, white_turn_msg
     jr srtl_draw
 srtl_black:
-    jp draw_black_turn_row
+    ld hl, black_turn_msg
+    jr srtl_draw
 srtl_white_check:
     ld a, ATTR_TIMER_CHECK_WHITE
     ld (current_attr), a
@@ -459,37 +518,6 @@ srtl_draw:
     ld a, NETCHESSZX_TOP_TURN_SCAN
     ld (tmp_scan), a
     jp draw_ikkle_text_at
-
-draw_black_turn_row:
-    ld a, NETCHESSZX_TOP_TURN_ROW
-    call compute_attr_base
-    ld a, NETCHESSZX_TOP_TURN_BYTE_COL
-    add a, l
-    ld l, a
-    ld b, NETCHESSZX_TOP_TURN_WIDTH_BYTES
-    ld a, ATTR_TIMER
-dbtr_attr:
-    ld (hl), a
-    inc hl
-    djnz dbtr_attr
-
-    ld a, NETCHESSZX_TOP_TURN_ROW
-    call compute_screen_base
-    ld a, NETCHESSZX_TOP_TURN_BYTE_COL
-    add a, l
-    ld l, a
-    ex de, hl
-    ld hl, black_turn_row_data
-    ld a, 8
-dbtr_scan:
-    push de
-    ld bc, NETCHESSZX_TOP_TURN_WIDTH_BYTES
-    ldir
-    pop de
-    inc d
-    dec a
-    jr nz, dbtr_scan
-    ret
 
 clear_turn_strip:
     ld a, NETCHESSZX_TOP_TURN_ROW
@@ -511,21 +539,6 @@ cts_fill:
     dec c
     jr nz, cts_scan
     ret
-
-black_turn_row_data:
-    DEFB 0x00,0x00,0x00,0x00,0x00,0x00,0x00
-    DEFB 0x1f,0xff,0xff,0xff,0xff,0xff,0xff
-    DEFB 0x11,0x71,0x35,0xf1,0x1f,0x51,0x51
-    DEFB 0x11,0x75,0x73,0xfb,0x5f,0x15,0x53
-    DEFB 0x15,0x71,0x75,0xfb,0x5f,0x15,0x57
-    DEFB 0x11,0x35,0x35,0xfb,0x1f,0x51,0xb1
-    DEFB 0x1f,0xff,0xff,0xff,0xff,0xff,0xff
-    DEFB 0x00,0x00,0x00,0x00,0x00,0x00,0x00
-
-white_check_msg:
-    DEFB "WHITE CHECK",0
-black_check_msg:
-    DEFB "BLACK CHECK",0
 
 _spectrum_render_notice:
     ld a, ATTR_NOTICE
@@ -583,7 +596,7 @@ _spectrum_info_show_game:
 
 _spectrum_info_show_setup:
     call clear_right_panel_rows
-    jp draw_connection_setup_header
+    jr draw_connection_setup_header
 
 _spectrum_info_show_game_setup:
     ld b, NETCHESSZX_INFO_SETUP_GAME_HEADER_ROW
@@ -607,6 +620,110 @@ store_tmp_rcs:
     ld a, d
     ld (tmp_scan), a
     ret
+
+PUBLIC _spectrum_render_ikkle_at
+; HL -> spec: row cell, ikkle half-column (0-63), attr, NUL-terminated text.
+_spectrum_render_ikkle_at:
+    ld a, (hl)
+    ld (tmp_row), a
+    inc hl
+    ld a, (hl)
+    ld (tmp_col), a
+    inc hl
+    ld a, (hl)
+    ld (current_attr), a
+    inc hl
+    ld a, 2
+    ld (tmp_scan), a
+    jp draw_ikkle_text_at
+
+PUBLIC _spectrum_render_fileui_select
+EXTERN _spectrum_fileui_count
+; L = list slot (0-9), H = 1 select / 0 deselect. Paints the item's 12
+; attribute cells (items at ikkle half-col 4, rows 9-18): normal ink for
+; deselect, inverted (taboption-style) for select; saved rows cyan, free
+; rows white.
+_spectrum_render_fileui_select:
+    ld de, 0x0507        ; D = saved off (cyan), E = free off (white)
+    ld a, h
+    or a
+    jr z, srfs_pick
+    ld de, 0x2838        ; D = saved on, E = free on (inverted)
+srfs_pick:
+    ld a, (_spectrum_fileui_count)
+    ld b, a
+    ld a, l
+    cp b
+    jr c, srfs_saved
+    ld d, e
+srfs_saved:
+    add a, 9
+    push de
+    call compute_attr_base
+    pop de
+    ld a, 2
+    add a, l
+    ld l, a
+    ld a, d
+    ld b, 12
+srfs_loop:
+    ld (hl), a
+    inc l
+    djnz srfs_loop
+    ret
+
+PUBLIC _spectrum_render_fileui_frame
+; Clear the board interior (rows 5-20, cells 1-16) to ATTR_TEXT while
+; leaving the board frame pixels in the border cells untouched.
+_spectrum_render_fileui_frame:
+    call clear_board_coords
+    ld c, NETCHESSZX_GAME_BOARD_TOP_ROW
+srff_row:
+    ld a, c
+    call compute_screen_base_de8
+srff_scan:
+    ld h, d
+    ld l, e
+    ld a, NETCHESSZX_GAME_BOARD_LEFT_COL
+    add a, l
+    ld l, a
+    push bc
+    ld b, 16
+    xor a
+srff_px:
+    ld (hl), a
+    inc l
+    djnz srff_px
+    pop bc
+    inc d
+    djnz srff_scan
+    ld a, c
+    call compute_attr_base
+    ld a, NETCHESSZX_GAME_BOARD_LEFT_COL
+    add a, l
+    ld l, a
+    ld b, 16
+    ld a, ATTR_TEXT
+srff_attr:
+    ld (hl), a
+    inc l
+    djnz srff_attr
+    inc c
+    ld a, c
+    cp NETCHESSZX_GAME_BOARD_TOP_ROW + 16
+    jr c, srff_row
+    ld a, 8
+    call compute_screen_base
+    ld a, NETCHESSZX_GAME_BOARD_LEFT_COL
+    add a, l
+    ld l, a
+    ld b, 16
+    ld a, 0xff
+srff_sep:
+    ld (hl), a
+    inc l
+    djnz srff_sep
+    jp draw_board_frame
 
 attr_cell_for_tmpcol:
     call compute_attr_base
@@ -683,6 +800,10 @@ _spectrum_render_square_with_hint:
     push hl
     call _spectrum_render_square
     pop hl
+
+    xor a
+render_hint_from_spec:
+    ld (mark_mode), a
     ld a, (_netchesszx_movement_hints)
     or a
     ret z
@@ -717,6 +838,13 @@ _spectrum_render_square_with_hint:
     ld a, (hl)
     ld (board_col), a
     inc hl
+    ld a, (mark_mode)
+    or a
+    jr z, rsh_piece_ptr_ready
+    inc hl
+    inc hl
+    inc hl
+rsh_piece_ptr_ready:
     ld c, 0
     ld a, (hl)
     cp '.'
@@ -727,10 +855,25 @@ rsh_piece_ready:
     ld e, a
     ld d, 0
     ld hl, board_theme_hint_inks
+    ld a, (mark_mode)
+    or a
+    jr z, rsh_inks_ready
+    ld hl, board_theme_mark_inks
+rsh_inks_ready:
     add hl, de
     ld a, (hl)
     or c
     ld (tmp_attr), a
+IFDEF NETCHESSZX_NEXT
+    ld a, (mark_mode)
+    or a
+    jr nz, rsh_next_mark
+    call next_marker_set_hint_current_square
+    jr rsh_next_marker_done
+rsh_next_mark:
+    call next_marker_set_mark_current_square
+rsh_next_marker_done:
+ENDIF
 
 render_square_hint_loaded:
     call compute_square_bc
@@ -779,7 +922,7 @@ render_square_hint_loaded:
     dec l
     inc h
     ld de, 0x8001
-    jp draw_dot_row
+    jr draw_dot_row
 
 rsh_no_hint:
     pop hl
@@ -799,9 +942,12 @@ hint_col_mask:
     DEFB 1, 2, 4, 8, 16, 32, 64, 128
 
 board_theme_hint_inks:
+IFDEF NETCHESSZX_NEXT
+    ; Next boards: black&white, blue3, green, brown, wood
+    DEFB 6, 7, 7, 0, 0
+ELSE
     DEFB 3, 2, 1, 3, 7
-board_theme_mark_inks:
-    DEFB 2, 5, 0, 7, 6
+ENDIF
 
 _spectrum_render_square_mark:
     call read_square_spec
@@ -814,65 +960,10 @@ _spectrum_render_square_mark_with_hint:
     ld (tmp_attr), a
     call draw_square_mark
     pop hl
-    jp render_hint_from_mark_spec
 
 render_hint_from_mark_spec:
-    ld a, (_netchesszx_movement_hints)
-    or a
-    ret z
-    push hl
-    inc hl
-    inc hl
-    inc hl
-    ld a, (hl)
-    cp 8
-    jp nc, rsh_mark_no_hint
-    ld e, a
-    ld d, 0
-    inc hl
-    ld a, (hl)
-    cp 8
-    jp nc, rsh_mark_no_hint
-    ld c, a
-    ld hl, _netchesszx_hinted_rows
-    add hl, de
-    ld a, (hl)
-    ld e, a
-    ld b, 0
-    ld hl, hint_col_mask
-    add hl, bc
-    ld a, e
-    and (hl)
-    pop hl
-    ret z
-    ld a, (hl)
-    ld (board_row), a
-    inc hl
-    ld a, (hl)
-    ld (board_col), a
-    inc hl
-    inc hl
-    inc hl
-    inc hl
-    ld c, 0
-    ld a, (hl)
-    cp '.'
-    jr z, rsh_mark_piece_ready
-    ld c, 0x80
-rsh_mark_piece_ready:
-    ld a, (_netchesszx_board_theme_index)
-    ld e, a
-    ld d, 0
-    ld hl, board_theme_mark_inks
-    add hl, de
-    ld a, (hl)
-    or c
-    ld (tmp_attr), a
-    jp render_square_hint_loaded
-
-rsh_mark_no_hint:
-    pop hl
-    ret
+    ld a, 1
+    jp render_hint_from_spec
 
 
 
@@ -902,7 +993,7 @@ _spectrum_board_show_legal_hints:
     inc hl
     ld a, (_ep_square)
     ld (hl), a
-    ld hl, 8
+    ld hl, SPECTRUM_OVL_HINTS + (SPECTRUM_OVL_HINTS_SHOW * 256)
     push hl
     call _spectrum_overlay_exec_cached
     pop bc
@@ -924,24 +1015,6 @@ call_overlay_cached_ae:
     pop bc
     ret
 
-_spectrum_info_panel_overlay_line:
-    ld hl, 2
-    add hl, sp
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld c, (hl)
-    ld hl, NETCHESSZX_OVERLAY_CONTEXT
-    ld (hl), e
-    inc hl
-    ld (hl), d
-    inc hl
-    ld (hl), c
-    ld a, SPECTRUM_OVL_GUI_LOG
-    ld e, SPECTRUM_OVL_GUI_LOG_CONNECTION_PANEL
-    jp call_overlay_ae
-
 _spectrum_input_parse_move:
     ld hl, 2
     add hl, sp
@@ -960,105 +1033,56 @@ _spectrum_input_parse_move:
     ld (hl), c
     inc hl
     ld (hl), b
-    ld a, SPECTRUM_OVL_APP_INPUT
-    ld e, SPECTRUM_OVL_APP_INPUT_PARSE_MOVE
-    jp call_overlay_ae
+    ld a, SPECTRUM_OVL_INPUT_EDIT
+    ld e, SPECTRUM_OVL_INPUT_EDIT_PARSE_MOVE_PRIVATE
+    jr call_overlay_cached_ae
 
-_netchesszx_setup_update_room_code:
-    ld a, SPECTRUM_OVL_MENU_LOGIC
-    ld e, SPECTRUM_OVL_MENU_LOGIC_UPDATE_ROOM
-    jp call_overlay_cached_ae
+_netchesszx_setup_step_overlay:
+    ld a, l
+    ld (NETCHESSZX_OVERLAY_CONTEXT), a
+    ld a, SPECTRUM_OVL_SETUP
+    ld e, SPECTRUM_OVL_SETUP_STEP
+    jr call_overlay_cached_ae
 
 _netchesszx_setup_render_edit_line:
-    ld hl, 2
-    add hl, sp
-    ld b, (hl)
-    inc hl
-    ld c, (hl)
-    inc hl
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld a, (hl)
-    ld (NETCHESSZX_OVERLAY_CONTEXT + 4), a
-    ld hl, NETCHESSZX_OVERLAY_CONTEXT
-    ld (hl), b
-    inc hl
-    ld (hl), c
-    inc hl
-    ld (hl), e
-    inc hl
-    ld (hl), d
+    ld a, l
+    ld (NETCHESSZX_OVERLAY_CONTEXT), a
     ld a, SPECTRUM_OVL_MENU_CONFIG
     ld e, SPECTRUM_OVL_MENU_CONFIG_EDIT_LINE
-    jp call_overlay_cached_ae
+    jr call_overlay_cached_ae
 
 _netchesszx_setup_compute_visible:
     ld (NETCHESSZX_OVERLAY_CONTEXT), hl
-    ld a, SPECTRUM_OVL_MENU_LOGIC
-    ld e, SPECTRUM_OVL_MENU_LOGIC_COMPUTE_VISIBLE
-    jp call_overlay_cached_ae
+    ld a, SPECTRUM_OVL_SETUP
+    ld e, SPECTRUM_OVL_SETUP_COMPUTE_VISIBLE_PRIVATE
+    jr call_overlay_cached_ae
 
-_netchesszx_setup_step_row:
+_netchesszx_setup_render_overlay:
     ld hl, 2
     add hl, sp
-    ld b, (hl)
-    inc hl
-    ld c, (hl)
-    inc hl
     ld e, (hl)
     inc hl
     ld d, (hl)
+    inc hl
+    ld c, (hl)
+    inc hl
+    ld b, (hl)
     ld hl, NETCHESSZX_OVERLAY_CONTEXT
-    ld (hl), b
-    inc hl
-    ld (hl), c
-    inc hl
     ld (hl), e
     inc hl
     ld (hl), d
-    ld a, SPECTRUM_OVL_MENU_LOGIC
-    ld e, SPECTRUM_OVL_MENU_LOGIC_STEP_ROW
-    call call_overlay_cached_ae
-    ld a, (NETCHESSZX_OVERLAY_CONTEXT)
-    ld h, 0
-    ld l, a
-    ret
+    inc hl
+    ld (hl), c
+    inc hl
+    ld (hl), b
+    ld a, SPECTRUM_OVL_MENU_CONFIG
+    ld e, SPECTRUM_OVL_MENU_CONFIG_RENDER
+    jr call_overlay_cached_ae
 
 _netchesszx_setup_paint_attrs:
-    ld hl, 2
-    add hl, sp
-    ld b, (hl)
-    inc hl
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld c, (hl)
-    inc hl
-    ld a, (hl)
-    ld (NETCHESSZX_OVERLAY_CONTEXT + 4), a
-    inc hl
-    ld a, (hl)
-    ld (NETCHESSZX_OVERLAY_CONTEXT + 5), a
-    inc hl
-    ld a, (hl)
-    ld (NETCHESSZX_OVERLAY_CONTEXT + 6), a
-    inc hl
-    ld a, (hl)
-    ld (NETCHESSZX_OVERLAY_CONTEXT + 7), a
-    ld hl, NETCHESSZX_OVERLAY_CONTEXT
-    ld (hl), b
-    inc hl
-    ld (hl), e
-    inc hl
-    ld (hl), d
-    inc hl
-    ld (hl), c
     ld a, SPECTRUM_OVL_MENU_CONFIG
     ld e, SPECTRUM_OVL_MENU_CONFIG_PAINT_ATTRS
-    jp call_overlay_cached_ae
+    jr call_overlay_cached_ae
 
 _netchesszx_setup_render_rows:
     ld hl, 2
@@ -1083,35 +1107,6 @@ _netchesszx_setup_render_rows:
     ld e, SPECTRUM_OVL_MENU_CONFIG_RUN
     jp call_overlay_cached_ae
 
-_netchesszx_setup_room_editable:
-    ld a, SPECTRUM_OVL_MENU_LOGIC
-    ld e, SPECTRUM_OVL_MENU_LOGIC_ROOM_EDITABLE
-    jp call_overlay_cached_ae
-
-_netchesszx_setup_room_backspace:
-    ld a, SPECTRUM_OVL_MENU_LOGIC
-    ld e, SPECTRUM_OVL_MENU_LOGIC_ROOM_BACKSPACE
-    jp call_overlay_cached_ae
-
-_netchesszx_setup_room_append:
-    ld a, l
-    ld (NETCHESSZX_OVERLAY_CONTEXT), a
-    ld a, SPECTRUM_OVL_MENU_LOGIC
-    ld e, SPECTRUM_OVL_MENU_LOGIC_ROOM_APPEND
-    jp call_overlay_cached_ae
-
-_netchesszx_setup_move_focus:
-    ld a, l
-    ld (NETCHESSZX_OVERLAY_CONTEXT), a
-    ld a, SPECTRUM_OVL_MENU_LOGIC
-    ld e, SPECTRUM_OVL_MENU_LOGIC_MOVE_FOCUS
-    jp call_overlay_cached_ae
-
-_netchesszx_setup_validate_ip:
-    ld (NETCHESSZX_OVERLAY_CONTEXT), hl
-    ld a, SPECTRUM_OVL_MENU_CONFIG
-    ld e, SPECTRUM_OVL_MENU_CONFIG_VALIDATE_IP
-    jp call_overlay_ae
 
 _spectrum_board_clear_legal_hints:
     ld a, SPECTRUM_OVL_HINTS
@@ -1192,11 +1187,6 @@ rma_y_loop:
     add a, NETCHESSZX_INFO_TIGHT_LINE_STEP
     djnz rma_y_loop
 rma_y_ready:
-    push af
-    dec a
-    ld b, NETCHESSZX_INFO_TIGHT_LINE_STEP
-    call clear_right_pixel_band_abs
-    pop af
     ld (tmp_scan), a
 
 render_move_current_line:
@@ -1230,18 +1220,11 @@ rmc_no_restore:
 _spectrum_render_moves_scroll:
     ld a, NETCHESSZX_INFO_MOVES_FIRST_Y
     ld b, (NETCHESSZX_MOVE_ROWS - 1) * NETCHESSZX_INFO_TIGHT_LINE_STEP
-    call scroll_right_tight_band_up
-    ld a, NETCHESSZX_INFO_MOVES_FIRST_Y + ((NETCHESSZX_MOVE_ROWS - 1) * NETCHESSZX_INFO_TIGHT_LINE_STEP)
-    ld b, NETCHESSZX_INFO_TIGHT_LINE_STEP
-    jp clear_right_pixel_band_abs
+    jr scroll_right_tight_band_up
 
 _spectrum_render_chat_scroll:
     ld a, NETCHESSZX_INFO_CHAT_FIRST_Y
     ld b, (NETCHESSZX_CHAT_ROWS - 1) * NETCHESSZX_INFO_TIGHT_LINE_STEP
-    call scroll_right_tight_band_up
-    ld a, NETCHESSZX_INFO_CHAT_FIRST_Y + ((NETCHESSZX_CHAT_ROWS - 1) * NETCHESSZX_INFO_TIGHT_LINE_STEP)
-    ld b, NETCHESSZX_INFO_TIGHT_LINE_STEP
-    jp clear_right_pixel_band_abs
 
 scroll_right_tight_band_up:
     ld (tmp_scan), a
@@ -1265,20 +1248,8 @@ srub_loop:
     ret z
     push hl
     push de
-    ldi
-    ldi
-    ldi
-    ldi
-    ldi
-    ldi
-    ldi
-    ldi
-    ldi
-    ldi
-    ldi
-    ldi
-    ldi
-    ldi
+    ld bc, 14
+    ldir
     pop de
     pop hl
     call pixel_down_hl
@@ -1347,6 +1318,7 @@ render_chat_current_line:
     ld (current_attr), a
     ld hl, (move_ptr)
     ld a, (hl)
+    and 0x7f
     ; Chat is black-paper UI: these glyph choices are intentionally inverted
     ; versus the white-paper move header.
     cp 'B'
@@ -1368,21 +1340,10 @@ rc_draw_label:
     jp draw_ikkle_text_abs_y
 rc_draw_ikkle_line:
     ld hl, (move_ptr)
-    ld a, (hl)
-    or a
-    jr nz, rc_draw_legacy_line
     inc hl
-    ld a, NETCHESSZX_CHAT_TIME_COL
-    jr rc_draw_plain_line
-rc_draw_legacy_line:
-    ld hl, (move_ptr)
-    ld de, NETCHESSZX_CHAT_TEXT_OFFSET
-    add hl, de
-    ld a, NETCHESSZX_CHAT_TEXT_COL
-rc_draw_plain_line:
-    ld c, a
     ld a, (tmp_scan)
     ld b, a
+    ld c, NETCHESSZX_CHAT_TIME_COL
     jp draw_ikkle_text_abs_y
 
 draw_chat_icon_at:
@@ -1391,7 +1352,6 @@ draw_chat_icon_at:
     ld (tmp_col), a
     ld a, 5
     ld (tmp_char), a
-    jp draw_icon_byte_abs_at_tmp
 
 draw_icon_byte_abs_at_tmp:
     xor a
@@ -1554,8 +1514,8 @@ draw_banner:
 draw_banner_info:
     ld a, ATTR_TEXT
     ld (current_attr), a
-    ld hl, _netchesszx_version_banner_msg
-    ld b, 2
+    ld hl, version_banner_msg
+    ld b, 4
     ld c, NETCHESSZX_BANNER_INFO_COL
     call draw_ikkle_text_abs_y
     ld hl, banner_info_top_msg
@@ -1565,44 +1525,37 @@ draw_banner_info:
 
 draw_menu:
     ld (mark_mode), a
-    ; Timer pixels (cols 20-31, scans 2-5) are identical open/closed; keep
-    ; them and only retint attrs, so the timer does not blink on open.
     ld a, NETCHESSZX_MENU_ROW
     ld c, ATTR_STATUS
     call fill_attr_line
-    ld a, NETCHESSZX_MENU_ROW
-    call compute_screen_base
-    ld a, 16
-    add a, l
-    ld l, a
-    ld b, 16
-dm_sep_clear:
-    ld (hl), 0
-    inc l
-    djnz dm_sep_clear
+    ld a, ATTR_STATUS
+    ld (current_attr), a
+    call clear_menu_pixels
+    ld hl, tab_label_file
+    ld c, 1
+    call draw_tab_text_at
+    ld hl, tab_label_discc
+    ld c, 6
+    call draw_tab_text_at
+    ld hl, tab_label_reset
+    ld c, 12
+    call draw_tab_text_at
+    ld hl, tab_label_flip
+    ld c, 18
+    call draw_tab_text_at
+    ld hl, tab_label_theme
+    ld c, 23
+    call draw_tab_text_at
+    ld hl, tab_label_about
+    ld c, 29
+    call draw_tab_text_at
     ld a, (mark_mode)
     dec a
-    cp 5
-    jr c, dm_selection_ok
+    cp 6
+    jr c, dm_focus_ok
     xor a
-dm_selection_ok:
-    ld (tmp_row), a
-    ld a, NETCHESSZX_MENU_ROW
-    call compute_screen_base
-    ex de, hl
-    ld hl, taboption_base
-    ld a, 8
-dm_copy_scan_loop:
-    push de
-    ld bc, 16
-    ldir
-    pop de
-    inc d
-    dec a
-    jr nz, dm_copy_scan_loop
-dm_base_done:
-    ld a, (tmp_row)
-    jp draw_taboption_patch
+dm_focus_ok:
+    jr draw_menu_cursor
 
 draw_menu_partial:
     ld (mark_mode), a
@@ -1610,192 +1563,101 @@ draw_menu_partial:
     srl a
     srl a
     srl a
-    call draw_menu_partial_option
+    call draw_menu_cursor
     ld a, (mark_mode)
     and 0x07
-    jp draw_menu_partial_option
+    jr draw_menu_cursor
 
-draw_menu_partial_option:
-    cp 5
-    jr c, dmp_option_ok
-    xor a
-dmp_option_ok:
-    ld (tmp_row), a
-    add a, a
-    ld e, a
-    ld d, 0
-    ld hl, menu_option_ranges
-    add hl, de
-    ld a, (hl)
-    ld (tmp_col), a
-    inc hl
-    ld a, (hl)
-    ld (tmp_scan), a
-
-    ld a, (mark_mode)
-    and 0x07
-    cp 5
-    jr c, dmp_source_ok
-    xor a
-dmp_source_ok:
-    ld b, a
-    ld a, (tmp_row)
-    cp b
-    jp z, draw_taboption_patch
+clear_menu_pixels:
     ld a, NETCHESSZX_MENU_ROW
     call compute_screen_base
-    ld a, (tmp_col)
-    add a, l
-    ld l, a
-    ex de, hl
-    ld hl, taboption_base
-    ld a, 8
-dmp_scan_loop:
-    push af
-    push de
-    push hl
-    ld a, (tmp_col)
-    add a, l
-    ld l, a
-    jr nc, dmp_src_ok
-    inc h
-dmp_src_ok:
-    ld b, 0
-    ld a, (tmp_scan)
-    ld c, a
-    ldir
-    pop hl
-    ld bc, 16
-    add hl, bc
-    pop de
-    inc d
-    pop af
-    dec a
-    jr nz, dmp_scan_loop
-    ret
-
-draw_taboption_patch:
-    cp 5
-    jr c, dtp_option_ok
     xor a
-dtp_option_ok:
-    ld (tmp_row), a
-    add a, a
-    ld e, a
-    ld d, 0
-    ld hl, menu_option_ranges
-    add hl, de
-    ld a, (hl)
-    ld (tmp_col), a
-    inc hl
-    ld a, (hl)
-    ld (tmp_scan), a
-    ld a, (tmp_row)
-    ld b, a
-    ld hl, taboption_patches
-    ld de, 18
-    or a
-    jr z, dtp_patch_ready
-dtp_patch_offset_loop:
-    add hl, de
-    djnz dtp_patch_offset_loop
-dtp_patch_ready:
-    push hl
-    ld a, NETCHESSZX_MENU_ROW
-    call compute_screen_base
-    inc h
-    ld a, (tmp_col)
-    add a, l
-    ld l, a
-    ex de, hl
-    pop hl
-    ld a, 6
-dtp_scan_loop:
-    push af
-    push de
-    ld a, (tmp_scan)
-    ld c, a
-    ld b, 0
-    ldir
-    pop de
-    inc d
-    pop af
-    dec a
-    jr nz, dtp_scan_loop
-    ret
-
-menu_option_ranges:
-    DEFB 0,3
-    DEFB 3,3
-    DEFB 6,3
-    DEFB 9,3
-    DEFB 11,4
-
-taboption_base:
-    DEFB 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
-    DEFB 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
-    DEFB 0x3b,0xba,0xb8,0x31,0x3b,0x30,0x0e,0xee,0xe0,0x3a,0x13,0x80,0xea,0xea,0xe0,0x00
-    DEFB 0x2b,0xaa,0x90,0x29,0x32,0x20,0x0a,0xcc,0x40,0x22,0x12,0x80,0x4e,0xce,0xc0,0x00
-    DEFB 0x3a,0xaa,0x90,0x29,0x0a,0x20,0x0c,0x82,0x40,0x32,0x13,0x80,0x4a,0x8e,0x80,0x00
-    DEFB 0x2b,0xbb,0x90,0x39,0x3b,0x30,0x0a,0xee,0x40,0x23,0x12,0x00,0x4a,0xea,0xe0,0x00
-    DEFB 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
-    DEFB 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
-
-taboption_patches:
-    DEFB 0x7f,0xff,0xfc
-    DEFB 0x44,0x45,0x44
-    DEFB 0x54,0x55,0x6c
-    DEFB 0x45,0x55,0x6c
-    DEFB 0x54,0x44,0x6c
-    DEFB 0x7f,0xff,0xfc
-
-    DEFB 0x7f,0xff,0xfc
-    DEFB 0x4e,0xc4,0xcc
-    DEFB 0x56,0xcd,0xdc
-    DEFB 0x56,0xf5,0xdc
-    DEFB 0x46,0xc4,0xcc
-    DEFB 0x7f,0xff,0xfc
-
-    DEFB 0x1f,0xff,0xf0
-    DEFB 0x11,0x11,0x10
-    DEFB 0x15,0x33,0xb0
-    DEFB 0x13,0x7d,0xb0
-    DEFB 0x15,0x11,0xb0
-    DEFB 0x1f,0xff,0xf0
-
-    DEFB 0x7f,0xff,0xc0
-    DEFB 0x45,0xec,0x40
-    DEFB 0x5d,0xed,0x40
-    DEFB 0x4d,0xec,0x40
-    DEFB 0x5c,0xed,0xc0
-    DEFB 0x7f,0xff,0xc0
-
-    DEFB 0x01,0xff,0xff,0xf0
-    DEFB 0x01,0x15,0x15,0x10
-    DEFB 0x01,0xb1,0x31,0x30
-    DEFB 0x01,0xb5,0x71,0x70
-    DEFB 0x01,0xb5,0x15,0x10
-    DEFB 0x01,0xff,0xff,0xf0
-
-hide_menu:
-    ; Clear only the taboption block (cols 0-15); timer pixels stay put so
-    ; closing the menu does not blink the timer. ATTR_TIMER matches ATTR_TEXT.
-    ld a, NETCHESSZX_MENU_ROW
-    call compute_screen_base
-    ld c, 8
-    xor a
-hm_scan_loop:
-    ld b, 16
-    push hl
-hm_px_loop:
+    ld b, 32
+cmp_sep_loop:
     ld (hl), a
     inc l
-    djnz hm_px_loop
+    djnz cmp_sep_loop
+    ld a, l
+    sub 32
+    ld l, a
+    inc h
+    ld c, 7
+    xor a
+cmp_scan_loop:
+    ld b, 20
+    push hl
+cmp_px_loop:
+    ld (hl), a
+    inc l
+    djnz cmp_px_loop
     pop hl
     inc h
     dec c
-    jr nz, hm_scan_loop
-hm_attrs:
+    jr nz, cmp_scan_loop
+    ret
+
+draw_menu_cursor:
+    cp 6
+    ret nc
+    add a, a
+    add a, a
+    ld e, a
+    ld d, 0
+    ld hl, menu_cursor_masks
+    add hl, de
+    ld a, (hl)
+    ld (tmp_col), a
+    inc hl
+    ld a, (hl)
+    ld (piece_scan), a
+    inc hl
+    ld a, (hl)
+    ld (tmp_char), a
+    inc hl
+    ld a, (hl)
+    ld (tmp_scan), a
+    ld a, NETCHESSZX_MENU_ROW
+    call compute_screen_base
+    inc h
+    ld c, l
+    ld b, 6
+dmc_scan_loop:
+    push bc
+    ld l, c
+    ld a, (tmp_col)
+    add a, l
+    ld l, a
+    ld a, (piece_scan)
+    xor (hl)
+    ld (hl), a
+    inc l
+    ld a, (tmp_char)
+    ld b, a
+dmc_mid_loop:
+    ld a, (hl)
+    cpl
+    ld (hl), a
+    inc l
+    djnz dmc_mid_loop
+    ld a, (tmp_scan)
+    xor (hl)
+    ld (hl), a
+    pop bc
+    inc h
+    djnz dmc_scan_loop
+    ret
+
+draw_tab_text_at:
+    ld a, NETCHESSZX_MENU_ROW
+    ld (tmp_row), a
+    ld a, 2
+    ld (tmp_scan), a
+    ld a, c
+    ld (tmp_col), a
+    jp draw_ikkle_text_at
+
+hide_menu:
+    call clear_menu_pixels
     ld a, NETCHESSZX_MENU_ROW
     ld c, ATTR_TEXT
     call fill_attr_line
@@ -1840,10 +1702,10 @@ dmh_attr_loop:
     call draw_moves_header_divider
 
     ld a, NETCHESSZX_MOVES_HEADER_WHITE_ICON_BYTE_COL
-    ld hl, moves_header_white_icon
+    ld hl, chat_icon_white
     call draw_moves_header_icon
     ld a, NETCHESSZX_MOVES_HEADER_BLACK_ICON_BYTE_COL
-    ld hl, moves_header_black_icon
+    ld hl, chat_icon_black
     call draw_moves_header_icon
 
     ld a, ATTR_STATUS
@@ -1887,24 +1749,9 @@ dmhd_loop:
     djnz dmhd_loop
     ret
 
-moves_white_msg:
-    DEFM "WHITE",0
-moves_black_msg:
-    DEFM "BLACK",0
-moves_header_white_icon:
-    DEFB 0x3c,0x42,0x42,0x42,0x3c
-moves_header_black_icon:
-    DEFB 0x3c,0x7e,0x7e,0x7e,0x3c
-
-banner_info_top_msg:
-    DEFM "ONLINE CHESS FOR ZX SPECTRUM",0
-
 clear_board_coords:
     ld a, NETCHESSZX_GAME_BOARD_TOP_ROW - 1
-    call compute_screen_base
-    ld d, h
-    ld e, l
-    ld b, 8
+    call compute_screen_base_de8
 cbc_file_scan:
     push bc
     push de
@@ -1929,10 +1776,7 @@ cbc_file_byte:
 cbc_rank_row:
     push bc
     ld a, c
-    call compute_screen_base
-    ld d, h
-    ld e, l
-    ld b, 8
+    call compute_screen_base_de8
 cbc_rank_scan:
     ld h, d
     ld l, e
@@ -2164,8 +2008,6 @@ dflc_no_carry:
     jr dflc_loop
 
 draw_board:
-    call fill_board_attrs
-
     ld hl, (board_ptr)
     ld (board_iter), hl
     xor a
@@ -2220,10 +2062,7 @@ draw_board_frame:
 dbf_row:
     push bc
     ld a, (tmp_row)
-    call compute_screen_base
-    ld d, h
-    ld e, l
-    ld b, 8
+    call compute_screen_base_de8
 dbf_scan:
     ld h, d
     ld l, e
@@ -2309,6 +2148,14 @@ rbah_loop:
     ret
 
 board_light_line_attr:
+IFDEF NETCHESSZX_NEXT
+    ld a, (_netchesszx_board_theme_index)
+    or a
+    jr z, blla_classic
+    ld a, NEXT_BOARD_COORD_LINE_ATTR
+    ret
+blla_classic:
+ENDIF
     ld a, (_netchesszx_board_light_attr)
     ld d, a
     and 0x40
@@ -2343,51 +2190,22 @@ dobs_attr:
     pop de
     ld a, d
     call set_square_attr_2x2
+IFDEF NETCHESSZX_NEXT
+    call next_marker_release_current_square
+    call next_draw_board_square_sprite
 
+    ld a, (piece_char)
+    cp ' '
+    jr z, next_hide_square_sprite
+    ld a, (piece_char)
+    jr next_draw_piece_sprite_16x16
+ELSE
     ld a, (piece_char)
     cp ' '
     ret z
     ld a, (piece_char)
     jp draw_piece_sprite_16x16
-
-fill_board_attrs:
-    xor a
-    ld (board_row), a
-
-fba_row_loop:
-    ld a, (board_row)
-    cp 8
-    ret nc
-    xor a
-    ld (board_col), a
-
-fba_col_loop:
-    ld a, (board_col)
-    cp 8
-    jr nc, fba_next_row
-
-    call square_parity
-    jr z, fba_light
-    ld a, (_netchesszx_board_dark_attr)
-    jr fba_attr_ready
-fba_light:
-    ld a, (_netchesszx_board_light_attr)
-fba_attr_ready:
-    ld d, a
-    call compute_square_bc
-    ld a, d
-    call set_square_attr_2x2
-
-    ld a, (board_col)
-    inc a
-    ld (board_col), a
-    jr fba_col_loop
-
-fba_next_row:
-    ld a, (board_row)
-    inc a
-    ld (board_row), a
-    jr fba_row_loop
+ENDIF
 
 clear_square_pixels_2x2:
     ld e, c
@@ -2430,6 +2248,295 @@ set_square_attr_2x2:
     inc hl
     ld (hl), a
     ret
+
+IFDEF NETCHESSZX_NEXT
+next_draw_piece_sprite_16x16:
+    call next_piece_pattern_for_char
+    jr c, next_hide_square_sprite
+    ld (tmp_char), a
+    call next_square_sprite_slot
+    ld (tmp_attr), a
+    call next_find_piece_slot
+    jr nc, ndps_slot_ready
+    call next_alloc_piece_slot
+    ret c
+ndps_slot_ready:
+    add a, NEXT_PIECE_SPRITE_SLOT_BASE
+    ld bc, NEXT_SPRITE_SLOT_PORT
+    out (c), a
+    call next_write_square_sprite_xy
+    ld a, (tmp_char)
+    or NEXT_SPRITE_VISIBLE
+    out (c), a
+    ret
+
+next_hide_square_sprite:
+    call next_square_sprite_slot
+    ld (tmp_attr), a
+    call next_find_piece_slot
+    ret c
+    jp next_hide_piece_slot
+
+next_draw_board_square_sprite:
+    call next_square_sprite_slot
+    add a, NEXT_BOARD_SPRITE_SLOT_BASE
+    ld bc, NEXT_SPRITE_SLOT_PORT
+    out (c), a
+    call next_write_square_sprite_xy
+    call square_parity
+    ld (tmp_scan), a
+    ld a, (_netchesszx_board_theme_index)
+    add a, a
+    ld e, a
+    ld a, (tmp_scan)
+    add a, e
+    add a, NEXT_BOARD_PATTERN_BASE
+    or NEXT_SPRITE_VISIBLE
+    out (c), a
+    ret
+
+next_marker_set_hint_current_square:
+    ld a, NEXT_MARKER_FLAG_HINT
+    jr next_marker_or_current_square
+
+next_marker_set_mark_current_square:
+    ld a, NEXT_MARKER_FLAG_MARK
+    ld c, a
+    ld a, (mark_mode)
+    or a
+    jr z, nmsm_flags_ready
+    ld a, c
+    or NEXT_MARKER_FLAG_SELECTED
+    ld c, a
+nmsm_flags_ready:
+    ld a, c
+
+next_marker_or_current_square:
+    ld (tmp_char), a
+    call next_square_sprite_slot
+    ld (tmp_attr), a
+    call next_find_marker_slot
+    jr nc, nmuf_slot_ready
+    call next_alloc_marker_slot
+    ret c
+
+nmuf_slot_ready:
+    ld e, a
+    ld d, 0
+    ld hl, marker_slot_flags
+    add hl, de
+    ld a, (tmp_char)
+    or (hl)
+    ld (hl), a
+    ld (tmp_char), a
+    ld a, e
+    add a, NEXT_MARKER_SPRITE_SLOT_BASE
+    ld bc, NEXT_SPRITE_SLOT_PORT
+    out (c), a
+    call next_write_square_sprite_xy
+    ld a, (tmp_char)
+    bit 2, a
+    jr nz, nmuf_selected
+    bit 1, a
+    jr z, nmuf_hint
+    bit 0, a
+    jr z, nmuf_cursor
+    ld a, NEXT_MARKER_PATTERN_BASE + 2
+    jr nmuf_pattern_ready
+nmuf_selected:
+    ld a, NEXT_MARKER_PATTERN_BASE + 3
+    jr nmuf_pattern_ready
+nmuf_cursor:
+    ld a, NEXT_MARKER_PATTERN_BASE + 1
+    jr nmuf_pattern_ready
+nmuf_hint:
+    ld a, NEXT_MARKER_PATTERN_BASE
+nmuf_pattern_ready:
+    or NEXT_SPRITE_VISIBLE
+    out (c), a
+    ret
+
+next_marker_release_current_square:
+    call next_square_sprite_slot
+    ld (tmp_attr), a
+    call next_find_marker_slot
+    ret c
+    ld e, a
+    ld d, 0
+    ld hl, marker_slot_flags
+    add hl, de
+    ld (hl), 0
+    ld a, e
+    jr next_hide_marker_slot
+
+next_find_piece_slot:
+    ld hl, piece_slot_squares
+    jr next_find_slot
+
+next_find_marker_slot:
+    ld hl, marker_slot_squares
+
+next_find_slot:
+    ld b, 32
+    ld c, 0
+nfs_loop:
+    ld a, (tmp_attr)
+    cp (hl)
+    jr z, nfs_found
+    inc hl
+    inc c
+    djnz nfs_loop
+    scf
+    ret
+nfs_found:
+    ld a, c
+    or a
+    ret
+
+next_alloc_piece_slot:
+    ld hl, piece_slot_squares
+    jr next_alloc_slot
+
+next_alloc_marker_slot:
+    ld hl, marker_slot_squares
+
+next_alloc_slot:
+    ld b, 32
+    ld c, 0
+nas_loop:
+    ld a, (hl)
+    cp NEXT_EMPTY_SLOT
+    jr z, nas_found
+    inc hl
+    inc c
+    djnz nas_loop
+    scf
+    ret
+nas_found:
+    ld a, (tmp_attr)
+    ld (hl), a
+    ld a, c
+    or a
+    ret
+
+next_hide_piece_slot:
+    ld e, a
+    ld d, 0
+    ld hl, piece_slot_squares
+    add hl, de
+    ld (hl), NEXT_EMPTY_SLOT
+    ld a, e
+    add a, NEXT_PIECE_SPRITE_SLOT_BASE
+    jr next_hide_hardware_sprite
+
+next_hide_marker_slot:
+    ld e, a
+    ld d, 0
+    ld hl, marker_slot_squares
+    add hl, de
+    ld (hl), NEXT_EMPTY_SLOT
+    ld a, e
+    add a, NEXT_MARKER_SPRITE_SLOT_BASE
+
+next_hide_hardware_sprite:
+    ld bc, NEXT_SPRITE_SLOT_PORT
+    out (c), a
+    ld bc, NEXT_SPRITE_ATTR_PORT
+    xor a
+    out (c), a
+    out (c), a
+    out (c), a
+    out (c), a
+    ret
+
+next_write_square_sprite_xy:
+    ld bc, NEXT_SPRITE_ATTR_PORT
+    ld a, (board_col)
+    add a, a
+    add a, a
+    add a, a
+    add a, a
+    add a, NEXT_SPRITE_X_BASE
+    out (c), a
+    ld a, (board_row)
+    add a, a
+    add a, a
+    add a, a
+    add a, a
+    add a, NEXT_SPRITE_Y_BASE
+    out (c), a
+    xor a
+    out (c), a
+    ret
+
+_spectrum_next_sprites_hide_all:
+    ld d, 0
+next_hide_all_loop:
+    ld a, d
+    call next_hide_hardware_sprite
+    inc d
+    ld a, d
+    cp 128
+    jr nz, next_hide_all_loop
+
+next_sprite_tables_reset:
+    ld hl, piece_slot_squares
+    ld b, 32
+    ld a, NEXT_EMPTY_SLOT
+nstr_piece_loop:
+    ld (hl), a
+    inc hl
+    djnz nstr_piece_loop
+    ld hl, marker_slot_squares
+    ld b, 32
+    ld a, NEXT_EMPTY_SLOT
+nstr_marker_loop:
+    ld (hl), a
+    inc hl
+    djnz nstr_marker_loop
+    ld hl, marker_slot_flags
+    ld b, 32
+    xor a
+nstr_flags_loop:
+    ld (hl), a
+    inc hl
+    djnz nstr_flags_loop
+    ret
+
+next_square_sprite_slot:
+    ld a, (board_row)
+    add a, a
+    add a, a
+    add a, a
+    ld d, a
+    ld a, (board_col)
+    add a, d
+    ret
+
+next_piece_pattern_for_char:
+    ld c, 0
+    cp 'a'
+    jr c, npp_upper_ready
+    sub 32
+    ld c, 6
+npp_upper_ready:
+    ld (tmp_char), a
+    ld hl, psfc_piece_chars
+    ld b, 6
+npp_match:
+    cp (hl)
+    jr z, npp_found
+    inc hl
+    djnz npp_match
+    scf
+    ret
+npp_found:
+    ld a, 6
+    sub b
+    add a, c
+    or a
+    ret
+ENDIF
 
 draw_scaled_text:
     ld (text_ptr), hl
@@ -2621,29 +2728,6 @@ psfc_table:
     DW piece_sprites_16x16 + 288
     DW piece_sprites_16x16 + 352
 
-draw_text64_at:
-    ld (text_ptr), hl
-    ld a, b
-    ld (tmp_row), a
-    ld a, c
-    ld (tmp_col), a
-
-dt64_loop:
-    ld hl, (text_ptr)
-    ld a, (hl)
-    or a
-    ret z
-    call draw_char64_at_tmp
-    ld hl, (text_ptr)
-    inc hl
-    ld (text_ptr), hl
-    ld a, (tmp_col)
-    inc a
-    cp 64
-    ret nc
-    ld (tmp_col), a
-    jr dt64_loop
-
 draw_char64_at_tmp:
     call draw_char64_pixels_at_tmp
     ld a, (tmp_row)
@@ -2655,16 +2739,11 @@ draw_char64_at_tmp:
 draw_text64_line_attr_fast:
     call draw_text64_line_prepare
     call draw_text64_line_fill_attr
-    jp draw_text64_line_pixels_prepared
-
-draw_text64_line_text_attr_fast:
-    call draw_text64_line_prepare
-    call draw_text64_line_fill_text_attr
-    jp draw_text64_line_pixels_prepared
+    jr draw_text64_line_pixels_prepared
 
 draw_text64_line_pixels_fast:
     call draw_text64_line_prepare
-    jp draw_text64_line_pixels_prepared
+    jr draw_text64_line_pixels_prepared
 
 draw_text64_line_prepare:
     ld (text_ptr), hl
@@ -2686,39 +2765,6 @@ dt64laf_loop:
     ld (hl), a
     inc hl
     djnz dt64laf_loop
-    ret
-
-draw_text64_line_fill_text_attr:
-    ld a, (tmp_row)
-    call attr_cell_for_tmpcol
-    ld de, (text_ptr)
-    ld a, (tmp_char)
-    ld b, a
-    ld a, (tmp_col)
-    and 1
-    ld c, a
-dt64lta_loop:
-    ld a, (de)
-    or a
-    ret z
-    ld a, (current_attr)
-    ld (hl), a
-    ld a, c
-    or a
-    jr z, dt64lta_even
-    xor a
-    ld c, a
-    inc de
-    jr dt64lta_next
-dt64lta_even:
-    inc de
-    ld a, (de)
-    or a
-    jr z, dt64lta_next
-    inc de
-dt64lta_next:
-    inc hl
-    djnz dt64lta_loop
     ret
 
 draw_text64_line_pixels_prepared:
@@ -3419,510 +3465,185 @@ skp_shift:
     in a, (c)
     bit 0, a
     jr nz, skp_symbol_check
-
-    ld b, 0xef
-    in a, (c)
-    bit 0, a
-    jr nz, skp_shift_9
-    ld hl, 8
-    ret
-skp_shift_9:
-    bit 1, a
-    jr nz, skp_shift_8
-    jp skp_none
-skp_shift_8:
-    bit 2, a
-    jr nz, skp_shift_7
-    ld hl, 0x84
-    ret
-skp_shift_7:
-    bit 3, a
-    jr nz, skp_shift_6
-    ld hl, 0x81
-    ret
-skp_shift_6:
-    bit 4, a
-    jr nz, skp_shift_5
-    ld hl, 0x82
-    ret
-skp_shift_5:
-    ld b, 0xf7
-    in a, (c)
-    bit 0, a
-    jr nz, skp_shift_2
-    ld hl, 0x88
-    ret
-skp_shift_2:
-    bit 1, a
-    jr nz, skp_shift_5_only
-    ld hl, 0x89
-    ret
-skp_shift_5_only:
-    bit 4, a
-    jr nz, skp_symbol_check
-    ld hl, 0x83
-    ret
+    ld hl, skp_shift_table
+    call skp_scan_table
+    ret c
 
 skp_symbol_check:
     ld b, 0x7f
     in a, (c)
     bit 1, a
-    jp nz, skp_letters
+    jr nz, skp_letters
 
 skp_symbol:
-    ld b, 0xfe
-    in a, (c)
-    bit 3, a
-    jr nz, skp_sym_z
-    ld hl, '?'
-    ret
-skp_sym_z:
-    bit 1, a
-    jr nz, skp_sym_x
-    ld hl, ':'
-    ret
-skp_sym_x:
-    bit 2, a
-    jr nz, skp_sym_v
-    ld hl, '`'
-    ret
-skp_sym_v:
-    bit 4, a
-    jr nz, skp_sym_arow
-    ld hl, '/'
-    ret
-
-skp_sym_arow:
-    ld b, 0xfd
-    in a, (c)
-    bit 0, a
-    jr nz, skp_sym_s
-    ld hl, '~'
-    ret
-skp_sym_s:
-    bit 1, a
-    jr nz, skp_sym_d
-    ld hl, '|'
-    ret
-skp_sym_d:
-    bit 2, a
-    jr nz, skp_sym_f
-    ld hl, 92
-    ret
-skp_sym_f:
-    bit 3, a
-    jr nz, skp_sym_g
-    ld hl, '{'
-    ret
-skp_sym_g:
-    bit 4, a
-    jr nz, skp_sym_qrow
-    ld hl, '}'
-    ret
-
-skp_sym_qrow:
-    ld b, 0xfb
-    in a, (c)
-    bit 0, a
-    jr nz, skp_sym_w
-    jp skp_none
-skp_sym_w:
-    bit 1, a
-    jr nz, skp_sym_e
-    jp skp_none
-skp_sym_e:
-    bit 2, a
-    jr nz, skp_sym_r
-    jp skp_none
-skp_sym_r:
-    bit 3, a
-    jr nz, skp_sym_t
-    ld hl, '<'
-    ret
-skp_sym_t:
-    bit 4, a
-    jr nz, skp_sym_digits_1
-    ld hl, '>'
-    ret
-
-skp_sym_digits_1:
-    ld b, 0xf7
-    in a, (c)
-    bit 0, a
-    jr nz, skp_sym_d2
-    ld hl, '!'
-    ret
-skp_sym_d2:
-    bit 1, a
-    jr nz, skp_sym_d3
-    ld hl, '@'
-    ret
-skp_sym_d3:
-    bit 2, a
-    jr nz, skp_sym_d4
-    ld hl, '#'
-    ret
-skp_sym_d4:
-    bit 3, a
-    jr nz, skp_sym_d5
-    ld hl, '$'
-    ret
-skp_sym_d5:
-    bit 4, a
-    jr nz, skp_sym_digits_6
-    ld hl, '%'
-    ret
-
-skp_sym_digits_6:
-    ld b, 0xef
-    in a, (c)
-    bit 4, a
-    jr nz, skp_sym_d7
-    ld hl, '&'
-    ret
-skp_sym_d7:
-    bit 3, a
-    jr nz, skp_sym_d8
-    ld hl, 39
-    ret
-skp_sym_d8:
-    bit 2, a
-    jr nz, skp_sym_d9
-    ld hl, '('
-    ret
-skp_sym_d9:
-    bit 1, a
-    jr nz, skp_sym_d0
-    ld hl, ')'
-    ret
-skp_sym_d0:
-    bit 0, a
-    jr nz, skp_sym_o_p
-    ld hl, '_'
-    ret
-
-skp_sym_o_p:
-    ld b, 0xdf
-    in a, (c)
-    bit 0, a
-    jr nz, skp_sym_o
-    ld hl, 34
-    ret
-skp_sym_o:
-    bit 1, a
-    jr nz, skp_sym_i
-    ld hl, ';'
-    ret
-skp_sym_i:
-    bit 2, a
-    jr nz, skp_sym_u
-    jp skp_none
-skp_sym_u:
-    bit 3, a
-    jr nz, skp_sym_y
-    ld hl, ']'
-    ret
-skp_sym_y:
-    bit 4, a
-    jr nz, skp_sym_hrow
-    ld hl, '['
-    ret
-
-skp_sym_hrow:
-    ld b, 0xbf
-    in a, (c)
-    bit 4, a
-    jr nz, skp_sym_j
-    ld hl, '^'
-    ret
-skp_sym_j:
-    bit 3, a
-    jr nz, skp_sym_k
-    ld hl, '-'
-    ret
-skp_sym_k:
-    bit 2, a
-    jr nz, skp_sym_l
-    ld hl, '+'
-    ret
-skp_sym_l:
-    bit 1, a
-    jr nz, skp_sym_bottom
-    ld hl, '='
-    ret
-
-skp_sym_bottom:
-    ld b, 0x7f
-    in a, (c)
-    bit 2, a
-    jr nz, skp_sym_n
-    ld hl, '.'
-    ret
-skp_sym_n:
-    bit 3, a
-    jr nz, skp_sym_b
-    ld hl, ','
-    ret
-skp_sym_b:
-    bit 4, a
-    jp nz, skp_none
-    ld hl, '*'
-    ret
+    ld hl, skp_symbol_table
+    jp skp_scan_table
 
 skp_letters:
-    ld b, 0xfe
-    in a, (c)
-    bit 3, a
-    jr nz, skp_z
-    ld hl, 'c'
-    ret
-skp_z:
-    bit 1, a
-    jr nz, skp_x
-    ld hl, 'z'
-    ret
-skp_x:
-    bit 2, a
-    jr nz, skp_v
-    ld hl, 'x'
-    ret
-skp_v:
-    bit 4, a
-    jr nz, skp_qrow
-    ld hl, 'v'
-    ret
+    ld hl, skp_letters_table
+    jp skp_scan_table
 
-skp_qrow:
-    ld b, 0xfb
+; Port high followed by active-low mask/key pairs and a zero mask.
+; A zero port ends the table; pair order preserves key priority.
+skp_scan_table:
+    ld b, (hl)
+    inc hl
+    ld a, b
+    or a
+    jr z, skp_none
     in a, (c)
-    bit 0, a
-    jr nz, skp_w
-    ld hl, 'q'
-    ret
-skp_w:
-    bit 1, a
-    jr nz, skp_e
-    ld hl, 'w'
-    ret
-skp_e:
-    bit 2, a
-    jr nz, skp_r
-    ld hl, 'e'
-    ret
-skp_r:
-    bit 3, a
-    jr nz, skp_t
-    ld hl, 'r'
-    ret
-skp_t:
-    bit 4, a
-    jr nz, skp_arow
-    ld hl, 't'
-    ret
-
-skp_arow:
-    ld b, 0xfd
-    in a, (c)
-    bit 0, a
-    jr nz, skp_s
-    ld hl, 'a'
-    ret
-skp_s:
-    bit 1, a
-    jr nz, skp_d
-    ld hl, 's'
-    ret
-skp_d:
-    bit 2, a
-    jr nz, skp_f
-    ld hl, 'd'
-    ret
-skp_f:
-    bit 3, a
-    jr nz, skp_g
-    ld hl, 'f'
-    ret
-skp_g:
-    bit 4, a
-    jr nz, skp_bottom
-    ld hl, 'g'
-    ret
-
-skp_bottom:
-    ld b, 0x7f
-    in a, (c)
-    bit 4, a
-    jr nz, skp_m
-    ld hl, 'b'
-    ret
-skp_m:
-    bit 2, a
-    jr nz, skp_n
-    ld hl, 'm'
-    ret
-skp_n:
-    bit 3, a
-    jr nz, skp_hrow
-    ld hl, 'n'
-    ret
-
-skp_hrow:
-    ld b, 0xbf
-    in a, (c)
-    bit 4, a
-    jr nz, skp_j
-    ld hl, 'h'
-    ret
-skp_j:
-    bit 3, a
-    jr nz, skp_k
-    ld hl, 'j'
-    ret
-skp_k:
-    bit 2, a
-    jr nz, skp_l
-    ld hl, 'k'
-    ret
-skp_l:
-    bit 1, a
-    jr nz, skp_o_p
-    ld hl, 'l'
-    ret
-
-skp_o_p:
-    ld b, 0xdf
-    in a, (c)
-    bit 0, a
-    jr nz, skp_o
-    ld hl, 'p'
-    ret
-skp_o:
-    bit 1, a
-    jr nz, skp_i
-    ld hl, 'o'
-    ret
-skp_i:
-    bit 2, a
-    jr nz, skp_u
-    ld hl, 'i'
-    ret
-skp_u:
-    bit 3, a
-    jr nz, skp_y
-    ld hl, 'u'
-    ret
-skp_y:
-    bit 4, a
-    jr nz, skp_digits_1
-    ld hl, 'y'
-    ret
-
-skp_digits_1:
-    ld b, 0xf7
-    in a, (c)
-    bit 0, a
-    jr nz, skp_d2
-    ld hl, '1'
-    ret
-skp_d2:
-    bit 1, a
-    jr nz, skp_d3
-    ld hl, '2'
-    ret
-skp_d3:
-    bit 2, a
-    jr nz, skp_d4
-    ld hl, '3'
-    ret
-skp_d4:
-    bit 3, a
-    jr nz, skp_d5
-    ld hl, '4'
-    ret
-skp_d5:
-    bit 4, a
-    jr nz, skp_digits_6
-    ld hl, '5'
-    ret
-
-skp_digits_6:
-    ld b, 0xef
-    in a, (c)
-    bit 4, a
-    jr nz, skp_d7
-    ld hl, '6'
-    ret
-skp_d7:
-    bit 3, a
-    jr nz, skp_d8
-    ld hl, '7'
-    ret
-skp_d8:
-    bit 2, a
-    jr nz, skp_d9
-    ld hl, '8'
-    ret
-skp_d9:
-    bit 1, a
-    jr nz, skp_d0
-    ld hl, '9'
-    ret
-skp_d0:
-    bit 0, a
-    jr nz, skp_none
-    ld hl, '0'
+    cpl
+    ld e, a
+skp_scan_row:
+    ld a, (hl)
+    inc hl
+    or a
+    jr z, skp_scan_table
+    and e
+    ld a, (hl)
+    inc hl
+    jr z, skp_scan_row
+    ld l, a
+    ld h, 0
+    scf
     ret
 
 skp_none:
     ld hl, 0
     ret
 
+skp_shift_table:
+    DEFB 0xef,0x01,8,0x02,0,0x04,0x84,0x08,0x81,0x10,0x82,0
+    DEFB 0xf7,0x01,0x88,0x02,0x89,0x10,0x83,0
+    DEFB 0
+
+skp_symbol_table:
+    DEFB 0xfe,0x08,'?',0x02,':',0x04,'`',0x10,'/',0
+    DEFB 0xfd,0x01,'~',0x02,'|',0x04,92,0x08,'{',0x10,'}',0
+    DEFB 0xfb,0x01,0,0x02,0,0x04,0,0x08,'<',0x10,'>',0
+    DEFB 0xf7,0x01,'!',0x02,'@',0x04,'#',0x08,'$',0x10,'%',0
+    DEFB 0xef,0x10,'&',0x08,39,0x04,'(',0x02,')',0x01,'_',0
+    DEFB 0xdf,0x01,34,0x02,';',0x04,0,0x08,']',0x10,'[',0
+    DEFB 0xbf,0x10,'^',0x08,'-',0x04,'+',0x02,'=',0
+    DEFB 0x7f,0x04,'.',0x08,44,0x10,'*',0
+    DEFB 0
+
+skp_letters_table:
+    DEFB 0xfe,0x08,'c',0x02,'z',0x04,'x',0x10,'v',0
+    DEFB 0xfb,0x01,'q',0x02,'w',0x04,'e',0x08,'r',0x10,'t',0
+    DEFB 0xfd,0x01,'a',0x02,'s',0x04,'d',0x08,'f',0x10,'g',0
+    DEFB 0x7f,0x10,'b',0x04,'m',0x08,'n',0
+    DEFB 0xbf,0x10,'h',0x08,'j',0x04,'k',0x02,'l',0
+    DEFB 0xdf,0x01,'p',0x02,'o',0x04,'i',0x08,'u',0x10,'y',0
+    DEFB 0xf7,0x01,'1',0x02,'2',0x04,'3',0x08,'4',0x10,'5',0
+    DEFB 0xef,0x10,'6',0x08,'7',0x04,'8',0x02,'9',0x01,'0',0
+    DEFB 0
 _spectrum_key_poll:
-    call spectrum_key_scan_raw
+_spectrum_input_poll_event:
+    ld a, (key_event)
+    ld l, a
+    ld h, 0
+    xor a
+    ld (key_event), a
+    ret
+
+spectrum_input_scan_raw:
+    call _spectrum_key_edit_pressed
     ld a, l
     or a
-    jr nz, skp_repeat_got_key
+    jr z, sisr_scan_key
+    ld hl, 0x90
+    ret
+sisr_scan_key:
+    jp spectrum_key_scan_raw
+
+_spectrum_input_flush_until_release:
+    xor a
+    ld (key_event), a
+    call spectrum_input_scan_raw
+    ld a, l
+    ld (key_raw), a
+    ld (key_suppress), a
+    or a
+    ret nz
     ld (key_last), a
     ld (key_repeat_timer), a
     ret
 
-skp_repeat_got_key:
+_spectrum_input_suppress_until_release:
+    xor a
+    ld (key_event), a
+    ld a, l
+    ld (key_suppress), a
+    ret
+
+_spectrum_input_frame_tick:
+    call spectrum_input_scan_raw
+    ld a, l
+    ld (key_raw), a
+    or a
+    jr nz, skp_tick_got_key
+    ld (key_last), a
+    ld (key_repeat_timer), a
+    ld (key_suppress), a
+    ret
+
+skp_tick_got_key:
     ld b, a
+    ld a, (key_suppress)
+    or a
+    jr z, skp_tick_check_last
+    cp b
+    ret z
+    xor a
+    ld (key_suppress), a
+
+skp_tick_check_last:
     ld a, (key_last)
     cp b
-    jr z, skp_repeat_same_key
+    jr z, skp_tick_same_key
 
     ld a, b
     ld (key_last), a
     call skp_repeat_start_delay
     ld (key_repeat_timer), a
-    ld l, b
-    ld h, 0
-    ret
+    ld a, b
+    jr skp_latch_event
 
-skp_repeat_same_key:
+skp_tick_same_key:
     ld a, b
     call skp_repeatable
     or a
-    jr z, skp_repeat_zero
+    ret z
 
     ld hl, key_repeat_timer
     ld a, (hl)
     or a
-    jr z, skp_repeat_fire
+    jr z, skp_tick_repeat_fire
     dec (hl)
-    jr skp_repeat_zero
+    ret
 
-skp_repeat_fire:
+skp_tick_repeat_fire:
     ld a, b
     call skp_repeat_next_delay
     ld (key_repeat_timer), a
-    ld l, b
-    ld h, 0
+    ld a, b
+
+skp_latch_event:
+    ld b, a
+    cp 0x8a
+    jr z, skp_latch_store
+    cp 0x90
+    jr z, skp_latch_store
+    ld a, (key_event)
+    or a
+    ret nz
+
+skp_latch_store:
+    ld a, b
+    ld (key_event), a
     ret
 
-skp_repeat_zero:
-    jp skp_none
 
 skp_repeatable:
     cp 8
@@ -4172,6 +3893,10 @@ _netchesszx_board_theme_apply:
     xor a
 nbta_index_ok:
     ld (_netchesszx_board_theme_index), a
+IFDEF NETCHESSZX_NEXT
+    call next_board_coord_palette_sync
+    ld a, (_netchesszx_board_theme_index)
+ENDIF
     ld e, a
     ld d, 0
     ld hl, board_theme_light_attrs
@@ -4185,64 +3910,96 @@ nbta_index_ok:
     call restore_board_frame_attrs
     jp draw_board_frame
 
-board_theme_light_attrs:
-    DEFB 0x38, 0x31, 0x3a, 0x29, 0x62
-board_theme_dark_attrs:
-    DEFB 0x07, 0x0e, 0x17, 0x0d, 0x54
+IFDEF NETCHESSZX_NEXT
+; Theme 1 stays on classic ULA attributes.  Themes 2-5 use private ULA+ group
+; 2 entries: unselected INK1/PAPER0 and selected INK2/PAPER1.  Groups 0/1,
+; generated menu attributes and board/piece sprites are not modified.
+next_board_coord_palette_sync:
+    ld a, NEXTREG_PALETTE_CONTROL
+    call nextreg_read
+    and 0xfe                    ; ULANext off; preserve active palette choices
+    ld (tmp_scan), a
+    ld a, (_netchesszx_board_theme_index)
+    or a
+    jr nz, nbcps_apply
 
-_spectrum_setup_board_swatches:
-    ld c, l
-    ld hl, 0x5a16
-    ld b, 0
-    ld de, board_theme_light_attrs
-setup_board_swatch_loop:
-    ld a, (de)
-    push de
-    call setup_board_swatch
-    pop de
-    inc de
-    inc b
-    ld a, b
-    cp 5
-    jr nz, setup_board_swatch_loop
-    ret
-setup_board_swatch:
+    ld a, (tmp_scan)
     ld e, a
-    ld a, c
-    cp b
-    ld a, e
-    jr z, setup_board_swatch_flash
-    ld a, b
-    add a, 5
-    cp c
-    ld a, e
-    jr nz, setup_board_swatch_store
-    or 0x40
-    jr setup_board_swatch_store
-setup_board_swatch_flash:
-    ld a, e
-    and 0xc0
-    ld d, a
-    ld a, e
-    and 0x07
-    rlca
-    rlca
-    rlca
-    or d
-    ld d, a
-    ld a, e
-    and 0x38
-    rrca
-    rrca
-    rrca
-    or d
-    or 0x80
-setup_board_swatch_store:
-    ld (hl), a
+    ld a, NEXTREG_PALETTE_CONTROL
+    call nextreg_write
+    ld a, NEXTREG_ULA_CONTROL
+    call nextreg_read
+    and 0xf7                    ; theme 1: classic ULA, never group-2 FLASH
+    ld e, a
+    ld a, NEXTREG_ULA_CONTROL
+    jp nextreg_write
+
+nbcps_apply:
+    dec a
+    add a, a
+    add a, a
+    ld e, a
+    ld d, 0
+    ld hl, next_board_coord_rgb333
+    add hl, de
+    ld d, (hl)
     inc hl
-    ld (hl), ATTR_TEXT
+    ld e, (hl)
     inc hl
+    push de                     ; COLOR1
+    ld d, (hl)
+    inc hl
+    ld e, (hl)                  ; COLOR2
+    push de
+
+    xor a                       ; Next init owns ULA palette 0
+    ld e, a
+    ld a, NEXTREG_PALETTE_CONTROL
+    call nextreg_write
+
+    pop hl
+    ld e, NEXT_BOARD_COORD_INK2_INDEX
+    call next_board_write_ula_pair
+    pop hl
+    push hl
+    ld e, NEXT_BOARD_COORD_INK1_INDEX
+    call next_board_write_ula_pair
+    pop hl
+    ld e, NEXT_BOARD_COORD_PAPER1_INDEX
+    call next_board_write_ula_pair
+
+    ld a, (tmp_scan)
+    ld e, a
+    ld a, NEXTREG_PALETTE_CONTROL
+    call nextreg_write
+    ld a, NEXTREG_ULA_CONTROL
+    call nextreg_read
+    or 0x08                     ; enable only after all group-2 entries are live
+    ld e, a
+    ld a, NEXTREG_ULA_CONTROL
+    jp nextreg_write
+
+; E = ULA palette index, HL = exact NextReg 0x44 pair.
+next_board_write_ula_pair:
+    ld a, NEXTREG_PALETTE_INDEX
+    call nextreg_write
+    ld bc, NEXTREG_SELECT_PORT
+    ld a, NEXTREG_PALETTE_VALUE_9
+    out (c), a
+    ld bc, NEXTREG_DATA_PORT
+    ld a, h
+    out (c), a
+    ld a, l
+    out (c), a
     ret
+
+next_board_coord_rgb333:
+    DEFB 0xbb,0x00,0x4e,0x01
+    DEFB 0xff,0x00,0x95,0x01
+    DEFB 0xfa,0x01,0xb1,0x01
+    DEFB 0xd1,0x00,0x88,0x01
+next_board_coord_rgb333_end:
+ENDIF
 
 compute_screen_base:
     ld l, a
@@ -4255,6 +4012,13 @@ compute_screen_base:
     rrca
     rrca
     ld l, a
+    ret
+
+compute_screen_base_de8:
+    call compute_screen_base
+    ld d, h
+    ld e, l
+    ld b, 8
     ret
 
 compute_pixel_base:
@@ -4346,6 +4110,9 @@ draw_square_mark:
 
     ld a, (tmp_attr)
     ld (mark_mode), a
+IFDEF NETCHESSZX_NEXT
+    call next_marker_set_mark_current_square
+ENDIF
     ld a, (piece_row)
     call compute_attr_base
     ld a, (piece_col)
@@ -4370,26 +4137,13 @@ draw_square_mark:
     call set_square_attr_2x2
 
     ld a, (piece_row)
-    call compute_screen_base
-    ld a, (piece_col)
-    add a, l
-    ld l, a
-    ld (hl), 0xff
-    inc l
-    ld (hl), 0xff
+    ld e, 0
+    call dsm_draw_horizontal
 
     ld a, (piece_row)
     inc a
-    call compute_screen_base
-    ld a, 7
-    add a, h
-    ld h, a
-    ld a, (piece_col)
-    add a, l
-    ld l, a
-    ld (hl), 0xff
-    inc l
-    ld (hl), 0xff
+    ld e, 7
+    call dsm_draw_horizontal
 
     ld d, 0x80
     ld e, 0x01
@@ -4406,35 +4160,16 @@ draw_square_mark:
     ld a, (mark_mode)
     or a
     ret z
-    call compute_square_bc
-    ld a, b
-    ld (piece_row), a
-    ld a, c
-    ld (piece_col), a
-    ld a, (piece_row)
-    call compute_screen_base
-    ld a, 1
-    add a, h
-    ld h, a
     ld a, (piece_col)
-    add a, l
-    ld l, a
-    ld (hl), 0xff
-    inc l
-    ld (hl), 0xff
+    ld c, a
+    ld a, (piece_row)
+    ld e, 1
+    call dsm_draw_horizontal
 
     ld a, (piece_row)
     inc a
-    call compute_screen_base
-    ld a, 6
-    add a, h
-    ld h, a
-    ld a, (piece_col)
-    add a, l
-    ld l, a
-    ld (hl), 0xff
-    inc l
-    ld (hl), 0xff
+    ld e, 6
+    call dsm_draw_horizontal
 
     ld d, 0x40
     ld e, 0x02
@@ -4448,6 +4183,19 @@ draw_square_mark:
     call dsm_prepare_side_row
     ld b, 7
     jp dsm_draw_side_span
+
+dsm_draw_horizontal:
+    call compute_screen_base
+    ld a, e
+    add a, h
+    ld h, a
+    ld a, (piece_col)
+    add a, l
+    ld l, a
+    ld (hl), 0xff
+    inc l
+    ld (hl), 0xff
+    ret
 
 dsm_prepare_side_row:
     call compute_screen_base

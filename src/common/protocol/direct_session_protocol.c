@@ -1,6 +1,13 @@
 #include "common/protocol/direct_session_protocol.h"
 #include "common/protocol/game_protocol.h"
 
+static const char netchess_direct_hello_guest[] = "HELLO DIRECT GUEST";
+
+#ifdef NETCHESSZX_SDCC_IY
+uint8_t netchesszx_asm_direct_parse_role_owner(const char *owner,
+                                               uint8_t *white_owner);
+#define direct_parse_role_owner netchesszx_asm_direct_parse_role_owner
+#else
 static uint8_t direct_parse_role_owner(const char *owner, uint8_t *white_owner)
 {
     if (owner[0] == 'H' && owner[1] == 'O' && owner[2] == 'S' &&
@@ -15,6 +22,7 @@ static uint8_t direct_parse_role_owner(const char *owner, uint8_t *white_owner)
     }
     return 0u;
 }
+#endif
 
 uint8_t netchess_direct_is_hello(const char *payload) NETCHESSZX_FASTCALL
 {
@@ -23,7 +31,7 @@ uint8_t netchess_direct_is_hello(const char *payload) NETCHESSZX_FASTCALL
 
 uint8_t netchess_direct_parse_guest_hello(const char *payload) NETCHESSZX_FASTCALL
 {
-    const char *p = netchess_after_prefix(payload, "HELLO DIRECT GUEST");
+    const char *p = netchess_after_prefix(payload, netchess_direct_hello_guest);
 
     return (uint8_t)(p != 0 && *p == '\0');
 }
@@ -54,7 +62,7 @@ uint8_t netchess_direct_parse_start_white_owner(const char *payload,
 const char *netchess_direct_hello(uint8_t is_host, uint8_t host_is_white)
 {
     if (!is_host) {
-        return "HELLO DIRECT GUEST";
+        return netchess_direct_hello_guest;
     }
     return host_is_white ? "HELLO DIRECT HOST WHITE=HOST"
                          : "HELLO DIRECT HOST WHITE=GUEST";

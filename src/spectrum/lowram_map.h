@@ -1,6 +1,11 @@
 #ifndef NETCHESSZX_SPECTRUM_LOWRAM_MAP_H
 #define NETCHESSZX_SPECTRUM_LOWRAM_MAP_H
 
+/* 0x5b00-0x5bff: ZX printer buffer, untouched by the ROM IM1 ISR and esxDOS.
+   Reclaimed for the UART RX ring (exactly 256 bytes, ends right where the
+   0x5c00 sysvars the ROM ISR does touch begin). */
+#define NETCHESSZX_LOWRAM_UART_RING_ADDR 0x5b00
+#define NETCHESSZX_LOWRAM_UART_RING_SIZE 0x100
 #define NETCHESSZX_LOWRAM_MOVE_LOG_ADDR 0x5cb6
 #define NETCHESSZX_LOWRAM_MOVE_LOG_SIZE 0xe0
 #define NETCHESSZX_LOWRAM_CHAT_LOG_ADDR 0x5d96
@@ -28,6 +33,15 @@
 #define NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_SIZE 8u
 #define NETCHESSZX_LOWRAM_HINTED_ROWS_ADDR 0x5ff0
 #define NETCHESSZX_LOWRAM_HINTED_ROWS_SIZE 8u
+
+/* Shared only by the currently loaded overlay. ABOUT input and Next sprite
+   staging reuse adjacent/overlapping bytes outside overlay-call lifetime;
+   no overlay may retain this pointer after returning to resident code. */
+#define NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR 0x672bu
+#define NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_SIZE 160u
+#define NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_END \
+    (NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR + \
+     NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_SIZE)
 
 #define NETCHESSZX_LOWRAM_MOVE_LOG_END \
     (NETCHESSZX_LOWRAM_MOVE_LOG_ADDR + NETCHESSZX_LOWRAM_MOVE_LOG_SIZE)
@@ -58,6 +72,9 @@
 #define NETCHESSZX_LOWRAM_HINTED_ROWS_END \
     (NETCHESSZX_LOWRAM_HINTED_ROWS_ADDR + NETCHESSZX_LOWRAM_HINTED_ROWS_SIZE)
 
+#if (NETCHESSZX_LOWRAM_UART_RING_ADDR + NETCHESSZX_LOWRAM_UART_RING_SIZE) > 0x5c00
+#error "low-RAM UART ring overlaps ROM sysvars"
+#endif
 #if NETCHESSZX_LOWRAM_MOVE_LOG_END > NETCHESSZX_LOWRAM_CHAT_LOG_ADDR
 #error "low-RAM move log overlaps chat log"
 #endif
@@ -102,6 +119,9 @@
 #endif
 #if NETCHESSZX_LOWRAM_HINTED_ROWS_END > 0x6000
 #error "low-RAM hinted rows exceed reserved page"
+#endif
+#if NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_END > 0x6800u
+#error "overlay-only scratch overlaps overlay code slot"
 #endif
 
 #endif

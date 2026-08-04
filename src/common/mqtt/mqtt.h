@@ -19,6 +19,8 @@ enum netchess_mqtt_type {
     NETCHESS_MQTT_PUBACK = 4,
     NETCHESS_MQTT_SUBSCRIBE = 8,
     NETCHESS_MQTT_SUBACK = 9,
+    NETCHESS_MQTT_UNSUBSCRIBE = 10,
+    NETCHESS_MQTT_UNSUBACK = 11,
     NETCHESS_MQTT_PINGREQ = 12,
     NETCHESS_MQTT_PINGRESP = 13,
     NETCHESS_MQTT_DISCONNECT = 14
@@ -63,6 +65,10 @@ size_t netchess_mqtt_encode_subscribe(uint8_t *out,
                                       uint16_t packet_id,
                                       const char *topic,
                                       uint8_t qos);
+size_t netchess_mqtt_encode_unsubscribe(uint8_t *out,
+                                        size_t cap,
+                                        uint16_t packet_id,
+                                        const char *topic);
 size_t netchess_mqtt_encode_publish(uint8_t *out,
                                     size_t cap,
                                     uint16_t packet_id,

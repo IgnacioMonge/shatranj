@@ -60,6 +60,7 @@ static void test_direct_hello(void)
     netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
                                   NETCHESSZX_TRANSPORT_DIRECT,
                                   NETCHESSZX_COLOR_BLACK);
+    netchesszx_host_color_ready = 0u;
     check(netchesszx_session_direct_apply_hello(
               "HELLO DIRECT HOST WHITE=HOST"),
           "accept host white");
@@ -68,12 +69,14 @@ static void test_direct_hello(void)
     check(netchesszx_local_color == NETCHESSZX_COLOR_BLACK,
           "local black after host hello");
     check(netchesszx_session_direct_apply_hello(
+              "HELLO DIRECT HOST WHITE=HOST"),
+          "accept duplicate host hello");
+    check(!netchesszx_session_direct_apply_hello(
               "HELLO DIRECT HOST WHITE=GUEST"),
-          "guest accepts guest white hello");
-    check(netchesszx_host_color == NETCHESSZX_COLOR_BLACK,
-          "host black after guest white hello");
-    check(netchesszx_local_color == NETCHESSZX_COLOR_WHITE,
-          "local white after guest white hello");
+          "reject conflicting host hello");
+    check(netchesszx_host_color == NETCHESSZX_COLOR_WHITE &&
+              netchesszx_local_color == NETCHESSZX_COLOR_BLACK,
+          "conflicting hello keeps negotiated colors");
     check(!netchesszx_session_direct_apply_hello("HELLO DIRECT GUEST"),
           "guest rejects guest hello");
     check(!netchesszx_session_direct_apply_hello(

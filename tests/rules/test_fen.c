@@ -1,5 +1,6 @@
 #include "common/chess/position.h"
 #include "common/chess/legal.h"
+#include "common/chess/rules_compact.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -104,11 +105,13 @@ static void test_legal_moves(void)
     expect_int("start e2e4 legal", netchesszx_rules_can_play("e2e4"), NETCHESSZX_OK);
     expect_int("start g1f3 legal", netchesszx_rules_can_play("g1f3"), NETCHESSZX_OK);
     expect_int("start e2e5 illegal", netchesszx_rules_can_play("e2e5"), NETCHESSZX_ERR_ILLEGAL);
-    expect_int("start e7e8n unsupported", netchesszx_rules_can_play("e7e8n"), NETCHESSZX_ERR_UNSUPPORTED);
+    expect_int("start e7e8n illegal", netchesszx_rules_can_play("e7e8n"), NETCHESSZX_ERR_MOVE);
     expect_int("targets e2", netchesszx_rules_legal_targets("e2", targets, sizeof(targets)), NETCHESSZX_OK);
     expect_str("targets e2 text", targets, "e3 e4");
     expect_int("targets e7 empty", netchesszx_rules_legal_targets("e7", targets, sizeof(targets)), NETCHESSZX_OK);
     expect_str("targets e7 text", targets, "");
+    expect_int("initial check state", netchesszx_rules_check_state(),
+               NETCHESSZX_RULE_CHECK_NONE);
     expect_int("initial legal replies", netchesszx_rules_has_legal_moves(), 1);
 
     expect_int("play e2e4", netchesszx_rules_play("e2e4"), NETCHESSZX_OK);
@@ -116,12 +119,41 @@ static void test_legal_moves(void)
     expect_int("white second move illegal", netchesszx_rules_can_play("g1f3"), NETCHESSZX_ERR_ILLEGAL);
     expect_int("play e7e5", netchesszx_rules_play("e7e5"), NETCHESSZX_OK);
     expect_int("white g1f3 after black", netchesszx_rules_can_play("g1f3"), NETCHESSZX_OK);
+    expect_int("play g1f3", netchesszx_rules_play("g1f3"), NETCHESSZX_OK);
+    expect_int("play d7d5", netchesszx_rules_play("d7d5"), NETCHESSZX_OK);
+    expect_int("e4xd5 legal", netchesszx_rules_can_play("e4d5"), NETCHESSZX_OK);
+    expect_int("e4 targets", netchesszx_rules_legal_targets("e4", targets, sizeof(targets)), NETCHESSZX_OK);
+    expect_str("e4 targets text", targets, "d5");
+    expect_int("play e4xd5", netchesszx_rules_play("e4d5"), NETCHESSZX_OK);
+
+    expect_int("promotion reset", netchesszx_rules_reset(), NETCHESSZX_OK);
+    expect_int("promo a2a4", netchesszx_rules_play("a2a4"), NETCHESSZX_OK);
+    expect_int("promo h7h5", netchesszx_rules_play("h7h5"), NETCHESSZX_OK);
+    expect_int("promo a4a5", netchesszx_rules_play("a4a5"), NETCHESSZX_OK);
+    expect_int("promo h5h4", netchesszx_rules_play("h5h4"), NETCHESSZX_OK);
+    expect_int("promo a5a6", netchesszx_rules_play("a5a6"), NETCHESSZX_OK);
+    expect_int("promo h4h3", netchesszx_rules_play("h4h3"), NETCHESSZX_OK);
+    expect_int("promo a6b7", netchesszx_rules_play("a6b7"), NETCHESSZX_OK);
+    expect_int("promo h3g2", netchesszx_rules_play("h3g2"), NETCHESSZX_OK);
+    expect_int("promo missing suffix", netchesszx_rules_can_play("b7c8"), NETCHESSZX_ERR_MOVE);
+    expect_int("promo knight legal", netchesszx_rules_can_play("b7c8n"), NETCHESSZX_OK);
+    expect_int("promo knight play", netchesszx_rules_play("b7c8n"), NETCHESSZX_OK);
+
+    expect_int("check reset", netchesszx_rules_reset(), NETCHESSZX_OK);
+    expect_int("check e2e4", netchesszx_rules_play("e2e4"), NETCHESSZX_OK);
+    expect_int("check d7d5", netchesszx_rules_play("d7d5"), NETCHESSZX_OK);
+    expect_int("check f1b5", netchesszx_rules_play("f1b5"), NETCHESSZX_OK);
+    expect_int("check state", netchesszx_rules_check_state(),
+               NETCHESSZX_RULE_CHECK);
+    expect_int("check has replies", netchesszx_rules_has_legal_moves(), 1);
 
     expect_int("mate reset", netchesszx_rules_reset(), NETCHESSZX_OK);
     expect_int("mate f2f3", netchesszx_rules_play("f2f3"), NETCHESSZX_OK);
     expect_int("mate e7e5", netchesszx_rules_play("e7e5"), NETCHESSZX_OK);
     expect_int("mate g2g4", netchesszx_rules_play("g2g4"), NETCHESSZX_OK);
     expect_int("mate d8h4", netchesszx_rules_play("d8h4"), NETCHESSZX_OK);
+    expect_int("mate check state", netchesszx_rules_check_state(),
+               NETCHESSZX_RULE_CHECK_MATE);
     expect_int("mate no legal replies", netchesszx_rules_has_legal_moves(), 0);
 }
 

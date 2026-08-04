@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+#include "common/protocol/game_protocol.h"
 #include "spectrum/lowram_map.h"
 
 #ifndef NETCHESSZX_FASTCALL
@@ -89,7 +90,7 @@ extern __at(NETCHESSZX_LOWRAM_HINTED_ROWS_ADDR) uint8_t netchesszx_hinted_rows[8
 extern uint8_t netchesszx_hinted_rows[8];
 #endif
 extern uint16_t netchesszx_mqtt_session_id;
-extern const char netchesszx_text_game_start[];
+#define netchesszx_text_game_start NETCHESS_PROTO_GAME_START
 
 void netchesszx_session_configure(uint8_t role,
                                   uint8_t transport,

@@ -22,12 +22,18 @@ C_KNOWN = {name[1:] if name.startswith("_") else name for name in ASM_KNOWN}
 
 LOCAL_OVERLAY_NAMES = {
     "board_apply_ovl": "board",
+    "control_ovl": "control",
     "direct_ovl": "direct",
+    "fileui_ovl": "fileui",
     "gui_log_ovl": "gui_log",
+    "input_edit_ovl": "input_edit",
     "menu_config_ovl": "menu_config",
     "menu_logic_ovl": "menu_logic",
     "mqtt_connect_ovl": "mqtt_connect",
     "mqtt_tx_ovl": "mqtt_tx",
+    "restore_ovl": "restore",
+    "saveload_ovl": "saveload",
+    "setup_ovl": "setup",
     "status_ovl": "status",
 }
 
@@ -41,6 +47,9 @@ C_LINE_COMMENT_RE = re.compile(r"//.*?$", re.MULTILINE)
 BANNED_SYMBOLS = {
     "spectrum_board_cells": "board snapshot pointer must not be imported by overlays",
     "_spectrum_board_cells": "board snapshot pointer must not be imported by overlays",
+    "spectrum_board_apply_trusted_move": "overlay dispatcher must not be imported by overlays",
+    "spectrum_gui_add_chat": "overlay dispatcher must not be imported by overlays",
+    "spectrum_gui_add_move": "overlay dispatcher must not be imported by overlays",
 }
 
 
@@ -130,11 +139,16 @@ def classify(symbol: str) -> str:
         "setup_choice",
         "setup_focus_choice",
         "setup_focus_board_theme",
+        "setup_defined_mask",
+        "setup_visible_mask",
         "setup_cursor",
+        "setup_room_editing",
         "setup_edit_row",
         "setup_port_text",
     }:
         return "gui_state"
+    if name.startswith("netchesszx_session_"):
+        return "session"
     if name.startswith("netchesszx_"):
         return "config"
     return "resident"
@@ -149,15 +163,22 @@ def overlay_for_path(path: Path) -> str | None:
         group = parts[2]
         if group in {
             "board",
+            "about",
+            "control",
             "direct",
+            "fileui",
             "gui_log",
             "hints",
+            "input_edit",
             "menu_config",
             "menu_logic",
             "mqtt_connect",
             "mqtt_tx",
+            "setup",
             "status",
             "rules",
+            "restore",
+            "saveload",
         }:
             return group
     return None

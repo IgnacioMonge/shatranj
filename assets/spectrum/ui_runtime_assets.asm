@@ -82,3 +82,46 @@ input_prompt_msg:
     DEFB "> ",0
 white_turn_msg:
     DEFB "WHITE TO MOVE",0
+black_turn_msg:
+    DEFB "BLACK TO MOVE",0
+
+white_check_msg:
+    DEFB "WHITE CHECK",0
+black_check_msg:
+    DEFB "BLACK CHECK",0
+menu_cursor_masks:
+    DEFB 0,0x1f,1,0xf8
+    DEFB 2,0x01,2,0xf8
+    DEFB 5,0x01,2,0xf8
+    DEFB 8,0x01,2,0x80
+    DEFB 11,0x1f,2,0x80
+    DEFB 14,0x1f,2,0x80
+tab_label_file:
+    DEFB "FILE",0
+tab_label_discc:
+    DEFB "DISCC",0
+tab_label_reset:
+    DEFB "RESET",0
+tab_label_flip:
+    DEFB "FLIP",0
+tab_label_theme:
+    DEFB "THEME",0
+tab_label_about:
+    DEFB "ABOUT",0
+moves_white_msg:
+    DEFB "WHITE",0
+moves_black_msg:
+    DEFB "BLACK",0
+banner_info_top_msg:
+    ; 34-byte slot; gen_assets.py rewrites it for Next builds
+    DEFB "ONLINE CHESS FOR ZX SPECTRUM",0
+    DEFB 0, 0, 0, 0, 0
+board_theme_mark_inks:
+    DEFB 2, 5, 0, 7, 6
+board_theme_light_attrs:
+    DEFB 0x38, 0x31, 0x3a, 0x29, 0x62
+board_theme_dark_attrs:
+    DEFB 0x07, 0x0e, 0x17, 0x0d, 0x54
+version_banner_msg:
+    ; 16-byte slot; dev builds omit "version " so the suffix remains visible
+    DEFB 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0

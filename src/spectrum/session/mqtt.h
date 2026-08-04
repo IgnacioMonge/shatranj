@@ -9,7 +9,10 @@
     netchess_mqtt_session_parse_host((payload), (host_color), (session_id))
 #define netchesszx_session_mqtt_parse_join_payload(payload, session_id) \
     netchess_mqtt_session_parse_join((payload), (session_id))
-uint8_t netchesszx_session_mqtt_offline_matches_peer(const char *payload);
+#define NETCHESSZX_SESSION_MQTT_SIDE_LOCAL 0x01u
+#define NETCHESSZX_SESSION_MQTT_SIDE_REMOTE 0x02u
+#define NETCHESSZX_SESSION_MQTT_SIDE_CURRENT 0x04u
+uint8_t netchesszx_session_mqtt_side_relation(const char *payload, char verb);
 uint8_t netchesszx_session_mqtt_payload_is_foreign_host(const char *payload);
 uint8_t netchesszx_session_mqtt_payload_marks_peer_ready(const char *payload,
                                                          uint8_t is_host);

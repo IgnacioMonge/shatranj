@@ -1,78 +1,103 @@
-# Shatranj
+# Shatranj desktop client
 
-Qt desktop app for Shatranj Direct TCP and MQTT sessions.
+[Español](README.es.md) · [Project documentation](../docs/README.md)
 
-Current scope:
+Qt desktop client for Shatranj 1.1. Windows, macOS, and Linux use the same
+implementation and support both transports:
 
-- Enter Direct TCP host/port or MQTT broker/room/port.
-- Remember the last connection settings.
-- Connect/disconnect.
-- Choose Host/Guest role. The host selects color, starts games, and resets
-  running games.
-- Click a source and target square to build a coordinate move when it is your
-  turn.
-- Send `MOVE <ply> <move>` and apply it locally after the opponent ACK.
-- Send and receive `CHAT <text>` messages in the chat panel.
-- Show current turn feedback plus game and move clocks.
-- Send chat with Enter from the message box.
-- Show RX/TX log.
-- MQTT room setup and peer presence are implemented. Retained state restore is
-  not implemented yet.
+- **Direct TCP**: a host listens for one guest; the guest connects to the
+  host's address and port.
+- **MQTT**: both peers join a room through a broker; the broker carries the
+  session payloads and presence messages.
 
-Local chess legality now runs in the Qt client through the Shatranj rules
-wrapper around `mcu-max`.
+The transport-neutral payloads and topic rules are defined in
+[`docs/wire-contract.md`](../docs/wire-contract.md). Do not copy that grammar
+into client documentation: this file describes how to use and build the Qt
+adapter.
 
-## Build
+## Using the Qt client
 
-Use the repository `Makefile` as the stable entry point:
+1. Select `Direct` or `MQTT` and enter the required endpoint/room settings.
+2. Choose `Host` or `Guest`; the host selects the colour and starts the game.
+3. Click a source square and a target square on your turn.
+4. Use the chat box for messages; pressing Enter sends the current line.
+5. Use the command forms below when a session control action is needed:
 
-```sh
-make client
-```
+   ```text
+   /draw       offer a draw or rematch
+   /resign     resign the current game
+   /takeback   request undo of the last applied ply
+   /save [name] save the current position locally
+   /load [name] load a local position and request peer restore
+   ```
 
-Backend selection is automatic:
+   Restore is an explicit host-led exchange; MQTT retained state is not a
+   substitute for the restore protocol. The Qt client asks for a promotion
+   piece; Spectrum clients currently auto-promote to a queen.
 
-- Windows: MSVC/Qt deploy script, output `release\shatranj-client\shatranj-client.exe`.
-- macOS/Linux: CMake if available, otherwise qmake.
+The client remembers connection settings and recent Direct guest addresses,
+shows turn/game/move clocks, and exposes an RX/TX log. A hardware Spectrum host
+can be tested with the steps in [Test Direct TCP with hardware](#test-direct-tcp-with-hardware).
 
-To force a backend:
-
-```sh
-make CLIENT_BUILD=cmake client
-make CLIENT_BUILD=qmake client
-make CLIENT_BUILD=msvc client
-```
-
-On macOS, CMake/qmake builds also update a `Shatranj.app` entry in
-`/Applications`. To use a different Applications directory:
-
-```sh
-make CLIENT_MAC_APPLICATIONS_DIR=/path/to/Applications client
-```
-
-## Test Direct TCP With Hardware Host
-
-1. Build/copy `release/SHATRANJ.tap`, `release/SHATRANJ.OVL`, and
-   `release/SHATRANJ.DAT` on the hardware host.
-   A red border with `DAT?` at boot means the DAT file is missing, corrupt, or
-   does not match the generated asset size.
-2. Read the host IP from `+CIFSR:STAIP,"..."`.
-3. Start Shatranj.
-4. Select `Direct` and `Guest`.
-5. Enter that IP and port `5000`.
-6. Connect.
-7. Wait for the host side to start the game.
-8. After the client receives a `MOVE`, play a move when the status shows it is
-   your turn.
-9. Use the Chat box to exchange messages with the opponent.
-
-Expected reply:
+## Architecture
 
 ```text
-ACK 2
+portable common C -> desktop core -> Qt Widgets application
 ```
 
-The hardware input line also accepts text: exact coordinate moves are played
-during the local turn, otherwise the text is sent as chat. Editing supports
-left/right, history with up/down, CAPS+O/P word movement, CAPS+9 word delete,
-CAPS+1/2 start/end, and held-key repeat for typing/navigation/backspace.
+The common layer owns chess rules, protocol parsing/building, MQTT grammar,
+session reducers, and the save-game wire format. The desktop core adapts those
+contracts to TCP/MQTT, timing, persistence, and Qt helpers. The Qt application
+owns presentation and packaging. CMake target boundaries prevent a
+platform-specific client fork.
+
+## Build and test
+
+Use the repository `Makefile` entry points from the project root:
+
+```sh
+make client-test   # configure, build, and run Qt tests
+make client        # release packaging for the current desktop platform
+make tap           # Classic ZX: SHATRANJ.tap, .OVL, and .DAT
+make nex           # Spectrum Next: self-contained SHATRANJ.nex
+make full-check    # host, Spectrum, ABI, and size guards
+```
+
+`make client-test` is the supported desktop development loop on Windows,
+macOS, and Linux. On Windows, `client\build-pc.cmd` is an equivalent
+interactive wrapper; the MSVC CMake presets keep the build tree outside the
+repository and provide Qt DLLs to CTest. Do not use a qmake fallback or an
+ad-hoc in-tree/raw CMake build.
+
+`make client` produces the Windows executable, deploys a macOS application
+bundle, or builds the supported and tested Linux executable against the system
+Qt installation. The **Build Linux AppImage** GitHub Actions workflow packages
+and inspects a self-contained x86_64 AppImage, uploads it as a workflow
+artifact, and attaches it to a published release. On macOS,
+the command also installs the current bundle at `/Applications/Shatranj.app`;
+set `CLIENT_MAC_APPLICATIONS_DIR` to choose another Applications directory.
+
+The Spectrum targets accept these configuration variables when a configured
+build is required:
+
+```sh
+PORT=5000 MQTT_HOST=broker.example MQTT_PORT=1883 MQTT_CODE=1234 make tap
+```
+
+## Test Direct TCP with hardware
+
+1. Build the matching Classic or Next target (`make tap` or `make nex`).
+2. On a Classic host, copy `SHATRANJ.tap`, `SHATRANJ.OVL`, and `SHATRANJ.DAT`
+   together; on Next, copy the self-contained `SHATRANJ.nex`.
+3. Start the host and note its LAN address and configured port (the default is
+   `5000` for the Classic build).
+4. Start the Qt client, select `Direct` and `Guest`, enter the address/port,
+   and connect.
+5. Wait for the host to start the game, then play when the status says it is
+   your turn; chat is available in the same window.
+
+For Spectrum-specific input, the command line accepts `/draw`, `/resign`, and
+`/takeback`; saving and loading are available from the FILE menu. The
+protocol-level expectations remain in the canonical
+[`wire contract`](../docs/wire-contract.md) and
+[`session contract`](../docs/session-core-contract.md).

@@ -4,18 +4,32 @@ PUBLIC _menu_config_run_ovl_entry
 PUBLIC _menu_config_paint_attrs_ovl_entry
 PUBLIC _menu_config_validate_ip_ovl_entry
 PUBLIC _menu_config_edit_line_ovl_entry
+PUBLIC _menu_config_render_ovl_entry
 PUBLIC _menu_config_piece_set_options_asm
 
 EXTERN _spectrum_info_line
 EXTERN _spectrum_info_show_game_setup
-EXTERN _spectrum_setup_board_swatches
+EXTERN _spectrum_overlay_context
+EXTERN _spectrum_info_show_setup
 EXTERN _setup_choice
+EXTERN _setup_focus_choice
+EXTERN _setup_focus_board_theme
+EXTERN _setup_visible_mask
+EXTERN _setup_defined_mask
+EXTERN _setup_cursor
+EXTERN _setup_room_editing
+EXTERN _setup_edit_row
+EXTERN _setup_port_text
+EXTERN _netchesszx_mqtt_code
+EXTERN _netchesszx_direct_host
+EXTERN _last_ip
 
-    DW 4
+    DEFB 5
     DW _menu_config_run_ovl_entry
     DW _menu_config_paint_attrs_ovl_entry
     DW _menu_config_validate_ip_ovl_entry
     DW _menu_config_edit_line_ovl_entry
+    DW _menu_config_render_ovl_entry
 
 _menu_config_run_ovl_entry:
     inc de
@@ -25,6 +39,7 @@ _menu_config_run_ovl_entry:
     inc de
     ld a, (de)
     ld b, a
+menu_config_run_dirty:
     bit 0, c
     ld hl, menu_config_line_game
     call nz, menu_config_info_line
@@ -58,6 +73,142 @@ _menu_config_run_ovl_entry:
     ld l, 1
     ret
 
+_menu_config_render_ovl_entry:
+    push de
+    ld hl, (_setup_visible_mask)
+    ld a, (_setup_cursor)
+    ld b, a
+    inc b
+    ld de, 1
+menu_config_render_cursor_shift:
+    dec b
+    jr z, menu_config_render_cursor_mask
+    sla e
+    rl d
+    jr menu_config_render_cursor_shift
+menu_config_render_cursor_mask:
+    ld a, l
+    and e
+    ld c, a
+    ld a, h
+    and d
+    or c
+    jr nz, menu_config_render_cursor_ready
+    xor a
+    ld (_setup_cursor), a
+menu_config_render_cursor_ready:
+    pop de
+    inc de
+    inc de
+    ld a, (de)
+    or a
+    jr z, menu_config_render_incremental
+    ld hl, (_setup_visible_mask)
+    ld (menu_config_render_dirty), hl
+    call _spectrum_info_show_setup
+    jr menu_config_render_force
+menu_config_render_incremental:
+    push de
+    inc de
+    inc de
+    ld a, (de)
+    cpl
+    ld c, a
+    inc de
+    ld a, (de)
+    cpl
+    ld b, a
+    ld hl, (_setup_visible_mask)
+    ld a, l
+    and c
+    ld l, a
+    ld a, h
+    and b
+    ld h, a
+    ld (menu_config_render_dirty), hl
+    pop de
+    inc de
+    ld a, (de)
+    cp 0xff
+    jr z, menu_config_render_force
+    cp 9
+    jr nz, menu_config_render_clear_normal
+    ld a, 13
+    jr menu_config_render_clear
+menu_config_render_clear_normal:
+    cp 4
+    jr c, menu_config_render_clear
+    add a, 3
+menu_config_render_clear:
+    ld l, a
+    call menu_config_clear_tail
+menu_config_render_force:
+    ld hl, (_spectrum_overlay_context)
+    ld de, (_setup_visible_mask)
+    ld a, l
+    and e
+    ld l, a
+    ld a, h
+    and d
+    ld h, a
+    ld de, (menu_config_render_dirty)
+    ld a, l
+    or e
+    ld l, a
+    ld a, h
+    or d
+    ld h, a
+    ld (menu_config_render_dirty), hl
+    ld a, (_setup_choice + 1)
+    or a
+    ld a, l
+    jr z, menu_config_render_edit_direct
+    and 0x04
+    jr menu_config_render_edit_ready
+menu_config_render_edit_direct:
+    and 0x0c
+menu_config_render_edit_ready:
+    ld (menu_config_render_edit), a
+    cpl
+    and l
+    ld l, a
+    ld a, h
+    or l
+    jr z, menu_config_render_overlay_done
+    ld b, h
+    ld c, l
+    call menu_config_run_dirty
+menu_config_render_overlay_done:
+    ld a, (menu_config_render_edit)
+    and 0x04
+    jr z, menu_config_render_mqtt
+    ld a, 2
+    call menu_config_edit_line
+menu_config_render_mqtt:
+    ld a, (menu_config_render_edit)
+    and 0x08
+    jr z, menu_config_render_paint
+    ld a, 3
+    call menu_config_edit_line
+menu_config_render_paint:
+    call _menu_config_paint_attrs_ovl_entry
+    ld l, 1
+    ret
+
+menu_config_clear_tail:
+    ld a, l
+    add a, 7
+menu_config_clear_tail_loop:
+    cp 22
+    ret nc
+    ld (menu_config_blank_line), a
+    push af
+    ld hl, menu_config_blank_line
+    call _spectrum_info_line
+    pop af
+    inc a
+    jr menu_config_clear_tail_loop
+
 menu_config_info_line:
     push bc
     call _spectrum_info_line
@@ -71,45 +222,39 @@ menu_config_show_game_setup:
     ret
 
 _menu_config_paint_attrs_ovl_entry:
-    ld a, (de)
+IFDEF NETCHESSZX_NEXT
+    ; Setup previews use ULA+ group 3; START reapplies the chosen game theme.
+    ld bc, 0x243b
+    ld a, 0x68
+    out (c), a
+    inc b
+    in a, (c)
+    or 0x08
+    out (c), a
+ENDIF
+    ld hl, _setup_choice + 4
+    call menu_config_pack_choices
     ld (menu_config_values), a
-    inc de
-    ld a, (de)
+    ld hl, (_setup_visible_mask)
+    ld a, l
     ld (menu_config_visible_l), a
-    inc de
-    ld a, (de)
+    ld a, h
     ld (menu_config_visible_h), a
-    inc de
-    ld a, (de)
+    ld hl, (_setup_defined_mask)
+    ld a, l
     ld (menu_config_defined_l), a
-    inc de
-    ld a, (de)
+    ld a, h
     ld (menu_config_defined_h), a
-    inc de
-    ld a, (de)
+    ld a, (_setup_cursor)
     ld (menu_config_cursor), a
-    inc de
-    ld a, (de)
-    ld c, a
-    and 0x1f
+    ld hl, _setup_focus_choice + 4
+    call menu_config_pack_choices
     ld (menu_config_focus_bits), a
-    ld a, c
-    and 0xe0
-    rlca
-    rlca
-    rlca
+    ld a, (_setup_focus_board_theme)
     ld (menu_config_board_theme), a
-    inc de
-    ld a, (de)
-    ld c, a
-    and 0x0f
+    ld a, (_setup_focus_choice + 5)
     ld (menu_config_piece_set), a
-    ld a, c
-    rrca
-    rrca
-    rrca
-    rrca
-    and 0x0f
+    ld a, (_setup_choice + 5)
     ld (menu_config_piece_selected), a
     call menu_config_paint_game_attrs
     call menu_config_paint_link_attrs
@@ -124,21 +269,63 @@ _menu_config_paint_attrs_ovl_entry:
     ld l, 1
     ret
 
+menu_config_pack_choices:
+    ld b, 5
+    xor a
+menu_config_pack_choices_loop:
+    add a, a
+    or (hl)
+    dec hl
+    djnz menu_config_pack_choices_loop
+    ret
+
 _menu_config_edit_line_ovl_entry:
     ld a, (de)
+menu_config_edit_line:
     ld (menu_config_edit_row), a
-    inc de
-    ld a, (de)
+    ld a, (_setup_choice + 1)
+    or a
+    jr z, menu_config_edit_direct
+    ld a, 1
     ld (menu_config_edit_flags), a
-    inc de
-    ld a, (de)
-    ld l, a
-    inc de
-    ld a, (de)
-    ld h, a
-    inc de
-    ld a, (de)
+    ld hl, _netchesszx_mqtt_code
+    ld a, 6
+    jr menu_config_edit_selected
+menu_config_edit_direct:
+    xor a
+    ld (menu_config_edit_flags), a
+    ld a, (menu_config_edit_row)
+    cp 2
+    jr nz, menu_config_edit_port
+    ld a, (_setup_choice)
+    or a
+    jr nz, menu_config_edit_join_host
+    ld hl, _last_ip
+    ld a, 4
+    ld (menu_config_edit_flags), a
+    jr menu_config_edit_direct_host_ready
+menu_config_edit_join_host:
+    ld hl, _netchesszx_direct_host
+menu_config_edit_direct_host_ready:
+    ld a, 15
+    jr menu_config_edit_selected
+menu_config_edit_port:
+    ld hl, _setup_port_text
+    ld a, 5
+menu_config_edit_selected:
     ld (menu_config_edit_max), a
+    ld a, (_setup_room_editing)
+    or a
+    jr z, menu_config_edit_have_cursor
+    ld a, (_setup_edit_row)
+    ld c, a
+    ld a, (menu_config_edit_row)
+    cp c
+    jr nz, menu_config_edit_have_cursor
+    ld a, (menu_config_edit_flags)
+    or 2
+    ld (menu_config_edit_flags), a
+menu_config_edit_have_cursor:
     ld a, (menu_config_edit_flags)
     bit 2, a
     jr z, menu_config_edit_have_text
@@ -177,10 +364,6 @@ menu_config_edit_copy_label_loop:
     pop de
     ld b, 0
 menu_config_edit_copy_text_loop:
-    ld a, (menu_config_edit_max)
-    cp b
-    jr z, menu_config_edit_after_text
-    jr c, menu_config_edit_after_text
     ld a, (de)
     or a
     jr z, menu_config_edit_after_text
@@ -475,7 +658,7 @@ menu_config_paint_board_attrs:
     jr nz, menu_config_board_not_cursor
     ld a, (menu_config_board_theme)
     ld l, a
-    jp _spectrum_setup_board_swatches
+    jp menu_config_board_swatches
 menu_config_board_not_cursor:
     ld a, (menu_config_defined_l)
     bit 6, a
@@ -483,10 +666,10 @@ menu_config_board_not_cursor:
     ld a, (menu_config_board_theme)
     add a, 5
     ld l, a
-    jp _spectrum_setup_board_swatches
+    jp menu_config_board_swatches
 menu_config_board_not_defined:
     ld l, 0xff
-    jp _spectrum_setup_board_swatches
+    jp menu_config_board_swatches
 
 menu_config_paint_set_attrs:
     ld a, (menu_config_visible_l)
@@ -518,7 +701,7 @@ menu_config_paint_hints_attrs:
     ld a, (menu_config_visible_h)
     bit 0, a
     ret z
-    ld a, 0
+    xor a
     ld (menu_config_binary_mask), a
     ld a, 8
     ld (menu_config_binary_row), a
@@ -577,85 +760,6 @@ menu_config_attr_span:
     ret
 
 _menu_config_validate_ip_ovl_entry:
-    ld l, (de)
-    inc de
-    ld h, (de)
-    ld d, 0
-ipv_octet:
-    ld e, 0
-    ld b, 0
-    ld c, 0
-ipv_digit:
-    ld a, (hl)
-    sub '0'
-    jr c, ipv_after_digits
-    cp 10
-    jr nc, ipv_after_digits
-    push af
-    ld a, e
-    or a
-    jr z, ipv_first
-    cp 1
-    jr z, ipv_second
-    cp 2
-    jr z, ipv_third
-    pop af
-    jr ipv_fail
-ipv_first:
-    pop af
-    ld b, a
-    jr ipv_accept
-ipv_second:
-    pop af
-    ld c, a
-    jr ipv_accept
-ipv_third:
-    pop af
-    push af
-    ld a, b
-    cp 2
-    jr c, ipv_third_ok
-    jr nz, ipv_third_fail
-    ld a, c
-    cp 5
-    jr c, ipv_third_ok
-    jr nz, ipv_third_fail
-    pop af
-    cp 6
-    jr nc, ipv_fail
-    jr ipv_accept
-ipv_third_ok:
-    pop af
-    jr ipv_accept
-ipv_third_fail:
-    pop af
-    jr ipv_fail
-ipv_accept:
-    inc e
-    inc hl
-    jr ipv_digit
-ipv_after_digits:
-    ld a, e
-    or a
-    jr z, ipv_fail
-    ld a, (hl)
-    or a
-    jr z, ipv_end
-    cp '.'
-    jr nz, ipv_fail
-    ld a, d
-    cp 3
-    jr nc, ipv_fail
-    inc d
-    inc hl
-    jr ipv_octet
-ipv_end:
-    ld a, d
-    cp 3
-    jr nz, ipv_fail
-    ld l, 1
-    ret
-ipv_fail:
     ld l, 0
     ret
 
@@ -701,6 +805,78 @@ menu_config_piece_set_option_selected:
     ld a, 0x06
     ret
 
+; Swatches read the per-platform theme attrs straight from the resident DAT.
+; Next replaces only wood with its dedicated ULA+ group-3 colour pair.
+menu_config_dat_light_attrs EQU 0x6000 + 786
+
+menu_config_board_swatches:
+    ld c, l
+    ld hl, 0x5a16
+    ld b, 0
+    ld de, menu_config_dat_light_attrs
+menu_config_board_swatch_loop:
+    ld a, (de)
+    push de
+    call menu_config_board_swatch
+    pop de
+    inc de
+    inc b
+    ld a, b
+    cp 5
+    jr nz, menu_config_board_swatch_loop
+    ret
+menu_config_board_swatch:
+IFDEF NETCHESSZX_NEXT
+    cp 0x37
+    jr nz, menu_config_board_swatch_attr_ready
+    ld a, 0xc1
+menu_config_board_swatch_attr_ready:
+ENDIF
+    ld e, a
+    ld a, c
+    cp b
+    ld a, e
+    jr z, menu_config_board_swatch_flash
+    ld a, b
+    add a, 5
+    cp c
+    ld a, e
+    jr nz, menu_config_board_swatch_store
+IFDEF NETCHESSZX_NEXT
+    ; Keep the ULA+ palette group selected by the theme attribute.
+ELSE
+    or 0x40
+ENDIF
+    jr menu_config_board_swatch_store
+menu_config_board_swatch_flash:
+    ld a, e
+    and 0xc0
+    ld d, a
+    ld a, e
+    and 0x07
+    rlca
+    rlca
+    rlca
+    or d
+    ld d, a
+    ld a, e
+    and 0x38
+    rrca
+    rrca
+    rrca
+    or d
+IFDEF NETCHESSZX_NEXT
+    ; Swapping ink/paper is enough to mark focus without changing palette group.
+ELSE
+    or 0x80
+ENDIF
+menu_config_board_swatch_store:
+    ld (hl), a
+    inc hl
+    ld (hl), 0x07
+    inc hl
+    ret
+
 menu_config_line_game:
     DEFB 7, "GAME   CREATE    JOIN", 0
 menu_config_line_link:
@@ -714,7 +890,12 @@ menu_config_line_notation:
 menu_config_line_board:
     DEFB 16, "BOARD  ", 127, "   ", 127, "   ", 127, "   ", 127, "   ", 127, 0
 menu_config_line_set:
+IFDEF NETCHESSZX_NEXT
+    ; Next sprite sets: california, mpchess, totoy (lichess), truncated to fit.
+    DEFB 17, "SET    CALI  MPCH  TOTY", 0
+ELSE
     DEFB 17, "SET    BRRY  SPCY  PIXL", 0
+ENDIF
 menu_config_line_hints:
     DEFB 18, "HINTS  OFF       ON", 0
 menu_config_line_start:
@@ -773,4 +954,12 @@ menu_config_focus_value:
 menu_config_row_focus:
     DEFB 0
 menu_config_option_width:
+    DEFB 0
+menu_config_render_dirty:
+    DEFW 0
+menu_config_render_edit:
+    DEFB 0
+menu_config_blank_line:
+    DEFB 0
+    DEFM "              "
     DEFB 0

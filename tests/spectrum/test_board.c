@@ -8,6 +8,9 @@
 #define TEST_WHITE 0u
 #define TEST_BLACK 1u
 #define TEST_CASTLE_WK 1u
+#define TEST_CASTLE_WQ 2u
+#define TEST_CASTLE_BK 4u
+#define TEST_CASTLE_BQ 8u
 #define TEST_NO_EP (-1)
 #define TEST_SQ(row, col) ((int8_t)(((row) << 3) + (col)))
 
@@ -92,15 +95,35 @@ static void set_test_board(const char *cells, uint8_t side, int8_t ep)
     set_test_board_state(cells, side, 0u, ep);
 }
 
-static void compare_with_mcu(const char *name, const char *move)
+static void expect_undo_roundtrip(const char *name, const char *move)
+{
+    spectrum_board_snapshot_t before;
+    spectrum_board_snapshot_t after;
+    spectrum_board_undo_t undo;
+
+    spectrum_board_snapshot_save(&before);
+    if (!spectrum_board_apply_trusted_move_with_undo(move, &undo)) {
+        printf("FAIL %s: apply failed for %s\n", name, move);
+        ++failures;
+        return;
+    }
+    spectrum_board_undo_restore(&undo);
+    spectrum_board_snapshot_save(&after);
+    if (memcmp(&before, &after, sizeof(before)) != 0) {
+        printf("FAIL %s: undo mismatch for %s\n", name, move);
+        ++failures;
+    }
+}
+
+static void compare_with_common_rules(const char *name, const char *move)
 {
     uint8_t compact_legal = spectrum_board_is_legal_move(move);
-    int mcu_rc = netchesszx_rules_can_play(move);
-    uint8_t mcu_legal = (uint8_t)(mcu_rc == NETCHESSZX_OK);
+    int rules_rc = netchesszx_rules_can_play(move);
+    uint8_t rules_legal = (uint8_t)(rules_rc == NETCHESSZX_OK);
 
-    if (compact_legal != mcu_legal) {
-        printf("FAIL %s: compact=%u mcu=%u rc=%d move=%s\n",
-               name, compact_legal, mcu_legal, mcu_rc, move);
+    if (compact_legal != rules_legal) {
+        printf("FAIL %s: compact=%u common=%u rc=%d move=%s\n",
+               name, compact_legal, rules_legal, rules_rc, move);
         ++failures;
         return;
     }
@@ -111,7 +134,68 @@ static void compare_with_mcu(const char *name, const char *move)
             ++failures;
         }
         if (netchesszx_rules_play(move) != NETCHESSZX_OK) {
-            printf("FAIL %s: mcu apply failed %s\n", name, move);
+            printf("FAIL %s: common rules apply failed %s\n", name, move);
+            ++failures;
+        }
+    }
+}
+
+static void test_reset_and_clear_representation(void)
+{
+    static const char start_cells[] =
+        "rnbqkbnr"
+        "pppppppp"
+        "........"
+        "........"
+        "........"
+        "........"
+        "PPPPPPPP"
+        "RNBQKBNR";
+    static const int8_t start_rules[64] = {
+        -4, -2, -3, -5, -6, -3, -2, -4,
+        -1, -1, -1, -1, -1, -1, -1, -1,
+         0,  0,  0,  0,  0,  0,  0,  0,
+         0,  0,  0,  0,  0,  0,  0,  0,
+         0,  0,  0,  0,  0,  0,  0,  0,
+         0,  0,  0,  0,  0,  0,  0,  0,
+         1,  1,  1,  1,  1,  1,  1,  1,
+         4,  2,  3,  5,  6,  3,  2,  4
+    };
+    spectrum_board_snapshot_t snapshot;
+    uint8_t i;
+
+    spectrum_board_reset();
+    spectrum_board_snapshot_save(&snapshot);
+    if (memcmp(snapshot.cells, start_cells, 64u) != 0 ||
+        snapshot.side != TEST_WHITE ||
+        snapshot.castle != (TEST_CASTLE_WK | TEST_CASTLE_WQ |
+                            TEST_CASTLE_BK | TEST_CASTLE_BQ) ||
+        snapshot.ep != TEST_NO_EP) {
+        printf("FAIL reset snapshot representation\n");
+        ++failures;
+    }
+    for (i = 0u; i < 64u; ++i) {
+        if (spectrum_board_test_rule_cell(i) != start_rules[i]) {
+            printf("FAIL reset rules cell %u\n", i);
+            ++failures;
+        }
+    }
+    if (spectrum_board_test_rule_cell(64u) != 0) {
+        printf("FAIL rules cell bounds\n");
+        ++failures;
+    }
+
+    spectrum_board_clear();
+    spectrum_board_snapshot_save(&snapshot);
+    if (snapshot.side != TEST_WHITE || snapshot.castle != 0u ||
+        snapshot.ep != TEST_NO_EP) {
+        printf("FAIL clear snapshot state\n");
+        ++failures;
+    }
+    for (i = 0u; i < 64u; ++i) {
+        if (snapshot.cells[i] != '.' ||
+            spectrum_board_test_rule_cell(i) != 0) {
+            printf("FAIL clear cell %u\n", i);
             ++failures;
         }
     }
@@ -188,8 +272,25 @@ static void test_en_passant(void)
     expect_false("delayed ep illegal", spectrum_board_is_legal_move("e5d6"));
 }
 
+static void test_normal_pawn_capture_after_double_push(void)
+{
+    spectrum_board_reset();
+    expect_true("capture setup e2e4", spectrum_board_apply_move("e2e4"));
+    expect_true("capture setup e7e5", spectrum_board_apply_move("e7e5"));
+    expect_true("capture setup g1f3", spectrum_board_apply_move("g1f3"));
+    expect_true("capture setup d7d5", spectrum_board_apply_move("d7d5"));
+    expect_true("normal pawn capture e4d5 legal",
+                spectrum_board_is_legal_move("e4d5"));
+    expect_true("normal pawn capture e4d5 apply",
+                spectrum_board_apply_move("e4d5"));
+    expect_cell("normal pawn capture pawn on d5", 3u, 3u, 'P');
+    expect_cell("normal pawn capture e4 empty", 4u, 4u, '.');
+}
+
 static void test_promotion(void)
 {
+    spectrum_board_snapshot_t snapshot;
+
     spectrum_board_reset();
     expect_true("a2a4", spectrum_board_apply_move("a2a4"));
     expect_true("h7h5", spectrum_board_apply_move("h7h5"));
@@ -199,8 +300,184 @@ static void test_promotion(void)
     expect_true("h4h3", spectrum_board_apply_move("h4h3"));
     expect_true("a6b7", spectrum_board_apply_move("a6b7"));
     expect_true("h3g2", spectrum_board_apply_move("h3g2"));
+    spectrum_board_snapshot_save(&snapshot);
     expect_true("promote queen legal", spectrum_board_is_legal_move("b7c8q"));
+    expect_true("promote rook legal", spectrum_board_is_legal_move("b7c8r"));
+    expect_true("promote bishop legal", spectrum_board_is_legal_move("b7c8b"));
+    expect_true("promote knight legal", spectrum_board_is_legal_move("b7c8n"));
     expect_false("promote missing illegal", spectrum_board_is_legal_move("b7c8"));
+    spectrum_board_snapshot_restore(&snapshot);
+    expect_true("promote knight apply", spectrum_board_apply_move("b7c8n"));
+    expect_cell("promote knight on c8", 0u, 2u, 'N');
+    expect_cell("promote source empty", 1u, 1u, '.');
+}
+
+static void test_snapshot_restore(void)
+{
+    spectrum_board_snapshot_t snapshot;
+
+    spectrum_board_reset();
+    expect_true("snapshot e2e4", spectrum_board_apply_move("e2e4"));
+    spectrum_board_snapshot_save(&snapshot);
+    expect_true("snapshot a7a6", spectrum_board_apply_move("a7a6"));
+    spectrum_board_snapshot_restore(&snapshot);
+    expect_cell("snapshot e4 pawn", 4u, 4u, 'P');
+    expect_cell("snapshot a7 restored", 1u, 0u, 'p');
+    expect_true("snapshot black turn", spectrum_board_is_legal_move("e7e5"));
+    expect_false("snapshot white waits", spectrum_board_is_legal_move("g1f3"));
+
+    set_test_board_state(".....k.."
+                         "........"
+                         "........"
+                         "........"
+                         "........"
+                         "........"
+                         "........"
+                         "....K..R",
+                         TEST_WHITE,
+                         TEST_CASTLE_WK,
+                         TEST_NO_EP);
+    spectrum_board_snapshot_save(&snapshot);
+    spectrum_board_clear();
+    spectrum_board_snapshot_restore(&snapshot);
+    expect_true("snapshot castle rights", spectrum_board_is_legal_move("e1g1"));
+
+    set_test_board(".......k"
+                   "........"
+                   "........"
+                   "...pP..."
+                   "........"
+                   "........"
+                   "........"
+                   "K.......",
+                   TEST_WHITE,
+                   TEST_SQ(2, 3));
+    spectrum_board_snapshot_save(&snapshot);
+    spectrum_board_clear();
+    spectrum_board_snapshot_restore(&snapshot);
+    expect_true("snapshot ep square", spectrum_board_is_legal_move("e5d6"));
+}
+
+static void test_compact_undo(void)
+{
+    spectrum_board_snapshot_t before;
+    spectrum_board_snapshot_t after;
+    spectrum_board_undo_t undo = {1u, 2u, 'x', 3u, 4};
+    spectrum_board_undo_t undo_before = undo;
+
+    spectrum_board_reset();
+    expect_undo_roundtrip("undo quiet double push", "e2e4");
+
+    set_test_board("....k..."
+                   "........"
+                   "........"
+                   "...p...."
+                   "....P..."
+                   "........"
+                   "........"
+                   "....K...",
+                   TEST_WHITE,
+                   TEST_NO_EP);
+    expect_undo_roundtrip("undo normal capture", "e4d5");
+
+    set_test_board(".......k"
+                   ".N......"
+                   "........"
+                   "........"
+                   "........"
+                   "........"
+                   "........"
+                   "K.......",
+                   TEST_WHITE,
+                   TEST_NO_EP);
+    expect_undo_roundtrip("undo non-pawn to back rank", "b7c8");
+
+    set_test_board("....k..."
+                   "........"
+                   "........"
+                   "........"
+                   "........"
+                   "........"
+                   "....K..R"
+                   "........",
+                   TEST_WHITE,
+                   TEST_NO_EP);
+    expect_undo_roundtrip("undo non-home king shape", "e2g2");
+
+    set_test_board(".......k"
+                   "........"
+                   "........"
+                   "...pP..."
+                   "........"
+                   "........"
+                   "........"
+                   "K.......",
+                   TEST_WHITE,
+                   TEST_SQ(2, 3));
+    expect_undo_roundtrip("undo en passant", "e5d6");
+
+    set_test_board_state("....k..."
+                         "........"
+                         "........"
+                         "........"
+                         "........"
+                         "........"
+                         "........"
+                         "....K..R",
+                         TEST_WHITE,
+                         TEST_CASTLE_WK,
+                         TEST_NO_EP);
+    expect_undo_roundtrip("undo white kingside castle", "e1g1");
+
+    set_test_board_state("r...k..."
+                         "........"
+                         "........"
+                         "........"
+                         "........"
+                         "........"
+                         "........"
+                         "....K...",
+                         TEST_BLACK,
+                         TEST_CASTLE_BQ,
+                         TEST_NO_EP);
+    expect_undo_roundtrip("undo black queenside castle", "e8c8");
+
+    set_test_board_state("..r....k"
+                         ".P......"
+                         "........"
+                         "........"
+                         "........"
+                         "........"
+                         "........"
+                         "K.......",
+                         TEST_WHITE,
+                         (uint8_t)(TEST_CASTLE_WK | TEST_CASTLE_BK),
+                         TEST_NO_EP);
+    expect_undo_roundtrip("undo promote capture queen", "b7c8q");
+    expect_undo_roundtrip("undo promote capture rook", "b7c8r");
+    expect_undo_roundtrip("undo promote capture bishop", "b7c8b");
+    expect_undo_roundtrip("undo promote capture knight", "b7c8n");
+    spectrum_board_snapshot_save(&before);
+    expect_false("undo missing promotion rejected",
+                 spectrum_board_apply_trusted_move_with_undo("b7c8", &undo));
+    spectrum_board_snapshot_save(&after);
+    if (memcmp(&before, &after, sizeof(before)) != 0 ||
+        memcmp(&undo, &undo_before, sizeof(undo)) != 0) {
+        printf("FAIL undo rejected promotion mutated state\n");
+        ++failures;
+    }
+
+    set_test_board(".......k"
+                   "........"
+                   "........"
+                   "........"
+                   "........"
+                   "........"
+                   "......p."
+                   "K......R",
+                   TEST_BLACK,
+                   TEST_NO_EP);
+    expect_undo_roundtrip("undo black promote capture", "g2h1q");
 }
 
 static void test_san_basic(void)
@@ -383,73 +660,94 @@ static void test_san_check_and_mate(void)
                 (uint8_t)(spectrum_board_check_state() == SPECTRUM_BOARD_CHECK));
 }
 
-static void test_against_mcu_opening(void)
+static void test_stalemate_state(void)
 {
-    spectrum_board_reset();
-    (void)netchesszx_rules_reset();
-    compare_with_mcu("mcu start e2e5", "e2e5");
-    compare_with_mcu("mcu start e2e4", "e2e4");
-    compare_with_mcu("mcu black e7e5", "e7e5");
-    compare_with_mcu("mcu white g1f3", "g1f3");
-    compare_with_mcu("mcu black b8c6", "b8c6");
-    compare_with_mcu("mcu white f1c4", "f1c4");
-    compare_with_mcu("mcu black g8f6", "g8f6");
-    compare_with_mcu("mcu white castle", "e1g1");
+    set_test_board(".......k"
+                   ".....Q.."
+                   "......K."
+                   "........"
+                   "........"
+                   "........"
+                   "........"
+                   "........",
+                   TEST_BLACK,
+                   TEST_NO_EP);
+    expect_true("check_state STALEMATE",
+                (uint8_t)(spectrum_board_check_state() == SPECTRUM_BOARD_STALEMATE));
 }
 
-static void test_against_mcu_check(void)
+static void test_against_common_rules_opening(void)
 {
     spectrum_board_reset();
     (void)netchesszx_rules_reset();
-    compare_with_mcu("mcu f2f3", "f2f3");
-    compare_with_mcu("mcu e7e5", "e7e5");
-    compare_with_mcu("mcu g2g4", "g2g4");
-    compare_with_mcu("mcu d8h4", "d8h4");
-    compare_with_mcu("mcu ignore check", "a2a3");
+    compare_with_common_rules("common start e2e5", "e2e5");
+    compare_with_common_rules("common start e2e4", "e2e4");
+    compare_with_common_rules("common black e7e5", "e7e5");
+    compare_with_common_rules("common white g1f3", "g1f3");
+    compare_with_common_rules("common black b8c6", "b8c6");
+    compare_with_common_rules("common white f1c4", "f1c4");
+    compare_with_common_rules("common black g8f6", "g8f6");
+    compare_with_common_rules("common white castle", "e1g1");
 }
 
-static void test_against_mcu_en_passant(void)
+static void test_against_common_rules_check(void)
 {
     spectrum_board_reset();
     (void)netchesszx_rules_reset();
-    compare_with_mcu("mcu ep e2e4", "e2e4");
-    compare_with_mcu("mcu ep a7a6", "a7a6");
-    compare_with_mcu("mcu ep e4e5", "e4e5");
-    compare_with_mcu("mcu ep d7d5", "d7d5");
-    compare_with_mcu("mcu ep e5d6", "e5d6");
+    compare_with_common_rules("common f2f3", "f2f3");
+    compare_with_common_rules("common e7e5", "e7e5");
+    compare_with_common_rules("common g2g4", "g2g4");
+    compare_with_common_rules("common d8h4", "d8h4");
+    compare_with_common_rules("common ignore check", "a2a3");
 }
 
-static void test_against_mcu_promotion(void)
+static void test_against_common_rules_en_passant(void)
 {
     spectrum_board_reset();
     (void)netchesszx_rules_reset();
-    compare_with_mcu("mcu promo a2a4", "a2a4");
-    compare_with_mcu("mcu promo h7h5", "h7h5");
-    compare_with_mcu("mcu promo a4a5", "a4a5");
-    compare_with_mcu("mcu promo h5h4", "h5h4");
-    compare_with_mcu("mcu promo a5a6", "a5a6");
-    compare_with_mcu("mcu promo h4h3", "h4h3");
-    compare_with_mcu("mcu promo a6b7", "a6b7");
-    compare_with_mcu("mcu promo h3g2", "h3g2");
-    compare_with_mcu("mcu promo b7c8q", "b7c8q");
+    compare_with_common_rules("common ep e2e4", "e2e4");
+    compare_with_common_rules("common ep a7a6", "a7a6");
+    compare_with_common_rules("common ep e4e5", "e4e5");
+    compare_with_common_rules("common ep d7d5", "d7d5");
+    compare_with_common_rules("common ep e5d6", "e5d6");
+}
+
+static void test_against_common_rules_promotion(void)
+{
+    spectrum_board_reset();
+    (void)netchesszx_rules_reset();
+    compare_with_common_rules("common promo a2a4", "a2a4");
+    compare_with_common_rules("common promo h7h5", "h7h5");
+    compare_with_common_rules("common promo a4a5", "a4a5");
+    compare_with_common_rules("common promo h5h4", "h5h4");
+    compare_with_common_rules("common promo a5a6", "a5a6");
+    compare_with_common_rules("common promo h4h3", "h4h3");
+    compare_with_common_rules("common promo a6b7", "a6b7");
+    compare_with_common_rules("common promo h3g2", "h3g2");
+    compare_with_common_rules("common promo b7c8q", "b7c8q");
 }
 
 int main(void)
 {
+    test_reset_and_clear_representation();
     test_start_position();
     test_turn_and_check();
     test_castling();
     test_trusted_castle_shape_guard();
     test_en_passant();
+    test_normal_pawn_capture_after_double_push();
     test_promotion();
+    test_snapshot_restore();
+    test_compact_undo();
     test_san_basic();
     test_san_disambiguation();
     test_san_pawns_and_suffix();
     test_san_check_and_mate();
-    test_against_mcu_opening();
-    test_against_mcu_check();
-    test_against_mcu_en_passant();
-    test_against_mcu_promotion();
+    test_stalemate_state();
+    test_against_common_rules_opening();
+    test_against_common_rules_check();
+    test_against_common_rules_en_passant();
+    test_against_common_rules_promotion();
 
     if (failures != 0) {
         printf("%d failure(s)\n", failures);

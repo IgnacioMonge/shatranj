@@ -1,6 +1,5 @@
 SECTION code_user
 
-IFDEF HINTS_OVL
 PUBLIC _rules_hints_ovl
 PUBLIC _rules_hints_clear_ovl
 EXTERN _spectrum_board_view_redraw_square
@@ -15,10 +14,8 @@ EXTERN compute_screen_base
 EXTERN board_row
 EXTERN board_col
 EXTERN tmp_attr
-ELSE
 PUBLIC _rules_play_ovl
 PUBLIC _rules_check_ovl
-ENDIF
 
 RULE_EMPTY  EQU 0
 RULE_WHITE  EQU 0
@@ -50,10 +47,7 @@ CASTLE_BQ   EQU 8
 ; stub must restore both registers before returning and must not call EI paths
 ; while IY is borrowed.
 
-IFDEF HINTS_OVL
-_rules_hints_ovl:
-    push ix
-    push iy
+rules_import_board:
     ld h, d
     ld l, e
     ld e, (hl)
@@ -62,6 +56,12 @@ _rules_hints_ovl:
     ld (r_board), de
     ld (r_active), de
     inc hl
+    ret
+
+_rules_hints_ovl:
+    push ix
+    push iy
+    call rules_import_board
     ld de, r_side
     ldi
     ldi
@@ -249,32 +249,16 @@ draw_dot_row:
     ret
 
 
-ELSE
 _rules_play_ovl:
     push ix
     push iy
-    ld h, d
-    ld l, e
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    ld (r_board), de
-    ld (r_active), de
-    inc hl
+    call rules_import_board
     ld de, r_side
     ld bc, 5
     ldir
 
     call rules_current_legal
-    or a
-    jr z, rules_illegal
-rules_legal:
-    ld l, 1
-    pop iy
-    pop ix
-    ret
-rules_illegal:
-    ld l, 0
+    ld l, a
     pop iy
     pop ix
     ret
@@ -282,14 +266,7 @@ rules_illegal:
 _rules_check_ovl:
     push ix
     push iy
-    ld h, d
-    ld l, e
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    ld (r_board), de
-    ld (r_active), de
-    inc hl
+    call rules_import_board
     ld de, r_side
     ld bc, 5
     ldir
@@ -308,8 +285,7 @@ _rules_check_ovl:
     ld b, a
     ld a, c
     call rules_attacked_by
-    or a
-    jr z, rules_check_none
+    ld (r_in_check), a
     ld d, 0
 rules_check_from_loop:
     ld a, d
@@ -347,19 +323,27 @@ rules_check_next_from:
     ld a, d
     cp 64
     jr nz, rules_check_from_loop
+    ld a, (r_in_check)
+    or a
+    jr z, rules_check_stalemate
     ld l, 2
+    jr rules_check_done
+rules_check_stalemate:
+    ld l, 3
 rules_check_done:
     pop iy
     pop ix
     ret
 rules_check_found_escape:
+    ld a, (r_in_check)
+    or a
+    jr z, rules_check_none
     ld l, 1
     jr rules_check_done
 rules_check_none:
     ld l, 0
     jr rules_check_done
 
-ENDIF
 rules_current_legal:
     call rules_pseudo
     or a
@@ -474,6 +458,7 @@ rules_pawn_white:
     jr nz, rules_pawn_white_double
     ld a, (r_dst)
     or a
+rules_return_z:
     jp z, rules_ret1
     jp rules_ret0
 rules_pawn_white_double:
@@ -490,8 +475,7 @@ rules_pawn_white_double:
     sub 8
     call rules_get_active
     or a
-    jp z, rules_ret1
-    jp rules_ret0
+    jp rules_return_z
 rules_pawn_white_capture:
     ld a, (r_adf)
     cp 1
@@ -509,8 +493,7 @@ rules_pawn_white_capture:
     add a, 8
     call rules_get_active
     cp RULE_BP
-    jp z, rules_ret1
-    jp rules_ret0
+    jp rules_return_z
 
 rules_pawn_black:
     ld a, (r_df)
@@ -521,8 +504,7 @@ rules_pawn_black:
     jr nz, rules_pawn_black_double
     ld a, (r_dst)
     or a
-    jp z, rules_ret1
-    jp rules_ret0
+    jp rules_return_z
 rules_pawn_black_double:
     ld a, (r_fr)
     cp 1
@@ -537,8 +519,7 @@ rules_pawn_black_double:
     add a, 8
     call rules_get_active
     or a
-    jp z, rules_ret1
-    jp rules_ret0
+    jp rules_return_z
 rules_pawn_black_capture:
     ld a, (r_adf)
     cp 1
@@ -556,8 +537,7 @@ rules_pawn_black_capture:
     sub 8
     call rules_get_active
     cp RULE_WP
-    jp z, rules_ret1
-    jp rules_ret0
+    jp rules_return_z
 
 rules_knight:
     ld a, (r_adr)
@@ -571,8 +551,7 @@ rules_knight:
     jp nc, rules_ret0
     add a, b
     cp 1
-    jp z, rules_ret1
-    jp rules_ret0
+    jp rules_return_z
 
 rules_bishop:
     ld a, (r_adr)
@@ -612,35 +591,11 @@ rules_rook_step:
 rules_queen:
     ld a, (r_adr)
     or a
-    jr z, rules_queen_straight
+    jr z, rules_rook
     ld hl, r_adf
     cp (hl)
-    jr nz, rules_queen_straight
+    jr nz, rules_rook
     call rules_diag_step
-    jr rules_path_clear
-rules_queen_straight:
-    ld a, (r_dr)
-    or a
-    jr z, rules_queen_file
-    ld a, (r_df)
-    or a
-    jp nz, rules_ret0
-    ld a, (r_dr)
-    bit 7, a
-    ld a, 8
-    jr z, rules_queen_step
-    ld a, 248
-    jr rules_queen_step
-rules_queen_file:
-    ld a, (r_df)
-    or a
-    jp z, rules_ret0
-    bit 7, a
-    ld a, 1
-    jr z, rules_queen_step
-    ld a, 255
-rules_queen_step:
-    ld (r_step), a
     jr rules_path_clear
 
 rules_diag_step:
@@ -1201,12 +1156,13 @@ r_adf:          DEFB 0
 r_step:         DEFB 0
 r_attack_sq:    DEFB 0
 r_by_side:      DEFB 0
+r_in_check:     DEFB 0
 r_ar:           DEFB 0
 r_af:           DEFB 0
 r_scan_piece:   DEFB 0
-r_tmp:          DEFS 64
+; Must equal the linked _overlay_scratch_base; check_lowmem_layout.py proves it.
+r_tmp           EQU 0x672B
+rules_tmp_size  EQU 64
 
-IFDEF HINTS_OVL
 r_hint_ink:
     DEFB 0
-ENDIF

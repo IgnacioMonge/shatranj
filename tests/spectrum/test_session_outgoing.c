@@ -8,28 +8,6 @@
 
 static const char *sent_text;
 
-char *spectrum_append_text(char *dst, const char *src)
-{
-    while (*src != '\0') {
-        *dst++ = *src++;
-    }
-    *dst = '\0';
-    return dst;
-}
-
-char *spectrum_append_u16(char *dst, uint16_t value)
-{
-    char buf[6];
-    char *p = buf + sizeof(buf);
-
-    *--p = '\0';
-    do {
-        *--p = (char)('0' + (value % 10u));
-        value = (uint16_t)(value / 10u);
-    } while (value != 0u);
-    return spectrum_append_text(dst, p);
-}
-
 uint8_t spectrum_net_send_text(const char *text)
 {
     sent_text = text;
@@ -58,10 +36,18 @@ static void expect_sent(const char *expected, const char *message)
 static void test_ack_nack(void)
 {
     sent_text = 0;
+    check(netchesszx_session_send_ack_move("0"), "zero ack move sent");
+    expect_sent("ACK 0", "zero ack move text");
+    check(netchesszx_session_send_nack_move("0"), "zero nack move sent");
+    expect_sent("NACK 0", "zero nack move text");
     check(netchesszx_session_send_ack_move("12"), "ack move sent");
     expect_sent("ACK 12", "ack move text");
     check(netchesszx_session_send_nack_move("13"), "nack move sent");
     expect_sent("NACK 13", "nack move text");
+    check(netchesszx_session_send_ack_move("65535"), "max ack move sent");
+    expect_sent("ACK 65535", "max ack move text");
+    check(netchesszx_session_send_nack_move("65535"), "max nack move sent");
+    expect_sent("NACK 65535", "max nack move text");
 }
 
 static void test_ping_response(void)
@@ -71,7 +57,7 @@ static void test_ping_response(void)
                                  NETCHESSZX_COLOR_WHITE);
     check(netchesszx_session_send_ping(), "direct ping sent");
     expect_sent("PING", "direct ping text");
-    check(netchesszx_session_send_ack_ping("PING"), "ack ping sent");
+    check(netchesszx_session_send_ack_ping(), "ack ping sent");
     expect_sent("ACK PING", "ack ping text");
 }
 

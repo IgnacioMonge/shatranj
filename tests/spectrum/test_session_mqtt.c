@@ -72,17 +72,34 @@ static void test_parse_host_join(void)
 
 static void test_peer_matches(void)
 {
+    uint8_t relation;
+
     netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
                                  NETCHESSZX_TRANSPORT_MQTT,
                                  NETCHESSZX_COLOR_WHITE);
     netchesszx_mqtt_session_id = 77u;
 
-    check(netchesszx_session_mqtt_offline_matches_peer("F B"),
-          "offline side matches");
-    check(netchesszx_session_mqtt_offline_matches_peer("F B 77"),
-          "offline session matches");
-    check(!netchesszx_session_mqtt_offline_matches_peer("F B 78"),
-          "offline session mismatch");
+    /* Id-less F is a stray client's will (armed before it knew the session
+       id); honoring it would let any intruder kill a live game. */
+    relation = netchesszx_session_mqtt_side_relation("F B", 'F');
+    check(relation == NETCHESSZX_SESSION_MQTT_SIDE_REMOTE,
+          "offline without session id is remote but not current");
+    relation = netchesszx_session_mqtt_side_relation("F B 77", 'F');
+    check(relation == (NETCHESSZX_SESSION_MQTT_SIDE_REMOTE |
+                       NETCHESSZX_SESSION_MQTT_SIDE_CURRENT),
+          "offline session matches remote current");
+    relation = netchesszx_session_mqtt_side_relation("F B 78", 'F');
+    check(relation == NETCHESSZX_SESSION_MQTT_SIDE_REMOTE,
+          "offline stale session remains remote only");
+    relation = netchesszx_session_mqtt_side_relation("F W", 'F');
+    check(relation == NETCHESSZX_SESSION_MQTT_SIDE_LOCAL,
+          "local offline matches");
+    relation = netchesszx_session_mqtt_side_relation("O W 77", 'O');
+    check(relation == (NETCHESSZX_SESSION_MQTT_SIDE_LOCAL |
+                       NETCHESSZX_SESSION_MQTT_SIDE_CURRENT),
+          "seat marker matches local current");
+    check(netchesszx_session_mqtt_side_relation("O X 77", 'O') == 0u,
+          "bad side relation rejected");
     check(!netchesszx_session_mqtt_payload_is_foreign_host("H B 77"),
           "same host session not foreign");
     check(netchesszx_session_mqtt_payload_is_foreign_host("H B 78"),

@@ -21,14 +21,12 @@ ATTR_BLACK = 0x00
 LOGO_W = 109
 LOGO_Y = 22
 TEXT_LINES = [
-    ("SHATRANJ", ATTR_WHITE),
-    ("(C) M.I. MONGE", ATTR_WHITE),
-    ("ONLINE CHESS", ATTR_WHITE),
-    ("FOR ZX SPECTRUM", ATTR_WHITE),
+    ("A CHESS GAME FOR SPECTRUM ZX", ATTR_WHITE),
+    ("(C) 2026 M.I. MONGE GARCIA", ATTR_WHITE),
     ("GH: IGNACIOMONGE/SHATRANJ", ATTR_YELLOW),
-    ("LICENSE: MIMG", ATTR_YELLOW),
+    ("LICENSE: GNU GPL V2.0", ATTR_YELLOW),
 ]
-TEXT_Y = [74, 80, 86, 92, 104, 110]
+TEXT_Y = [90, 98, 106, 114]
 # Board restore redraws the frame without clearing every border byte. Keep the
 # right frame on bit 7 and the bottom frame on scanline 0 of the last row.
 FRAME_LEFT = 7

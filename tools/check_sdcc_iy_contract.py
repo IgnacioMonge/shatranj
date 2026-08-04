@@ -60,6 +60,7 @@ def main(argv):
         "-clib=sdcc_iy",
         "-SO3",
         "-compiler=sdcc",
+        "-Cs--no-reg-params",
         "--opt-code-size",
         "--fomit-frame-pointer",
         "-S",

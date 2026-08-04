@@ -1,5 +1,6 @@
 #include "common/protocol/mqtt_session_protocol.h"
 
+#ifndef NETCHESSZX_SDCC_IY
 const char *netchess_mqtt_session_parse_u16_token(const char *p, uint16_t *out)
 {
     uint16_t value = 0u;
@@ -21,6 +22,7 @@ const char *netchess_mqtt_session_parse_u16_token(const char *p, uint16_t *out)
     *out = value;
     return p;
 }
+#endif
 
 uint8_t netchess_mqtt_session_color_value(char color, uint8_t *out)
 {

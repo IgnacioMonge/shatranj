@@ -157,6 +157,28 @@ size_t netchess_mqtt_encode_subscribe(uint8_t *out,
     return pos;
 }
 
+size_t netchess_mqtt_encode_unsubscribe(uint8_t *out,
+                                        size_t cap,
+                                        uint16_t packet_id,
+                                        const char *topic)
+{
+    size_t pos;
+    size_t topic_len = mqtt_strlen(topic);
+    uint32_t remaining = 2u + 2u + (uint32_t)topic_len;
+
+    if (topic_len > NETCHESSZX_MQTT_TOPIC_MAX || packet_id == 0u) {
+        return 0u;
+    }
+    if (!mqtt_start_packet(out, cap, 0xa2u, remaining, &pos)) {
+        return 0u;
+    }
+    if (!mqtt_put_u16(out, cap, &pos, packet_id) ||
+        !mqtt_put_string(out, cap, &pos, topic)) {
+        return 0u;
+    }
+    return pos;
+}
+
 size_t netchess_mqtt_encode_publish(uint8_t *out,
                                     size_t cap,
                                     uint16_t packet_id,
@@ -355,6 +377,7 @@ static int mqtt_parse_packet(const uint8_t *buf,
         return packet->session_present <= 1u;
     case NETCHESS_MQTT_PUBLISH:
         return mqtt_parse_publish(buf + pos, remaining, flags, packet);
+    case NETCHESS_MQTT_UNSUBACK:
     case NETCHESS_MQTT_PUBACK:
         if (flags != 0u || remaining != 2u) {
             return 0;

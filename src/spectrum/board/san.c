@@ -75,6 +75,7 @@ static void append_disambiguation(char piece,
 uint8_t spectrum_board_move_san_base(const char *move, char *out)
 {
     const char *cells;
+    uint16_t coords;
     uint8_t from_row;
     uint8_t from_col;
     uint8_t to_row;
@@ -95,8 +96,8 @@ uint8_t spectrum_board_move_san_base(const char *move, char *out)
     san_len = 0u;
     *san_p = '\0';
 
-    if (!netchesszx_move_parse_coords(move, &from_row, &from_col,
-                                      &to_row, &to_col)) {
+    coords = netchesszx_move_parse_coords(move);
+    if (coords == NETCHESSZX_MOVE_COORDS_INVALID) {
         return 0u;
     }
     if (move[4] != '\0' && move[5] != '\0') {
@@ -104,8 +105,12 @@ uint8_t spectrum_board_move_san_base(const char *move, char *out)
     }
 
     cells = spectrum_board_cells();
-    from_idx = (uint8_t)((from_row << 3) + from_col);
-    to_idx = (uint8_t)((to_row << 3) + to_col);
+    from_idx = NETCHESSZX_MOVE_FROM_INDEX(coords);
+    to_idx = NETCHESSZX_MOVE_TO_INDEX(coords);
+    from_row = (uint8_t)(from_idx >> 3);
+    from_col = (uint8_t)(from_idx & 7u);
+    to_row = (uint8_t)(to_idx >> 3);
+    to_col = (uint8_t)(to_idx & 7u);
     piece = cells[from_idx];
     if (piece == '.') {
         return 0u;
@@ -169,8 +174,8 @@ uint8_t spectrum_board_san_append_suffix(char *san) NETCHESSZX_FASTCALL
         return 0u;
     }
     state = spectrum_board_check_state();
-    if (state == SPECTRUM_BOARD_CHECK_NONE) {
-        return 0u;
+    if (state != SPECTRUM_BOARD_CHECK && state != SPECTRUM_BOARD_CHECK_MATE) {
+        return state;
     }
     p = san;
     while (*p != '\0') {
