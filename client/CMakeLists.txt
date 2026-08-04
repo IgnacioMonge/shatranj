@@ -333,7 +333,7 @@ if(UNIX AND NOT APPLE)
         DESTINATION "${CMAKE_INSTALL_BINDIR}")
     install(FILES io.github.ignaciomonge.shatranj.desktop
         DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
-    install(FILES ../assets/pc-client/about/about-shatranj.png
+    install(FILES shatranj.png
         DESTINATION "${CMAKE_INSTALL_DATADIR}/pixmaps"
         RENAME shatranj.png)
 endif()
