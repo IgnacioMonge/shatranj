@@ -101,7 +101,8 @@ El juego en red de Classic y Next utiliza un enlace UART-ESP compatible con
 firmware ESP-AT 1.7.6. El cliente clásico también necesita divMMC/esxDOS para
 cargar sus ficheros OVL y DAT. Una UART compatible con ZX-Uno requiere control
 de flujo CTS en la transmisión del ESP;
-[NetMan](https://github.com/nihirash/netman-zx) configura el ajuste necesario.
+[NetManZX](https://github.com/IgnacioMonge/NetManZX) configura el ajuste
+necesario.
 La versión de Next es autocontenida, por lo que solo hay que copiar el fichero
 NEX. La edición Spectranext usa la red del propio cartucho, requiere su última
 versión estable de firmware y se instala como recurso.

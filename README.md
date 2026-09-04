@@ -98,10 +98,11 @@ clients connect to the same broker and room instead.
 Network play on Classic and Next uses a supported UART-to-ESP link with ESP-AT
 firmware 1.7.6. The Classic build also needs divMMC/esxDOS to load its OVL and
 DAT companions. A ZX-Uno-compatible UART requires ESP transmit flow control
-via CTS; [NetMan](https://github.com/nihirash/netman-zx) configures the required
-setting. The Next release is self-contained, so only its NEX file needs to be
-copied. The Spectranext edition uses the cartridge's own networking, requires
-the latest stable cartridge firmware, and is installed as a resource.
+via CTS; [NetManZX](https://github.com/IgnacioMonge/NetManZX) configures the
+required setting. The Next release is self-contained, so only its NEX file
+needs to be copied. The Spectranext edition uses the cartridge's own
+networking, requires the latest stable cartridge firmware, and is installed as
+a resource.
 
 ## Download
 
