@@ -20,7 +20,6 @@
 #define SPECTRUM_LINK_PREFLIGHT_OK 1u
 #define SPECTRUM_LINK_PREFLIGHT_RETRYING 2u
 #define SPECTRUM_LINK_PREFLIGHT_OVL_FAIL 3u
-#define SPECTRUM_LINK_MQTT_SETUP_LIVE 0u
 #define SPECTRUM_LINK_MQTT_SETUP_RETAINED 1u
 #define SPECTRUM_LINK_MQTT_SETUP_CLEAR 2u
 /* Compact mirrors of the stable common session-route ABI. */
@@ -47,11 +46,16 @@ char *spectrum_net_payload_scratch(void);
 uint8_t spectrum_net_link_activity(void);
 uint8_t spectrum_net_payload_flags(void);
 void spectrum_net_background_drain(void);
-uint8_t spectrum_net_preflight_run(void);
+/* Resident-only clock retry plus transport pump. */
+void spectrum_net_background_drain_clock(void);
+/* quiet: warm return to Setup. Do the ESP work the reconnect needs without
+   repainting the cold-boot preflight panel. */
+uint8_t spectrum_net_preflight_run(uint8_t quiet) NETCHESSZX_FASTCALL;
 const char *spectrum_net_last_ip(void);
 uint8_t spectrum_net_sync_time(void);
+void spectrum_net_clock_retry_start(void);
+void spectrum_net_clock_retry_cancel(void);
 
-#define spectrum_link_start_uart spectrum_net_start_uart
 #define spectrum_link_listen spectrum_net_listen
 #define spectrum_link_connect_host spectrum_net_connect_host
 #define spectrum_link_wait_pc_connect spectrum_net_wait_pc_connect
@@ -60,12 +64,12 @@ uint8_t spectrum_net_sync_time(void);
 #define spectrum_link_send_text spectrum_net_send_text
 #define spectrum_link_send_ping spectrum_net_send_ping
 #define spectrum_link_payload_scratch spectrum_net_payload_scratch
-#define spectrum_link_activity spectrum_net_link_activity
 #define spectrum_link_payload_flags spectrum_net_payload_flags
-#define spectrum_link_background_drain spectrum_net_background_drain
+#define spectrum_link_background_drain spectrum_net_background_drain_clock
 #define spectrum_link_preflight_run spectrum_net_preflight_run
-#define spectrum_link_last_ip spectrum_net_last_ip
 #define spectrum_link_sync_time spectrum_net_sync_time
+#define spectrum_link_clock_retry_start spectrum_net_clock_retry_start
+#define spectrum_link_clock_retry_cancel spectrum_net_clock_retry_cancel
 
 uint8_t spectrum_net_mqtt_start(void);
 uint8_t spectrum_net_mqtt_activate_side(void);
@@ -73,6 +77,7 @@ uint8_t spectrum_net_mqtt_probe_seat(void);
 uint8_t spectrum_net_mqtt_publish_presence(void);
 uint8_t spectrum_net_mqtt_publish_offline(uint8_t route) NETCHESSZX_FASTCALL;
 uint8_t spectrum_net_mqtt_publish_setup(uint8_t mode) NETCHESSZX_FASTCALL;
+void mqtt_abort_stream_mode(void);
 
 #define spectrum_link_mqtt_start spectrum_net_mqtt_start
 #define spectrum_link_mqtt_activate_side spectrum_net_mqtt_activate_side
@@ -80,5 +85,6 @@ uint8_t spectrum_net_mqtt_publish_setup(uint8_t mode) NETCHESSZX_FASTCALL;
 #define spectrum_link_mqtt_publish_presence spectrum_net_mqtt_publish_presence
 #define spectrum_link_mqtt_publish_offline spectrum_net_mqtt_publish_offline
 #define spectrum_link_mqtt_publish_setup spectrum_net_mqtt_publish_setup
+#define spectrum_link_mqtt_stop mqtt_abort_stream_mode
 
 #endif

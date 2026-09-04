@@ -1,7 +1,275 @@
 #include "spectrum/overlay/overlay_api.h"
 #include "spectrum/transport/mqtt_min.h"
 #include "spectrum/transport/net.h"
+#include "spectrum/lowram_map.h"
 
+#ifdef NETCHESSZX_SPECTRANEXT
+
+#ifndef NETCHESSZX_HOST_TEST
+#include "spxn.h"
+#include "spxn_stream.h"
+#endif
+
+#define WAIT_LONG 2000u
+#define DIRECT_KEY_CANCEL 0x8au
+#define DIRECT_LISTENER_ACTIVE 0xffu
+#define DIRECT_LISTENER_RETRY 0xfeu
+#define DIRECT_CTX_PTR_LO 0u
+#define DIRECT_CTX_PTR_HI 1u
+#define DIRECT_CTX_PAYLOAD_CAP 2u
+
+extern char direct_rx_payload[];
+extern char direct_rx_payload2[];
+extern uint8_t active_link;
+extern uint8_t direct_rx_count;
+extern uint8_t direct_rx_head;
+extern uint8_t direct_rx_payload_len;
+extern uint8_t direct_rx_discard;
+extern uint8_t direct_link_closed;
+extern void net_wait_frame(void);
+
+#ifdef NETCHESSZX_HOST_TEST
+static char spxn_direct_spill[SPECTRUM_NET_PAYLOAD_MAX + 1u];
+static uint8_t spxn_direct_scratch[SPECTRUM_MQTT_PACKET_MAX];
+char *direct_host_test_ptr;
+#define SPXN_DIRECT_SPILL spxn_direct_spill
+#define SPXN_DIRECT_SCRATCH spxn_direct_scratch
+#define direct_ctx_ptr(ctx) ((void)(ctx), direct_host_test_ptr)
+#else
+#define SPXN_DIRECT_SPILL ((char *)SPECTRUM_MQTT_RUNTIME_ASSETS_END)
+#define SPXN_DIRECT_SCRATCH ((uint8_t *)SPECTRUM_MQTT_PACKET_SCRATCH)
+#define direct_ctx_ptr(ctx) \
+    ((char *)((uint16_t)(ctx)[DIRECT_CTX_PTR_LO] | \
+              ((uint16_t)(ctx)[DIRECT_CTX_PTR_HI] << 8)))
+#endif
+
+static char *spxn_direct_slot_ovl(uint8_t slot)
+{
+    if (slot == 0u) {
+        return direct_rx_payload;
+    }
+    if (slot == 1u) {
+        return direct_rx_payload2;
+    }
+    return SPXN_DIRECT_SPILL;
+}
+
+static uint8_t spxn_direct_tail_ovl(void)
+{
+    uint8_t slot = (uint8_t)(direct_rx_head + direct_rx_count);
+
+    if (slot >= SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT) {
+        slot = (uint8_t)(slot - SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT);
+    }
+    return slot;
+}
+
+static void spxn_direct_feed_ovl(uint8_t c)
+{
+    char *slot;
+
+    if (c == '\r') {
+        return;
+    }
+    if (c == '\n') {
+        if (!direct_rx_discard && direct_rx_payload_len != 0u &&
+            direct_rx_count < SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT) {
+            slot = spxn_direct_slot_ovl(spxn_direct_tail_ovl());
+            slot[direct_rx_payload_len] = '\0';
+            direct_rx_payload_len = 0u;
+            ++direct_rx_count;
+        } else {
+            direct_rx_payload_len = 0u;
+        }
+        direct_rx_discard = 0u;
+        return;
+    }
+    if (c == 0u) {
+        direct_rx_payload_len = 0u;
+        direct_rx_discard = 1u;
+        return;
+    }
+    if (direct_rx_discard ||
+        direct_rx_count >= SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT ||
+        direct_rx_payload_len >= (SPECTRUM_NET_PAYLOAD_MAX - 1u)) {
+        direct_rx_discard = 1u;
+        return;
+    }
+    slot = spxn_direct_slot_ovl(spxn_direct_tail_ovl());
+    slot[direct_rx_payload_len++] = (char)c;
+}
+
+/* One poll grants at most one recv. If both POLLIN and HUP are present, read
+   first and leave the stream open until a later poll reports EOF; otherwise a
+   short receive buffer would lose the final application bytes. */
+static uint8_t spxn_direct_drain_ovl(void)
+{
+    int16_t flags = spxn_poll();
+
+    if (flags < 0) {
+        direct_link_closed = 1u;
+        return 0u;
+    }
+    if (flags == 0) {
+        /* Match the ESP/UART read cadence. Besides keeping session timers in
+           protocol frames, this yields to the cartridge/emulator I/O worker
+           so a later TCP segment can make POLLIN observable. */
+        net_wait_frame();
+    }
+    if ((flags & SPXN_POLLIN) != 0) {
+        int16_t got = spxn_recv(SPXN_DIRECT_SCRATCH,
+                                SPECTRUM_MQTT_PACKET_MAX);
+        uint16_t i;
+
+        if (got < 0) {
+            direct_link_closed = 1u;
+            return 0u;
+        }
+        for (i = 0u; i < (uint16_t)got; ++i) {
+            spxn_direct_feed_ovl(SPXN_DIRECT_SCRATCH[i]);
+        }
+        if (got == 0) {
+            direct_link_closed = 1u;
+        }
+        /* POLLIN|POLLHUP is intentionally not closed here: the next poll
+           drains any bytes that did not fit in this receive. */
+        return direct_rx_count != 0u;
+    }
+    if ((flags & (SPXN_POLLHUP | SPXN_POLLNVAL)) != 0) {
+        direct_link_closed = 1u;
+    }
+    return direct_rx_count != 0u;
+}
+
+static uint8_t spxn_direct_listen_ovl(void)
+{
+    spxn_close();
+    active_link = DIRECT_LISTENER_RETRY;
+    direct_link_closed = 1u;
+    if (spxn_listen(netchesszx_direct_port) != SPXN_OK) {
+        return 0u;
+    }
+    active_link = DIRECT_LISTENER_ACTIVE;
+    direct_link_closed = 0u;
+    return 1u;
+}
+
+uint8_t direct_listen_ovl(void)
+{
+    return spxn_direct_listen_ovl();
+}
+
+uint8_t direct_connect_ovl(void)
+{
+    uint8_t ip4be[4];
+
+    spxn_close();
+    active_link = DIRECT_LISTENER_ACTIVE;
+    direct_link_closed = 0u;
+    if (spxn_resolve(netchesszx_direct_host, ip4be) != SPXN_OK) {
+        return 0u;
+    }
+    if (spxn_connect(ip4be, netchesszx_direct_port) != SPXN_OK) {
+        spxn_close();
+        return 0u;
+    }
+    active_link = 0u;
+    return 1u;
+}
+
+uint8_t direct_wait_pc_connect_ovl(void)
+{
+    uint16_t frames = WAIT_LONG;
+
+    if (active_link == DIRECT_LISTENER_RETRY &&
+        !spxn_direct_listen_ovl()) {
+        return 0u;
+    }
+    active_link = DIRECT_LISTENER_ACTIVE;
+    while (frames-- != 0u) {
+        int16_t flags = spxn_poll();
+
+        if (spectrum_key_poll() == DIRECT_KEY_CANCEL) {
+            spxn_close();
+            active_link = DIRECT_LISTENER_RETRY;
+            return SPECTRUM_LINK_CANCELLED;
+        }
+        if (flags < 0 || (flags & (SPXN_POLLHUP | SPXN_POLLNVAL)) != 0) {
+            if (!spxn_direct_listen_ovl()) {
+                return 0u;
+            }
+            continue;
+        }
+        if ((flags & SPXN_POLLCON) != 0) {
+            if (spxn_accept() == SPXN_OK) {
+                active_link = 0u;
+                direct_link_closed = 0u;
+                return 1u;
+            }
+            if (!spxn_direct_listen_ovl()) {
+                return 0u;
+            }
+        }
+        net_wait_frame();
+    }
+    /* The caller polls in bounded batches. An idle batch is not a listener
+       failure: keep LISTEN alive so the next batch can accept a late peer. */
+    return 0u;
+}
+
+uint8_t direct_read_payload_ovl(uint8_t *ctx) __z88dk_fastcall
+{
+    char *payload = direct_ctx_ptr(ctx);
+    uint8_t payload_cap = ctx[DIRECT_CTX_PAYLOAD_CAP];
+    uint8_t n = 0u;
+
+    if (direct_rx_count == 0u && !direct_link_closed) {
+        (void)spxn_direct_drain_ovl();
+    }
+    if (direct_rx_count != 0u) {
+        char *source = spxn_direct_slot_ovl(direct_rx_head);
+
+        if (payload_cap != 0u) {
+            while (source[n] != '\0' && (uint8_t)(n + 1u) < payload_cap) {
+                payload[n] = source[n];
+                ++n;
+            }
+            payload[n] = '\0';
+        }
+        --direct_rx_count;
+        if (++direct_rx_head == SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT) {
+            direct_rx_head = 0u;
+        }
+        return active_link;
+    }
+    if (direct_link_closed) {
+        /* All bytes observed with POLLIN have already been delivered. */
+        spxn_close();
+        return 0xfeu;
+    }
+    return (uint8_t)SPECTRUM_NET_READ_TIMEOUT;
+}
+
+uint8_t direct_send_text_ovl(uint8_t *ctx) __z88dk_fastcall
+{
+    const char *text = direct_ctx_ptr(ctx);
+    const char newline = '\n';
+    uint16_t len = 0u;
+
+    while (text[len] != '\0' &&
+           len < (SPECTRUM_NET_DIRECT_TX_PAYLOAD_CAP - 2u)) {
+        ++len;
+    }
+    if (spxn_send_all(text, len, 150u) != SPXN_OK) {
+        return 0u;
+    }
+    return (uint8_t)(spxn_send_all(&newline, 1u, 150u) == SPXN_OK);
+}
+
+#else
+
+#define DIRECT_IPD_ACCEPT_BLOCK 1u
+#define DIRECT_IPD_DISCARD_LINE 2u
 #define WAIT_MED 500
 #define WAIT_LONG 2000
 #define WAIT_POLL 2
@@ -20,6 +288,17 @@
 #define DIRECT_CIPSTART_MAX_LEN (DIRECT_CIPSTART_PREFIX_LEN + NETCHESSZX_DIRECT_HOST_MAX + DIRECT_CIPSTART_SUFFIX_LEN + DIRECT_PORT_MAX_LEN + DIRECT_CIPSTART_KEEPALIVE_LEN + 1u)
 #if DIRECT_CIPSTART_MAX_LEN > SPECTRUM_NET_LINE_MAX
 #error "DIRECT CIPSTART command exceeds line_buf"
+#endif
+
+#ifdef NETCHESSZX_NEXT
+#ifdef NETCHESSZX_HOST_TEST
+static uint8_t direct_recovery_state;
+#define DIRECT_RECOVERY_STATE direct_recovery_state
+#else
+#define DIRECT_RECOVERY_STATE \
+    (*(uint8_t *)(NETCHESSZX_LOWRAM_LAST_IP_ADDR + \
+                  NETCHESSZX_LOWRAM_LAST_IP_SIZE - 1u))
+#endif
 #endif
 
 extern char line_buf[];
@@ -109,7 +388,6 @@ static uint8_t direct_queue_payload_ovl(void)
     }
     if (direct_rx_count >= SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT) {
         direct_rx_payload_len = 0u;
-        direct_ipd_accept = 0u;
         return 0u;
     }
 
@@ -165,18 +443,30 @@ static uint8_t direct_parse_ipd_header_ovl(void)
         return 0u;
     }
 
-    direct_ipd_accept = 1u;
+    direct_ipd_accept = (uint8_t)(DIRECT_IPD_ACCEPT_BLOCK |
+        (direct_ipd_accept & DIRECT_IPD_DISCARD_LINE));
     if (active_link != 0xffu) {
         if (link != active_link) {
             /* Third party connected while the session is live: swallow the
                burst and flag it so the read path closes that link, keeping
                the active session untouched. */
-            direct_ipd_accept = 0u;
+            direct_ipd_accept &= DIRECT_IPD_DISCARD_LINE;
             direct_intruder_link = link;
         }
     }
 
-    direct_ipd_link = link;
+    if ((direct_ipd_accept & DIRECT_IPD_ACCEPT_BLOCK) != 0u) {
+        if (direct_ipd_link != link &&
+            (direct_rx_payload_len != 0u ||
+             (direct_ipd_accept & DIRECT_IPD_DISCARD_LINE) != 0u)) {
+            direct_rx_payload_len = 0u;
+            direct_ipd_accept = DIRECT_IPD_ACCEPT_BLOCK;
+        }
+        direct_ipd_link = link;
+    } else if (direct_rx_payload_len == 0u &&
+               (direct_ipd_accept & DIRECT_IPD_DISCARD_LINE) == 0u) {
+        direct_ipd_link = link;
+    }
     direct_ipd_remaining = len;
     reset_line_buf();
     return 1u;
@@ -187,15 +477,25 @@ static uint8_t direct_feed_payload_byte_ovl(uint8_t c)
     uint8_t queued = 0u;
 
     --direct_ipd_remaining;
-    if (direct_ipd_accept) {
+    if ((direct_ipd_accept & DIRECT_IPD_ACCEPT_BLOCK) != 0u) {
         if (c == '\r') {
             /* ignore */
         } else if (c == '\n') {
-            queued = direct_queue_payload_ovl();
+            if ((direct_ipd_accept & DIRECT_IPD_DISCARD_LINE) != 0u) {
+                direct_rx_payload_len = 0u;
+                direct_ipd_accept &= DIRECT_IPD_ACCEPT_BLOCK;
+            } else {
+                queued = direct_queue_payload_ovl();
+            }
+        } else if (c == 0u) {
+            direct_rx_payload_len = 0u;
+            direct_ipd_accept |= DIRECT_IPD_DISCARD_LINE;
+        } else if ((direct_ipd_accept & DIRECT_IPD_DISCARD_LINE) != 0u) {
+            /* discard until this protocol line's LF, across +IPD blocks */
         } else if (direct_rx_count >= SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT ||
                    direct_rx_payload_len >= (SPECTRUM_NET_PAYLOAD_MAX - 1u)) {
             direct_rx_payload_len = 0u;
-            direct_ipd_accept = 0u;
+            direct_ipd_accept |= DIRECT_IPD_DISCARD_LINE;
         } else {
             direct_payload_slot_ovl(direct_tail_slot_ovl())
                 [direct_rx_payload_len++] = (char)c;
@@ -207,7 +507,7 @@ static uint8_t direct_feed_payload_byte_ovl(uint8_t c)
         /* Block exhausted without \n: keep the partial line so the next
            +IPD block continues it. Queuing it here forged messages when a
            line was split across TCP segments. */
-        direct_ipd_accept = 0u;
+        direct_ipd_accept &= DIRECT_IPD_DISCARD_LINE;
         reset_line_buf();
     }
     if (direct_link_closed) {
@@ -360,6 +660,9 @@ static uint8_t direct_tcp_connect_ovl(void)
 
 static uint8_t direct_prepare_link_ovl(void)
 {
+#ifdef NETCHESSZX_NEXT
+    DIRECT_RECOVERY_STATE = 1u;
+#endif
     if (!spectrum_net_ensure_command_mode()) {
         return 0u;
     }
@@ -506,7 +809,8 @@ uint8_t direct_read_payload_ovl(uint8_t *ctx) __z88dk_fastcall
 
         n = 0u;
         if (payload_cap != 0u) {
-            while (slot_payload[n] != '\0' && n + 1u < payload_cap) {
+            while (slot_payload[n] != '\0' &&
+                   n < (uint8_t)(payload_cap - 1u)) {
                 payload[n] = slot_payload[n];
                 ++n;
             }
@@ -571,3 +875,5 @@ uint8_t direct_send_text_ovl(uint8_t *ctx) __z88dk_fastcall
 {
     return direct_send_payload_ovl(direct_ctx_ptr(ctx), active_link);
 }
+
+#endif

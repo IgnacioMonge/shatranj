@@ -9,16 +9,18 @@
 #include "spectrum/platform/platform.h"
 #include "spectrum/platform/text.h"
 #include "spectrum/platform/uart.h"
+#include "spectrum/session/timing.h"
 
 #include <string.h>
 
 #define ATTR_FLASH 0x46u
-#define ATTR_CURSOR 0x45u
-#define ATTR_SELECTED 0x47u
+#define ATTR_TEXT 0x07u
 
 #define GUI_KEY_LEFT 0x83u
 #define GUI_KEY_RIGHT 0x84u
 #define MENU_OPTION_COUNT 6u
+#define GUI_CLOCK_FRAMES \
+    ((uint8_t)(NETCHESSZX_SESSION_IS_60HZ ? 60u : 50u))
 
 static void render_clock_only(void);
 
@@ -63,17 +65,26 @@ static uint8_t clock_second;
 static uint8_t clock_valid;
 static uint8_t clock_frames;
 static uint8_t game_timer_active;
-static uint8_t game_timer_hour;
-static uint8_t game_timer_minute;
-static uint8_t game_timer_second;
-static uint8_t move_timer_hour;
-static uint8_t move_timer_minute;
-static uint8_t move_timer_second;
+static uint8_t game_timers[6];
+#define game_timer_hour game_timers[0]
+#define game_timer_minute game_timers[1]
+#define game_timer_second game_timers[2]
+#define move_timer_hour game_timers[3]
+#define move_timer_minute game_timers[4]
+#define move_timer_second game_timers[5]
 static uint8_t clock_force_redraw;
 static uint8_t timer_force_redraw;
 static uint8_t menu_visible;
 static uint8_t menu_focus;
+#ifdef NETCHESSZX_SPECTRANEXT
+uint8_t spectrum_gui_about_visible_state;
+uint8_t spectrum_gui_side_panels_visible_state;
+#define about_visible spectrum_gui_about_visible_state
+#define side_panels_visible spectrum_gui_side_panels_visible_state
+#else
 static uint8_t about_visible;
+static uint8_t side_panels_visible;
+#endif
 static uint16_t notice_ticks;
 static uint8_t notice_error;
 static uint8_t notice_success;
@@ -81,13 +92,17 @@ static uint16_t last_ply_seen;
 static uint8_t move_line_count;
 static uint8_t chat_line_count;
 uint8_t spectrum_gui_board_flipped;
-static uint8_t board_pieces_visible;
+uint8_t spectrum_gui_board_pieces_visible;
 static uint8_t board_coords_dirty;
 static uint8_t connected_state;
-static uint8_t side_panels_visible;
 static uint8_t active_coord_valid;
 static uint8_t active_coord_row;
 static uint8_t active_coord_col;
+static uint8_t move_marker_mode = SPECTRUM_GUI_TURN_CLEAR;
+static uint8_t move_marker_frames;
+static uint8_t move_marker_visible;
+static uint8_t move_marker_y;
+static uint8_t move_marker_col;
 /* Sole UI-side, read-only view of the board-owned low-RAM cells. */
 #define gui_live_board ((const char *)NETCHESSZX_LOWRAM_CHESS_BOARD_ADDR)
 
@@ -166,7 +181,7 @@ static void reset_move_timer(void)
 #ifndef NETCHESSZX_SDCC_IY
 static void timer_tick_one_second(uint8_t *hour, uint8_t *minute, uint8_t *second)
 {
-    if (*hour == 99u && *minute == 59u) {
+    if (*hour == 99u && *minute == 59u && *second == 59u) {
         return;
     }
     ++*second;
@@ -261,7 +276,7 @@ static void render_clock_only(void)
     clock_time[5] = ' ';
     clock_time[6] = '\0';
 
-    if (!clock_force_redraw && strcmp(clock_time, last_clock_line) == 0) {
+    if (!clock_force_redraw && spectrum_streq(clock_time, last_clock_line)) {
         return;
     }
     memcpy(last_clock_line, clock_time, 7u);
@@ -313,6 +328,27 @@ void spectrum_gui_set_clock(uint8_t hour, uint8_t minute, uint8_t second)
     render_clock_only();
 }
 
+static uint8_t shifted_clock_hour(uint8_t hour, int8_t delta)
+{
+    int8_t shifted = (int8_t)hour + delta;
+
+    if (shifted < 0) {
+        shifted += 24;
+    } else if (shifted >= 24) {
+        shifted -= 24;
+    }
+    return (uint8_t)shifted;
+}
+
+void spectrum_gui_shift_clock(int8_t hour_delta) NETCHESSZX_FASTCALL
+{
+    if (!clock_valid || hour_delta == 0) {
+        return;
+    }
+    clock_hour = shifted_clock_hour(clock_hour, hour_delta);
+    render_clock_only();
+}
+
 void spectrum_gui_set_status_error(const char *text) NETCHESSZX_FASTCALL
 {
     char status_line[NETCHESSZX_STATUS_LEFT_TEXT_SIZE + 1u];
@@ -340,7 +376,7 @@ void spectrum_gui_game_timer_stop(void)
     clock_frames = 0u;
     timer_force_redraw = 1u;
     render_game_timer_only();
-    spectrum_render_turn_label(SPECTRUM_GUI_TURN_CLEAR);
+    spectrum_gui_set_turn_label(SPECTRUM_GUI_TURN_CLEAR);
     render_clock_only();
 }
 
@@ -350,9 +386,83 @@ void spectrum_gui_move_timer_reset(void)
     render_game_timer_only();
 }
 
+void spectrum_gui_game_timer_save(uint8_t *timers) NETCHESSZX_FASTCALL
+{
+    memcpy(timers, game_timers, sizeof(game_timers));
+}
+
+void spectrum_gui_game_timer_restore(const uint8_t *timers) NETCHESSZX_FASTCALL
+{
+    memcpy(game_timers, timers, sizeof(game_timers));
+    clock_frames = 0u;
+    timer_force_redraw = 1u;
+#ifndef NETCHESSZX_HOST_TEST
+    render_game_timer_only();
+#endif
+}
+
+static void move_marker_render(uint8_t visible)
+{
+    char spec[5];
+
+#ifndef NETCHESSZX_NEXT_BANKING
+    if (about_visible != 0u) {
+        return;
+    }
+#endif
+    spec[0] = (char)move_marker_y;
+    spec[1] = (char)move_marker_col;
+    spec[2] = (char)ATTR_TEXT;
+    spec[3] = visible ? '_' : ' ';
+    spec[4] = '\0';
+    spectrum_render_ikkle_abs_at(spec);
+}
+
+static void move_marker_clear(void)
+{
+    if (move_marker_mode != SPECTRUM_GUI_TURN_CLEAR) {
+        move_marker_render(0u);
+        move_marker_mode = SPECTRUM_GUI_TURN_CLEAR;
+        move_marker_visible = 0u;
+    }
+}
+
+static void move_marker_place(uint8_t mode)
+{
+    uint8_t row = move_line_count;
+    uint8_t col;
+
+    if ((mode & 1u) != 0u) {
+        row = move_line_count == 0u
+            ? 0u
+            : (uint8_t)(move_line_count - 1u);
+        col = NETCHESSZX_MOVE_BLACK_COL;
+    } else {
+        col = NETCHESSZX_INFO_TEXT_COL;
+    }
+    if (row >= NETCHESSZX_MOVE_ROWS) {
+        row = NETCHESSZX_MOVE_ROWS - 1u;
+    }
+    move_marker_y = (uint8_t)(NETCHESSZX_INFO_MOVES_FIRST_Y +
+                              (row * NETCHESSZX_INFO_TIGHT_LINE_STEP));
+    move_marker_col = col;
+}
+
 void spectrum_gui_set_turn_label(uint8_t mode) NETCHESSZX_FASTCALL
 {
+    if (mode == SPECTRUM_GUI_TURN_MARKER_CLEAR) {
+        move_marker_clear();
+        return;
+    }
+    move_marker_clear();
+    move_marker_mode = mode;
+    move_marker_frames = 0u;
+    move_marker_visible = 1u;
     spectrum_render_turn_label(mode);
+    if (mode < SPECTRUM_GUI_TURN_CLEAR) {
+        move_marker_place(mode);
+        move_marker_render(1u);
+    }
 }
 
 void spectrum_gui_set_connected(uint8_t connected) NETCHESSZX_FASTCALL
@@ -379,6 +489,11 @@ static void notify_internal(const char *text,
     notice_error = is_error;
     notice_success = is_success;
     notice_ticks = ticks;
+#ifndef NETCHESSZX_NEXT_BANKING
+    if (about_visible != 0u) {
+        return;
+    }
+#endif
     if (is_error) {
         spectrum_render_notice_error(notice_text);
     } else if (is_success) {
@@ -405,12 +520,27 @@ void spectrum_gui_notify_success(const char *text) NETCHESSZX_FASTCALL
 
 void spectrum_gui_tick(void)
 {
+    if (move_marker_mode != SPECTRUM_GUI_TURN_CLEAR) {
+        ++move_marker_frames;
+        if (move_marker_frames >= 25u) {
+            move_marker_frames = 0u;
+            move_marker_visible ^= 1u;
+            move_marker_render(move_marker_visible);
+        }
+    }
+
     if (!notice_error && notice_ticks != 0u) {
         --notice_ticks;
         if (notice_ticks == 0u) {
             notice_text[0] = '\0';
             notice_success = 0u;
-            spectrum_render_notice(notice_text);
+#ifndef NETCHESSZX_NEXT_BANKING
+            if (about_visible == 0u) {
+#endif
+                spectrum_render_notice(notice_text);
+#ifndef NETCHESSZX_NEXT_BANKING
+            }
+#endif
         }
     }
 
@@ -418,7 +548,7 @@ void spectrum_gui_tick(void)
         return;
     }
     ++clock_frames;
-    if (clock_frames < 50u) {
+    if (clock_frames < GUI_CLOCK_FRAMES) {
         return;
     }
     clock_frames = 0u;
@@ -524,6 +654,9 @@ void spectrum_gui_set_board_view(uint8_t local_black) NETCHESSZX_FASTCALL
     spectrum_gui_clear_cursor_coords();
     spectrum_gui_board_flipped = flipped;
     board_coords_dirty = 1u;
+    if (spectrum_gui_board_pieces_visible) {
+        spectrum_gui_redraw_board_view();
+    }
 }
 
 uint8_t spectrum_gui_is_board_flipped(void)
@@ -540,7 +673,7 @@ void spectrum_gui_toggle_board_view(void)
 
 void spectrum_gui_set_board_pieces_visible(uint8_t visible) NETCHESSZX_FASTCALL
 {
-    board_pieces_visible = (uint8_t)(visible != 0u);
+    spectrum_gui_board_pieces_visible = (uint8_t)(visible != 0u);
 }
 
 void spectrum_gui_clear_cursor_coords(void)
@@ -566,6 +699,9 @@ uint8_t spectrum_gui_show_about(void)
     if (was_menu_visible) {
         spectrum_render_menu(0u);
     }
+#ifndef NETCHESSZX_NEXT_BANKING
+    side_panels_visible = 0u;
+#endif
     about_visible = 1u;
     if (!spectrum_render_about()) {
         about_visible = 0u;
@@ -622,10 +758,10 @@ static void spectrum_gui_mark_cursor_coords(uint8_t row, uint8_t col)
 
 void spectrum_gui_hide_board_pieces(void)
 {
-    if (!board_pieces_visible) {
+    if (!spectrum_gui_board_pieces_visible) {
         return;
     }
-    board_pieces_visible = 0u;
+    spectrum_gui_board_pieces_visible = 0u;
     if (about_visible) {
         return;
     }
@@ -637,11 +773,11 @@ static void render_square_from_board(uint8_t row, uint8_t col)
     char piece;
     char square_spec[6];
 
-    piece = board_pieces_visible ? gui_board_cell(row, col) : '.';
+    piece = spectrum_gui_board_pieces_visible ? gui_board_cell(row, col) : '.';
     square_spec[0] = (char)display_coord(row);
     square_spec[1] = (char)display_coord(col);
     square_spec[2] = piece;
-    if (board_pieces_visible) {
+    if (spectrum_gui_board_pieces_visible) {
         square_spec[3] = (char)row;
         square_spec[4] = (char)col;
         spectrum_render_square_with_hint(square_spec);
@@ -701,7 +837,7 @@ void spectrum_gui_mark_cursor(uint8_t row, uint8_t col, uint8_t selected)
     square_spec[0] = (char)display_coord(row);
     square_spec[1] = (char)display_coord(col);
     square_spec[2] = (char)(selected ? 1u : 0u);
-    if (board_pieces_visible) {
+    if (spectrum_gui_board_pieces_visible) {
         square_spec[3] = (char)row;
         square_spec[4] = (char)col;
         square_spec[5] = gui_board_cell(row, col);
@@ -769,7 +905,11 @@ static void wait_frames(uint8_t frames) NETCHESSZX_FASTCALL
     }
 }
 
+#ifdef NETCHESSZX_SPECTRANEXT
+void spectrum_gui_flash_square(uint8_t row, uint8_t col)
+#else
 static void flash_square(uint8_t row, uint8_t col)
+#endif
 {
     uint8_t i;
     char square_spec[3];
@@ -784,6 +924,9 @@ static void flash_square(uint8_t row, uint8_t col)
         wait_frames(6u);
     }
 }
+#ifdef NETCHESSZX_SPECTRANEXT
+#define flash_square spectrum_gui_flash_square
+#endif
 
 void spectrum_gui_prepare_move(const char *move) NETCHESSZX_FASTCALL
 {
@@ -805,6 +948,7 @@ void spectrum_gui_prepare_move(const char *move) NETCHESSZX_FASTCALL
     }
 }
 
+#ifndef NETCHESSZX_SPECTRANEXT
 void spectrum_gui_apply_move(const char *move) NETCHESSZX_FASTCALL
 {
     uint16_t coords;
@@ -832,10 +976,10 @@ void spectrum_gui_apply_move(const char *move) NETCHESSZX_FASTCALL
     render_square_from_board(to_row, to_col);
     flash_square(to_row, to_col);
 
-    if (from_col != to_col) {
+    piece = gui_board_cell(to_row, to_col);
+    if ((piece == 'P' || piece == 'p') && from_col != to_col) {
         render_square_from_board(from_row, to_col);
     }
-    piece = gui_board_cell(to_row, to_col);
     if ((piece == 'K' || piece == 'k') &&
         from_row == to_row && from_col == 4u) {
         if (to_col == 6u) {
@@ -847,20 +991,17 @@ void spectrum_gui_apply_move(const char *move) NETCHESSZX_FASTCALL
         }
     }
 }
+#endif
 
 void spectrum_gui_draw_board(void)
 {
     about_visible = 0u;
     spectrum_render_board(gui_live_board);
-    /* render_board wipes row 2 via hide_menu; keep the C state in sync so
-       the timer force-redraw below actually repaints it. */
+    /* render_board no longer calls hide_menu; keep C menu state in sync. */
     menu_visible = 0u;
     active_coord_valid = 0u;
     side_panels_visible = 0u;
     board_coords_dirty = 0u;
-    if (!board_pieces_visible || spectrum_gui_board_flipped || netchesszx_movement_hints) {
-        spectrum_gui_redraw_board_squares();
-    }
     clock_force_redraw = 1u;
     spectrum_gui_set_connected(connected_state);
     timer_force_redraw = 1u;
@@ -879,47 +1020,81 @@ void spectrum_gui_redraw_board_view(void)
 void spectrum_gui_restore_board_area(void)
 {
     about_visible = 0u;
-    if (board_pieces_visible) {
-        spectrum_render_board_area(gui_live_board);
-        /* render_board_area paints raw cells; repaint honoring the flipped
-           view (and hint marks), same as spectrum_gui_draw_board does. */
-        if (spectrum_gui_board_flipped || netchesszx_movement_hints) {
-            spectrum_gui_redraw_board_squares();
-        }
-    } else {
-        spectrum_render_board_coords();
-        spectrum_gui_redraw_board_squares();
-    }
+    spectrum_render_board_area(gui_live_board);
     active_coord_valid = 0u;
     board_coords_dirty = 0u;
 }
 
-void spectrum_gui_animate_board_pieces(void)
+#ifndef NETCHESSZX_NEXT_BANKING
+void spectrum_gui_restore_game_center(void)
+{
+    about_visible = 0u;
+    spectrum_restore_game_center(gui_live_board);
+    active_coord_valid = 0u;
+    board_coords_dirty = 0u;
+    side_panels_visible = 1u;
+    spectrum_info_show_game();
+    spectrum_render_moves(move_lines);
+    spectrum_render_chat(chat_lines);
+    spectrum_gui_draw_status();
+}
+#endif
+
+#ifndef NETCHESSZX_SPECTRANEXT
+static void reveal_board_piece_pairs(uint8_t step, uint8_t pause)
 {
     uint8_t i;
-
-    if (board_coords_dirty) {
-        spectrum_render_board_coords();
-        active_coord_valid = 0u;
-        board_coords_dirty = 0u;
-    }
-    if (board_pieces_visible) {
-        spectrum_gui_hide_board_pieces();
-    }
-    spectrum_gui_set_board_pieces_visible(1u);
 
     for (i = 0u; i < 8u; ++i) {
         render_square_from_board(0u, i);
         render_square_from_board(7u, (uint8_t)(7u - i));
-        wait_frames(5u);
+        wait_frames(step);
     }
-    wait_frames(3u);
+    wait_frames(pause);
     for (i = 0u; i < 8u; ++i) {
         render_square_from_board(1u, (uint8_t)(7u - i));
         render_square_from_board(6u, i);
-        wait_frames(5u);
+        wait_frames(step);
     }
 }
+
+#endif
+
+#ifdef NETCHESSZX_SPECTRANEXT
+void spectrum_gui_sync_board_coords(void)
+#else
+static void sync_board_coords(void)
+#endif
+{
+    if (!board_coords_dirty) {
+        return;
+    }
+    spectrum_render_board_coords();
+    active_coord_valid = 0u;
+    board_coords_dirty = 0u;
+}
+
+#ifndef NETCHESSZX_SPECTRANEXT
+void spectrum_gui_animate_board_pieces(void)
+{
+    sync_board_coords();
+    if (spectrum_gui_board_pieces_visible) {
+        spectrum_gui_hide_board_pieces();
+    }
+    spectrum_gui_set_board_pieces_visible(1u);
+    reveal_board_piece_pairs(1u, 0u);
+}
+
+void spectrum_gui_morph_board_pieces(void)
+{
+    if (!spectrum_gui_board_pieces_visible) {
+        spectrum_gui_animate_board_pieces();
+        return;
+    }
+    sync_board_coords();
+    reveal_board_piece_pairs(0u, 0u);
+}
+#endif
 
 void spectrum_gui_draw_status(void)
 {
@@ -933,6 +1108,7 @@ void spectrum_gui_draw_status(void)
     }
 }
 
+#ifndef NETCHESSZX_SPECTRANEXT
 void spectrum_gui_restore_side_panels(void)
 {
     about_visible = 0u;
@@ -941,6 +1117,7 @@ void spectrum_gui_restore_side_panels(void)
     spectrum_render_moves(move_lines);
     spectrum_render_chat(chat_lines);
 }
+#endif
 
 uint8_t spectrum_gui_side_panels_visible(void)
 {

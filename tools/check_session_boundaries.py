@@ -13,9 +13,10 @@ SESSION_STEP = re.compile(r"\bsession_step\s*\(")
 SESSION_STEP_ALLOWLIST = {
     "src/common/session/session.c": 1,
     "src/common/session/session.h": 1,
-    "src/pc/client/direct_session_adapter.cpp": 1,
-    "src/pc/client/mqtt_session_adapter.cpp": 1,
+    "src/pc/client/desktop_session_adapter.cpp": 1,
 }
+PC_MACH_PARSE = re.compile(r"\bnetchess_proto_parse_mach\s*\(")
+PC_CLIENT_ROOT = "src/pc/client/"
 CORPUS_HEADER = "tests/session/mqtt_session_transcripts.h"
 CORPUS_SOURCE = "tests/session/mqtt_session_transcripts.c"
 JUDGE_SOURCE = "tests/session/test_mqtt_session_parity.c"
@@ -87,6 +88,15 @@ def check_session_step_owners(sources: dict[str, str]) -> list[str]:
                 f"{path}: session_step() count {actual}; expected {expected}"
             )
     return errors
+
+
+def check_pc_mach_parse_boundaries(sources: dict[str, str]) -> list[str]:
+    """Keep MACH wire parsing in the session reducer, not the PC UI seam."""
+    return [
+        f"{path}: UI/adapters must consume typed platform actions"
+        for path, source in sorted(sources.items())
+        if path.startswith(PC_CLIENT_ROOT) and PC_MACH_PARSE.search(source)
+    ]
 
 
 def check_mqtt_judge(header: str, corpus: str, judge: str) -> list[str]:
@@ -221,6 +231,7 @@ def check_tree(root: Path) -> list[str]:
         return [f"{path}: missing" for path in missing]
     return (
         check_session_step_owners(sources)
+        + check_pc_mach_parse_boundaries(sources)
         + check_mqtt_judge(
             required[0].read_text(encoding="utf-8"),
             required[1].read_text(encoding="utf-8"),
@@ -248,6 +259,16 @@ def self_test() -> None:
     third["src/pc/client/third_runtime.cpp"] = "session_step(state, event);\n"
     if not check_session_step_owners(third):
         raise SystemExit("[ERR] session boundaries self-test accepted third runtime")
+    if check_pc_mach_parse_boundaries({
+        "src/common/session/direct_session.c":
+        "netchess_proto_parse_mach(payload, platform);",
+    }):
+        raise SystemExit("[ERR] session boundaries self-test rejected common parser")
+    if not check_pc_mach_parse_boundaries({
+        "src/pc/client/main_window.cpp":
+        "netchess_proto_parse_mach(payload, platform);",
+    }):
+        raise SystemExit("[ERR] session boundaries self-test accepted UI parser")
 
     header = (
         "MqttTranscriptObservation expected[MQTT_TRANSCRIPT_OBSERVATIONS_MAX];\n"
@@ -320,7 +341,7 @@ def main() -> None:
         raise SystemExit(1)
     print(
         "[OK] session boundaries: target-neutral MQTT/DIRECT expected; "
-        "production MQTT wire; two PC reducer calls"
+        "production MQTT wire; one PC reducer call"
     )
 
 

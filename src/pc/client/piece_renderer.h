@@ -1,6 +1,7 @@
 #ifndef PIECE_RENDERER_H
 #define PIECE_RENDERER_H
 
+#include <QColor>
 #include <QIcon>
 #include <QImage>
 #include <QStringList>
@@ -18,12 +19,27 @@ QStringList pieceSets();
 void setBoardTexture(const QString &name);
 QString boardTexture();
 QStringList boardTextures();
+
+// Which vertex of the 8x8 block a square sits on, so the inner corners get the
+// same blunt radius as the frame drawn around them.
+enum SquareCorner {
+    CornerNone = 0,
+    CornerTopLeft,
+    CornerTopRight,
+    CornerBottomLeft,
+    CornerBottomRight
+};
+
 QString boardSquareStyle(int row, int col, int squareSize,
                          const QString &background, const QString &foreground,
-                         const QString &border);
+                         const QString &border, SquareCorner corner = CornerNone);
 QIcon boardSquareIcon(char piece, int row, int col, int squareSize,
                       int pieceIconSize, bool pieceVisible, bool legalHint,
-                      bool targetHighlight);
+                      bool targetHighlight, SquareCorner corner = CornerNone);
+
+// Frame ground behind the board: the selected texture's dark square, pushed
+// down, so the well tracks the chosen board instead of a fixed near-black.
+QColor boardWellColor(int squareSize);
 
 QString pieceAssetName(char piece);
 QString pieceAssetPath(char piece);

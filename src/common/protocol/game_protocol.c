@@ -1,8 +1,6 @@
 #include "common/protocol/game_protocol.h"
 #include "common/protocol/game_protocol_internal.h"
 
-#include <string.h>
-
 #ifdef NETCHESSZX_SDCC_IY
 #define NETCHESSZX_FASTCALL __z88dk_fastcall
 #else
@@ -150,15 +148,23 @@ uint8_t netchess_proto_parse_move(const char *rx,
 
     if (notation_cap != 0u) {
         notation[0] = '\0';
-        if (*p == ' ') {
-            ++p;
+    }
+    if (*p == ' ') {
+        ++p;
+        if (*p == '\0') {
+            return 0u;
+        }
+        if (notation_cap != 0u) {
             proto_copy_token(&p, notation, notation_cap);
             if (notation[0] >= '0' && notation[0] <= '9') {
                 notation[0] = '\0';
             }
         }
+        while (*p != '\0' && *p != ' ') {
+            ++p;
+        }
     }
-    return 1u;
+    return (uint8_t)(*p == '\0');
 }
 
 uint8_t netchess_proto_parse_chat(const char *rx,

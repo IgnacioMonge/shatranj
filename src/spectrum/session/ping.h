@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#include "spectrum/session/timing.h"
+
 #define NETCHESSZX_SESSION_PING_NONE 0u
 #define NETCHESSZX_SESSION_PING_SEND 1u
 #define NETCHESSZX_SESSION_PING_LOST 2u
@@ -22,7 +24,6 @@ typedef struct netchesszx_session_ping {
 void netchesszx_session_ping_reset(netchesszx_session_ping_t *ping);
 #define netchesszx_session_ping_rx_data netchesszx_session_ping_reset
 #define netchesszx_session_ping_rx_direct_peer_ping netchesszx_session_ping_reset
-#define netchesszx_session_ping_rx_mqtt_pingresp netchesszx_session_ping_reset
 uint8_t netchesszx_session_ping_timeout(netchesszx_session_ping_t *ping,
                                         uint8_t is_mqtt,
                                         uint8_t can_send_direct_ping);

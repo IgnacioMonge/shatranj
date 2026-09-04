@@ -63,6 +63,11 @@ static void check_all_squares(void)
 
 int main(void)
 {
+    expect_invalid(0);
+    expect_invalid("");
+    expect_invalid("a");
+    expect_invalid("a8");
+    expect_invalid("a8h");
     expect_valid("a8h1", 0u, 0u, 7u, 7u);
     expect_valid("e2e4", 6u, 4u, 4u, 4u);
     expect_valid("h1a8", 7u, 7u, 0u, 0u);

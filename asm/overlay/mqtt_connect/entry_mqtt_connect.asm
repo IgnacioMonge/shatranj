@@ -7,14 +7,18 @@ EXTERN _mqtt_activate_side_ovl
 EXTERN _net_preflight_ovl
 EXTERN _mqtt_probe_seat_ovl
 ; Must equal the linked _overlay_scratch_base; check_lowmem_layout.py proves it.
+IFDEF NETCHESSZX_NEXT_BANKING
+mqtt_packet_ovl EQU 0x3C2B
+ELSE
 mqtt_packet_ovl EQU 0x672B
+ENDIF
 EXTERN _netchesszx_mqtt_code
 EXTERN _netchesszx_local_color
 EXTERN _netchesszx_session_role
+EXTERN _netchesszx_mqtt_session_id
+EXTERN _spectrum_append_u16
 
 mqtt_client_id_fixed EQU 7
-mqtt_remaining_base EQU 47
-mqtt_packet_base EQU 49
 
     DEFB 4
     DW _mqtt_connect_start_ovl
@@ -23,14 +27,10 @@ mqtt_packet_base EQU 49
     DW _mqtt_probe_seat_ovl
 
 mqtt_conn_fixed_header:
-    ; Connect flags $06 = clean session + will, QoS0, will NOT retained.
-    ; A retained will (was $26) would persist an id-less "F <side>" on the
-    ; seat presence topic when a guest dies, clobbering the legitimate
-    ; retained "O <side> <id>" and making the seat look free to a probing
-    ; intruder. Non-retained: the will fires transiently to live subscribers
-    ; only; the seat's retained O stays intact so seat-probe BUSY works.
+    ; Guest default: clean session, no Will. Hosts patch flags to $26 and add
+    ; their correlated retained F <side> <sid> Will below.
     ; keepalive 20s; peer death detected by app-level PING miss (~26s).
-    DEFB 0, 4, "MQTT", 4, $06, 0, 20, 0
+    DEFB 0, 4, "MQTT", 4, $02, 0, 20, 0
 
 _mqtt_connect_packet_ovl:
     ld hl, _netchesszx_mqtt_code
@@ -53,9 +53,7 @@ color_is_white:
     ld a, $10
     ld (de), a
     inc de
-    ld a, b
-    add a, a
-    add a, mqtt_remaining_base
+    xor a
     ld (de), a
     inc de
     push bc
@@ -63,6 +61,12 @@ color_is_white:
     ld bc, 11
     ldir
     pop bc
+    ld a, (_netchesszx_session_role)
+    or a
+    jr nz, mqtt_conn_flags_done
+    ld a, $26
+    ld (mqtt_packet_ovl + 9), a
+mqtt_conn_flags_done:
     ld a, b
     add a, mqtt_client_id_fixed
     ld (de), a
@@ -102,6 +106,9 @@ mqtt_client_nonce_loop:
     djnz mqtt_client_nonce_loop
     pop bc
 mqtt_client_id_end:
+    ld a, (_netchesszx_session_role)
+    or a
+    jr nz, mqtt_conn_finish
     xor a
     ld (de), a
     inc de
@@ -126,19 +133,36 @@ mqtt_client_id_end:
     xor a
     ld (de), a
     inc de
-    ld a, 3
-    ld (de), a
+    push de
     inc de
     ld hl, mqtt_will_payload
     call mqtt_conn_copy_z
     ld a, c
     ld (de), a
     inc de
-    ld a, b
-    add a, a
-    add a, mqtt_packet_base
-    ld l, a
-    ld h, 0
+    ld a, ' '
+    ld (de), a
+    inc de
+    ld hl, (_netchesszx_mqtt_session_id)
+    push hl
+    push de
+    call _spectrum_append_u16
+    ex de, hl
+    pop hl
+    ld a, e
+    sub l
+    dec a
+    ld (hl), a
+mqtt_conn_finish:
+    ; The configured room cap keeps this packet below 128 bytes, so one-byte
+    ; Remaining Length is the canonical MQTT encoding.
+    ex de, hl
+    ld de, mqtt_packet_ovl
+    or a
+    sbc hl, de
+    ld a, l
+    sub 2
+    ld (mqtt_packet_ovl + 1), a
     ret
 
 mqtt_conn_hex_digit:

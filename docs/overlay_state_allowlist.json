@@ -81,6 +81,12 @@
     },
     {
       "path": "src/spectrum/overlay/direct_ovl.c",
+      "symbol": "direct_rx_discard",
+      "owner": "transport/direct",
+      "reason": "DIRECT overlay tracks rejection of an oversized Spectranext stream frame until its newline."
+    },
+    {
+      "path": "src/spectrum/overlay/direct_ovl.c",
       "symbol": "direct_ipd_remaining",
       "owner": "transport/direct",
       "reason": "DIRECT overlay tracks resident IPD parser state."
@@ -150,6 +156,24 @@
       "symbol": "chat_line_count",
       "owner": "ui/gui-log",
       "reason": "GUI_LOG overlay owns cold mutation of chat log counters."
+    },
+    {
+      "path": "src/spectrum/overlay/gui_log_ovl.c",
+      "symbol": "spectrum_gui_board_pieces_visible",
+      "owner": "ui/gui",
+      "reason": "Spectranext GUI_LOG owns the cold board reveal animation outside resident code."
+    },
+    {
+      "path": "src/spectrum/overlay/gui_log_ovl.c",
+      "symbol": "spectrum_gui_about_visible_state",
+      "owner": "ui/gui",
+      "reason": "Spectranext GUI_LOG restores cold side-panel visibility outside nested overlay paths."
+    },
+    {
+      "path": "src/spectrum/overlay/gui_log_ovl.c",
+      "symbol": "spectrum_gui_side_panels_visible_state",
+      "owner": "ui/gui",
+      "reason": "Spectranext GUI_LOG restores cold side-panel visibility outside nested overlay paths."
     },
     {
       "path": "src/spectrum/overlay/menu_logic_ovl.c",
@@ -300,6 +324,36 @@
       "symbol": "esx_result",
       "owner": "saveload/esxdos",
       "reason": "SAVELOAD overlay links esxDOS file I/O state from its overlay-local asm object."
+    },
+    {
+      "path": "src/spectrum/overlay/config_ovl.c",
+      "symbol": "esx_handle",
+      "owner": "config/esxdos",
+      "reason": "CONFIG overlay links esxDOS file I/O state from its overlay-local asm object."
+    },
+    {
+      "path": "src/spectrum/overlay/config_ovl.c",
+      "symbol": "esx_buf",
+      "owner": "config/esxdos",
+      "reason": "CONFIG overlay links esxDOS file I/O state from its overlay-local asm object."
+    },
+    {
+      "path": "src/spectrum/overlay/config_ovl.c",
+      "symbol": "esx_count",
+      "owner": "config/esxdos",
+      "reason": "CONFIG overlay links esxDOS file I/O state from its overlay-local asm object."
+    },
+    {
+      "path": "src/spectrum/overlay/config_ovl.c",
+      "symbol": "esx_result",
+      "owner": "config/esxdos",
+      "reason": "CONFIG overlay links esxDOS file I/O state from its overlay-local asm object."
+    },
+    {
+      "path": "src/spectrum/overlay/config_ovl.c",
+      "symbol": "setup_config_record",
+      "owner": "app/setup",
+      "reason": "CONFIG serializes the connection record in Setup's phase-exclusive workspace."
     },
     {
       "path": "src/spectrum/overlay/fileui_ovl.c",

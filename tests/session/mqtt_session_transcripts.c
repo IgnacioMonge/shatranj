@@ -1,5 +1,6 @@
 #include "mqtt_session_transcripts.h"
 
+#include "common/protocol/platform_protocol.h"
 #include "common/session/session.h"
 
 #define CHAT_MAX_SAMPLE "123456789012345678901234567890123456789012"
@@ -38,10 +39,6 @@
 #define OBS_SEND_NACK_COMPAT(text, route_value, retain_value, id) \
     {(text), 0u, MQTT_OBSERVE_SEND, 0u, \
      MQTT_OBSERVE_DETAIL_NACK_COMPAT, (route_value), \
-     (retain_value), (id)}
-#define OBS_SEND_NACK_ROUTE_COMPAT(text, route_value, retain_value, id) \
-    {(text), 0u, MQTT_OBSERVE_SEND, 0u, \
-     MQTT_OBSERVE_DETAIL_NACK_ROUTE_COMPAT, (route_value), \
      (retain_value), (id)}
 #define OBS_TIMER_SET(timer, ticks) \
     {0, (ticks), MQTT_OBSERVE_TIMER_SET, (timer), 0u, 0u, 0u, 0u}
@@ -131,6 +128,41 @@
         }, \
         3u \
     }
+
+static const MqttTranscriptStep mach_platform_steps[] = {
+    GUEST_ACTIVE_PREFIX,
+    {
+        "live game MACH emits typed platform",
+        EV_RX("MACH PC", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {OBS_GAME(SESSION_DELIVER_PLATFORM, 0u, NETCHESS_PLAT_PC, 0)},
+        1u
+    },
+    {
+        "live game MACH SPCX emits typed platform",
+        EV_RX("MACH SPCX", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {OBS_GAME(SESSION_DELIVER_PLATFORM, 0u, NETCHESS_PLAT_SPCX, 0)},
+        1u
+    },
+    {
+        "unknown MACH is ignored",
+        EV_RX("MACH ZZ", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        NO_STATE_CHANGE
+    },
+    {
+        "malformed MACH is ignored",
+        EV_RX("MACH PC ", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        NO_STATE_CHANGE
+    }
+};
+
+static const MqttTranscriptStep mach_pre_ready_steps[] = {
+    {"guest broker link up", EV_LINK_UP(1u), NO_OBSERVATIONS},
+    {
+        "pre-ready game MACH is ignored",
+        EV_RX("MACH ZX", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        NO_STATE_CHANGE
+    }
+};
 
 #define PROMOTION_CYCLE(ply_number, ply_text, move_text) \
     { \
@@ -1202,6 +1234,11 @@ static const MqttTranscriptStep move_remote_accept_steps[] = {
         NO_STATE_CHANGE
     },
     {
+        "move with a second notation token is inert",
+        EV_RX("MOVE 1 e2e4 e4 junk", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        NO_STATE_CHANGE
+    },
+    {
         "lateral remote move is delivered before ack",
         EV_RX("MOVE 1 e2e4 e4", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
         {
@@ -1302,6 +1339,27 @@ static const MqttTranscriptStep move_remote_reject_steps[] = {
             OBS_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
         },
         2u
+    },
+    {
+        "corrected move at rejected ply is delivered",
+        EV_RX("MOVE 1 e2e4", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_GAME(SESSION_DELIVER_REMOTE_MOVE, 2u, 1u, "e2e4"),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+        },
+        3u
+    },
+    {
+        "corrected move acceptance is acknowledged",
+        EV_GAME_RESULT(SESSION_GAME_ACCEPTED, 1u, 0),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_SEND("ACK 1", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        4u
     }
 };
 
@@ -1317,8 +1375,7 @@ static const MqttTranscriptStep move_sync_and_tx_fail_steps[] = {
         EV_RX("MOVE 2 e7e5", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SEND_NACK_ROUTE_COMPAT("NACK 2 SYNC",
-                                       SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_SEND("NACK 2 SYNC", SESSION_ROUTE_ACK, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         3u
@@ -1375,9 +1432,11 @@ static const MqttTranscriptStep move_promotion_steps[] = {
 #define RESTORE_CHUNK0 "uazam4iIiIgAAAAAAAAAAAAAAAAAAA"
 #define RESTORE_CHUNK0_OVER "qqzam4iIiIgAAAAAAAAAAAAAAAAAAA"
 #define RESTORE_CHUNK1_READY "AAEREREUI1YyR8_wAAAAEAAAAAOwG1"
+#define RESTORE_CHUNK1_READY_BLACK "AAEREREUI1YyR-_wAAAAEAAAAAOwEP"
 #define RESTORE_CHUNK1_ACTIVE "AAEREREUI1YyR8_wIAAQEAAAAAOwF2"
 #define RESTORE_CHUNK1_OVER "AAEREREUI1YyR8_wQAAwEAAAAAOwGX"
 #define RESTORE_READY RESTORE_CHUNK0 RESTORE_CHUNK1_READY
+#define RESTORE_READY_BLACK RESTORE_CHUNK0 RESTORE_CHUNK1_READY_BLACK
 #define RESTORE_ACTIVE RESTORE_CHUNK0 RESTORE_CHUNK1_ACTIVE
 #define RESTORE_OVER RESTORE_CHUNK0_OVER RESTORE_CHUNK1_OVER
 #define RESTORE_RS00 "RS00 " RESTORE_CHUNK0
@@ -1561,6 +1620,27 @@ static const MqttTranscriptStep restore_remote_fresh_steps[] = {
         2u
     },
     {
+        "local chat preserves applied restore cache",
+        EV_LOCAL(SESSION_REQUEST_CHAT, 0u, "still here", SESSION_PHASE_READY),
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("CHAT still here", SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "local chat handoff rearms liveness",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_GAME(SESSION_DELIVER_CHAT, 0u, SESSION_CHAT_LOCAL,
+                     "still here"),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        3u
+    },
+    {
         "duplicate final half repeats acknowledgement",
         EV_RX(RESTORE_RS01_READY, SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
         {
@@ -1645,8 +1725,7 @@ static const MqttTranscriptStep restore_remote_fresh_steps[] = {
         EV_RX("DRAW", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SEND_NACK_ROUTE_COMPAT("NACK DRAW",
-                                       SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("NACK DRAW", SESSION_ROUTE_ACK, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD,
                           SESSION_TX_GUARD_TICKS)
         },
@@ -1810,20 +1889,456 @@ static const MqttTranscriptStep restore_wait_ry_retry_limit_steps[] = {
     }
 };
 
-static const MqttTranscriptStep restore_host_reject_steps[] = {
+static const MqttTranscriptStep restore_host_remote_prompt_steps[] = {
     HOST_ACTIVE_PREFIX,
     {
-        "host rejects remote restore request",
+        "remote restore request asks application",
         EV_RX("RQ", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {OBS_DECISION(SESSION_REQUEST_RESTORE, 0u)},
+        1u
+    }
+};
+
+static const MqttTranscriptStep restore_guest_local_active_steps[] = {
+    GUEST_ACTIVE_PREFIX,
+    {
+        "guest restore requests permission",
+        EV_LOCAL(SESSION_REQUEST_RESTORE, 2u, RESTORE_ACTIVE,
+                 SESSION_PHASE_ACTIVE),
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("RQ", SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD,
+                          SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "guest restore request completion arms reply",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+        },
+        2u
+    },
+    {
+        "guest restore permission sends first half",
+        EV_RX("RY", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_SEND(RESTORE_RS00, SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD,
+                          SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "guest first restore half completion sends second half",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_SEND(RESTORE_RS01_ACTIVE, SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD,
+                          SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "guest second restore half completion arms acknowledgement",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+        },
+        2u
+    },
+    {
+        "guest restore acknowledgement applies active snapshot",
+        EV_RX("RA", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_GAME(SESSION_DELIVER_RESTORE, 0u, 2u, RESTORE_ACTIVE),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        3u
+    }
+};
+
+#define GUEST_READY_RESTORE_WAIT_RA_PREFIX \
+    GUEST_READY_PREFIX, \
+    { \
+        "local ready restore requests permission", \
+        EV_LOCAL(SESSION_REQUEST_RESTORE, 0u, RESTORE_READY, \
+                 SESSION_PHASE_READY), \
+        { \
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS), \
+            OBS_SEND("RQ", SESSION_ROUTE_GAME, 0u, 1u), \
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) \
+        }, \
+        3u \
+    }, \
+    { \
+        "restore request handoff arms reply", EV_TX_OK, \
+        { \
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), \
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u) \
+        }, \
+        2u \
+    }, \
+    { \
+        "restore permission sends first half", \
+        EV_RX("RY", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u), \
+        { \
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL), \
+            OBS_SEND(RESTORE_RS00, SESSION_ROUTE_GAME, 0u, 1u), \
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) \
+        }, \
+        3u \
+    }, \
+    { \
+        "first restore half handoff sends second half", EV_TX_OK, \
+        { \
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), \
+            OBS_SEND(RESTORE_RS01_READY, SESSION_ROUTE_GAME, 0u, 1u), \
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) \
+        }, \
+        3u \
+    }, \
+    { \
+        "second restore half handoff waits for RA", EV_TX_OK, \
+        { \
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), \
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u) \
+        }, \
+        2u \
+    }
+
+#define GUEST_REPLACEMENT_HANDSHAKE(join) \
+    { \
+        "replacement online handoff sends join", EV_TX_OK, \
+        { \
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), \
+            OBS_SEND((join), SESSION_ROUTE_META, 0u, 1u), \
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) \
+        }, \
+        3u \
+    }, \
+    { \
+        "replacement join handoff rearms ready", EV_TX_OK, \
+        { \
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), \
+            OBS_TIMER_SET(SESSION_TIMER_LIVENESS, 250u), \
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 250u) \
+        }, \
+        3u \
+    }
+
+#define RESTORE_REPLACEMENT_WAIT_RA_STEPS(host, color, sid, online, join, fresh) \
+    GUEST_READY_RESTORE_WAIT_RA_PREFIX, \
+    { \
+        "replacement host cancels old restore", \
+        EV_RX((host), SESSION_ROUTE_META, SESSION_RX_LIVE, 1u), \
+        { \
+            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT, \
+                     SESSION_CONTROL_CANCELLED, SESSION_REQUEST_RESTORE, 0), \
+            OBS_SIDE((color), (sid)), \
+            OBS_SEND((online), SESSION_ROUTE_PRESENCE, 1u, 1u), \
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) \
+        }, \
+        4u \
+    }, \
+    GUEST_REPLACEMENT_HANDSHAKE((join)), \
+    { \
+        "old restore acknowledgement is inert", \
+        EV_RX("RA", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u), \
+        NO_STATE_CHANGE \
+    }, \
+    { \
+        "new peer can start a fresh restore", \
+        EV_LOCAL(SESSION_REQUEST_RESTORE, 0u, (fresh), SESSION_PHASE_READY), \
+        { \
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS), \
+            OBS_SEND("RQ", SESSION_ROUTE_GAME, 0u, 1u), \
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) \
+        }, \
+        3u \
+    }
+
+static const MqttTranscriptStep restore_replace_same_color_steps[] = {
+    RESTORE_REPLACEMENT_WAIT_RA_STEPS("H W 78", SESSION_COLOR_BLACK, 78u,
+                                      "O B 78", "J 78", RESTORE_READY)
+};
+
+static const MqttTranscriptStep restore_replace_other_color_steps[] = {
+    RESTORE_REPLACEMENT_WAIT_RA_STEPS("H B 79", SESSION_COLOR_WHITE, 79u,
+                                      "O W 79", "J 79",
+                                      RESTORE_READY_BLACK)
+};
+
+static const MqttTranscriptStep restore_replace_same_session_other_color_steps[] = {
+    RESTORE_REPLACEMENT_WAIT_RA_STEPS("H B 77", SESSION_COLOR_WHITE, 77u,
+                                      "O W 77", "J 77",
+                                      RESTORE_READY_BLACK)
+};
+
+static const MqttTranscriptStep restore_duplicate_host_wait_ra_steps[] = {
+    GUEST_READY_RESTORE_WAIT_RA_PREFIX,
+    {
+        "duplicate current host preserves restore wait",
+        EV_RX("H W 77", SESSION_ROUTE_META, SESSION_RX_LIVE, 1u),
+        NO_STATE_CHANGE
+    },
+    {
+        "current restore acknowledgement applies once",
+        EV_RX("RA", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_GAME(SESSION_DELIVER_RESTORE, 0u, 0u, RESTORE_READY),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        3u
+    },
+    {
+        "duplicate restore acknowledgement is inert",
+        EV_RX("RA", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        NO_STATE_CHANGE
+    }
+};
+
+static const MqttTranscriptStep restore_replace_prompt_steps[] = {
+    GUEST_READY_PREFIX,
+    {
+        "old peer restore request opens prompt",
+        EV_RX("RQ", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {OBS_DECISION(SESSION_REQUEST_RESTORE, 0u)},
+        1u
+    },
+    {
+        "replacement closes old restore prompt",
+        EV_RX("H W 78", SESSION_ROUTE_META, SESSION_RX_LIVE, 1u),
+        {
+            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT,
+                     SESSION_CONTROL_CANCELLED, SESSION_REQUEST_RESTORE, 0),
+            OBS_SIDE(SESSION_COLOR_BLACK, 78u),
+            OBS_SEND("O B 78", SESSION_ROUTE_PRESENCE, 1u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        4u
+    },
+    GUEST_REPLACEMENT_HANDSHAKE("J 78"),
+    {
+        "old prompt decision is inert",
+        EV_DECISION_ID(SESSION_DECISION_ACCEPT, 1u),
+        NO_STATE_CHANGE
+    },
+    {
+        "new peer restore request opens a fresh prompt",
+        EV_RX("RQ", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {OBS_DECISION(SESSION_REQUEST_RESTORE, 0u)},
+        1u
+    }
+};
+
+#define GUEST_REMOTE_RESTORE_RECEIVE_PREFIX \
+    GUEST_READY_PREFIX, \
+    { \
+        "remote restore request opens prompt", \
+        EV_RX("RQ", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u), \
+        {OBS_DECISION(SESSION_REQUEST_RESTORE, 0u)}, \
+        1u \
+    }, \
+    { \
+        "accepted restore request sends permission", \
+        EV_DECISION(SESSION_CONTROL_ACCEPTED), \
+        { \
+            OBS_SEND("RY", SESSION_ROUTE_GAME, 0u, 1u), \
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) \
+        }, \
+        2u \
+    }, \
+    { \
+        "restore permission handoff starts receive", EV_TX_OK, \
+        { \
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), \
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS), \
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u) \
+        }, \
+        3u \
+    }
+
+static const MqttTranscriptStep restore_replace_partial_steps[] = {
+    GUEST_REMOTE_RESTORE_RECEIVE_PREFIX,
+    {
+        "old peer first restore half is cached",
+        EV_RX(RESTORE_RS00, SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)},
+        1u
+    },
+    {
+        "replacement discards partial restore",
+        EV_RX("H W 78", SESSION_ROUTE_META, SESSION_RX_LIVE, 1u),
+        {
+            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT,
+                     SESSION_CONTROL_CANCELLED, SESSION_REQUEST_RESTORE, 0),
+            OBS_SIDE(SESSION_COLOR_BLACK, 78u),
+            OBS_SEND("O B 78", SESSION_ROUTE_PRESENCE, 1u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        4u
+    },
+    GUEST_REPLACEMENT_HANDSHAKE("J 78"),
+    {
+        "new peer can open restore after partial discard",
+        EV_RX("RQ", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {OBS_DECISION(SESSION_REQUEST_RESTORE, 0u)},
+        1u
+    }
+};
+
+static const MqttTranscriptStep restore_replace_applied_cache_steps[] = {
+    GUEST_REMOTE_RESTORE_RECEIVE_PREFIX,
+    {
+        "first restore half is cached",
+        EV_RX(RESTORE_RS00, SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)},
+        1u
+    },
+    {
+        "second restore half is delivered",
+        EV_RX(RESTORE_RS01_READY, SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {
+            OBS_GAME(SESSION_DELIVER_RESTORE, 2u, 0u, RESTORE_READY),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+        },
+        2u
+    },
+    {
+        "restore apply sends acknowledgement",
+        EV_GAME_RESULT(SESSION_CONTROL_ACCEPTED, 1u, restore_phase_ready),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_SEND("RA", SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "restore acknowledgement handoff caches apply", EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        2u
+    },
+    {
+        "replacement discards applied duplicate cache",
+        EV_RX("H W 78", SESSION_ROUTE_META, SESSION_RX_LIVE, 1u),
+        {
+            OBS_SIDE(SESSION_COLOR_BLACK, 78u),
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("O B 78", SESSION_ROUTE_PRESENCE, 1u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        4u
+    },
+    GUEST_REPLACEMENT_HANDSHAKE("J 78"),
+    {
+        "old cached chunk is refused instead of re-acked",
+        EV_RX(RESTORE_RS00, SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
         {
             OBS_SEND("RN", SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        2u
+    }
+};
+
+static const MqttTranscriptStep restore_over_replacement_inert_steps[] = {
+    GUEST_ACTIVE_PREFIX,
+    {
+        "remote resign is acked before over",
+        EV_RX("RESIGN", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("ACK RESIGN", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "remote resign handoff enters over", EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u),
+            OBS_GAME(SESSION_DELIVER_CONTROL, 0u, SESSION_REQUEST_RESIGN, 0),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        4u
+    },
+    {
+        "new host session is inert in over",
+        EV_RX("H B 78", SESSION_ROUTE_META, SESSION_RX_LIVE, 1u),
+        NO_STATE_CHANGE
+    }
+};
+
+static const MqttTranscriptStep restore_host_remote_apply_steps[] = {
+    HOST_ACTIVE_PREFIX,
+    {
+        "remote restore request asks host",
+        EV_RX("RQ", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {OBS_DECISION(SESSION_REQUEST_RESTORE, 0u)},
+        1u
+    },
+    {
+        "host accepted restore request sends permission",
+        EV_DECISION(SESSION_CONTROL_ACCEPTED),
+        {
+            OBS_SEND("RY", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD,
                           SESSION_TX_GUARD_TICKS)
         },
         2u
     },
     {
-        "host refusal completion rearms liveness",
+        "host restore permission completion starts receive",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+        },
+        3u
+    },
+    {
+        "host caches first restore half",
+        EV_RX(RESTORE_RS00, SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)},
+        1u
+    },
+    {
+        "host second restore half delivers ready snapshot",
+        EV_RX(RESTORE_RS01_READY, SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {
+            OBS_GAME(SESSION_DELIVER_RESTORE, 2u, 0u, RESTORE_READY),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+        },
+        2u
+    },
+    {
+        "host successful restore apply sends acknowledgement",
+        EV_GAME_RESULT(SESSION_CONTROL_ACCEPTED, 1u, restore_phase_ready),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_SEND("RA", SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD,
+                          SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "host restore acknowledgement completion rearms liveness",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
@@ -2054,7 +2569,7 @@ static const MqttTranscriptStep control_remote_reset_steps[] = {
         EV_DECISION(SESSION_DECISION_REJECT),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SEND("NACK RESET", SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_SEND("NACK RESET", SESSION_ROUTE_ACK, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         3u
@@ -2242,7 +2757,7 @@ static const MqttTranscriptStep control_remote_draw_steps[] = {
         EV_DECISION(SESSION_DECISION_REJECT),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SEND("NACK DRAW", SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_SEND("NACK DRAW", SESSION_ROUTE_ACK, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         3u
@@ -2733,7 +3248,7 @@ static const MqttTranscriptStep control_remote_takeback_steps[] = {
         EV_RX("TAKEBACK 2", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SEND_NACK_ROUTE_COMPAT("NACK 2", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_SEND("NACK 2", SESSION_ROUTE_ACK, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         3u
@@ -2772,7 +3287,7 @@ static const MqttTranscriptStep control_remote_takeback_steps[] = {
         EV_DECISION(SESSION_DECISION_REJECT),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SEND_NACK_ROUTE_COMPAT("NACK 1", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_SEND("NACK 1", SESSION_ROUTE_ACK, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         3u
@@ -2857,7 +3372,7 @@ static const MqttTranscriptStep control_remote_takeback_steps[] = {
         EV_RX("TAKEBACK 2", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SEND_NACK_ROUTE_COMPAT("NACK 2", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_SEND("NACK 2", SESSION_ROUTE_ACK, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         3u
@@ -2889,8 +3404,7 @@ static const MqttTranscriptStep control_busy_crossing_steps[] = {
         "reset cannot overwrite pending move",
         EV_RX("RESET", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
         {
-            OBS_SEND_NACK_ROUTE_COMPAT("NACK RESET BUSY",
-                                       SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("NACK RESET BUSY", SESSION_ROUTE_ACK, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         2u
@@ -2909,8 +3423,7 @@ static const MqttTranscriptStep control_busy_crossing_steps[] = {
         EV_RX("DRAW", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SEND_NACK_ROUTE_COMPAT("NACK DRAW",
-                                       SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("NACK DRAW", SESSION_ROUTE_ACK, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         3u
@@ -2929,8 +3442,7 @@ static const MqttTranscriptStep control_busy_crossing_steps[] = {
         EV_RX("TAKEBACK 1", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SEND_NACK_ROUTE_COMPAT("NACK 1",
-                                       SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_SEND("NACK 1", SESSION_ROUTE_ACK, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         3u
@@ -3469,6 +3981,11 @@ static const MqttTranscriptStep link_loss_pending_tx_fresh_steps[] = {
         4u
     },
     {
+        "late old host will cannot end fresh session",
+        EV_RX("F B 77", SESSION_ROUTE_PRESENCE, SESSION_RX_LIVE, 2u),
+        NO_OBSERVATIONS
+    },
+    {
         "fresh game start sends ack before activation",
         EV_RX("GAME START", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 2u),
         {
@@ -3684,6 +4201,29 @@ static const MqttTranscriptStep bye_local_handshake_steps[] = {
     },
     {
         "pre-peer bye handoff closes directly",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_CLOSE(1u),
+            OBS_SESSION(SESSION_CHANGED_ENDED)
+        },
+        3u
+    }
+};
+
+static const MqttTranscriptStep bye_local_empty_room_steps[] = {
+    {"guest link up", EV_LINK_UP(1u), NO_OBSERVATIONS},
+    {
+        "local bye may leave an empty room",
+        EV_LOCAL(SESSION_REQUEST_BYE, 0u, 0, SESSION_PHASE_HANDSHAKE),
+        {
+            OBS_SEND("BYE", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        2u
+    },
+    {
+        "empty-room bye handoff closes directly",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
@@ -4144,7 +4684,7 @@ static const MqttTranscriptStep control_cancel_local_draw_steps[] = {
         EV_RX((cancel), SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u), \
         { \
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS), \
-            OBS_SEND((nack), SESSION_ROUTE_GAME, 0u, 1u), \
+            OBS_SEND((nack), SESSION_ROUTE_ACK, 0u, 1u), \
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) \
         }, \
         3u \
@@ -4179,6 +4719,24 @@ static const MqttTranscriptStep control_cancel_remote_reset_steps[] = {
 };
 
 const MqttTranscript mqtt_session_transcripts[] = {
+    {
+        "mqtt-mach-valid-unknown-malformed",
+        mach_platform_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(mach_platform_steps) /
+                  sizeof(mach_platform_steps[0]))
+    },
+    {
+        "mqtt-mach-pre-ready",
+        mach_pre_ready_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(mach_pre_ready_steps) /
+                  sizeof(mach_pre_ready_steps[0]))
+    },
     {
         "mqtt-seat-acquire-retained-vs-live",
         seat_filter_acquire_steps,
@@ -4395,13 +4953,103 @@ const MqttTranscript mqtt_session_transcripts[] = {
                   sizeof(restore_wait_ry_retry_limit_steps[0]))
     },
     {
-        "mqtt-restore-host-reject",
-        restore_host_reject_steps,
+        "mqtt-restore-host-remote-prompt",
+        restore_host_remote_prompt_steps,
         77u,
         SESSION_ROLE_HOST,
         SESSION_COLOR_WHITE,
-        (uint8_t)(sizeof(restore_host_reject_steps) /
-                  sizeof(restore_host_reject_steps[0]))
+        (uint8_t)(sizeof(restore_host_remote_prompt_steps) /
+                  sizeof(restore_host_remote_prompt_steps[0]))
+    },
+    {
+        "mqtt-restore-guest-local-active",
+        restore_guest_local_active_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(restore_guest_local_active_steps) /
+                  sizeof(restore_guest_local_active_steps[0]))
+    },
+    {
+        "mqtt-restore-host-remote-apply",
+        restore_host_remote_apply_steps,
+        77u,
+        SESSION_ROLE_HOST,
+        SESSION_COLOR_WHITE,
+        (uint8_t)(sizeof(restore_host_remote_apply_steps) /
+                  sizeof(restore_host_remote_apply_steps[0]))
+    },
+    {
+        "mqtt-restore-replace-same-color",
+        restore_replace_same_color_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(restore_replace_same_color_steps) /
+                  sizeof(restore_replace_same_color_steps[0]))
+    },
+    {
+        "mqtt-restore-replace-other-color",
+        restore_replace_other_color_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(restore_replace_other_color_steps) /
+                  sizeof(restore_replace_other_color_steps[0]))
+    },
+    {
+        "mqtt-restore-replace-same-session-other-color",
+        restore_replace_same_session_other_color_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(restore_replace_same_session_other_color_steps) /
+                  sizeof(restore_replace_same_session_other_color_steps[0]))
+    },
+    {
+        "mqtt-restore-duplicate-host-wait-ra",
+        restore_duplicate_host_wait_ra_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(restore_duplicate_host_wait_ra_steps) /
+                  sizeof(restore_duplicate_host_wait_ra_steps[0]))
+    },
+    {
+        "mqtt-restore-replace-prompt",
+        restore_replace_prompt_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(restore_replace_prompt_steps) /
+                  sizeof(restore_replace_prompt_steps[0]))
+    },
+    {
+        "mqtt-restore-replace-partial",
+        restore_replace_partial_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(restore_replace_partial_steps) /
+                  sizeof(restore_replace_partial_steps[0]))
+    },
+    {
+        "mqtt-restore-replace-applied-cache",
+        restore_replace_applied_cache_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(restore_replace_applied_cache_steps) /
+                  sizeof(restore_replace_applied_cache_steps[0]))
+    },
+    {
+        "mqtt-restore-over-replacement-inert",
+        restore_over_replacement_inert_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(restore_over_replacement_inert_steps) /
+                  sizeof(restore_over_replacement_inert_steps[0]))
     },
     {
         "mqtt-restore-reject-offline-ok",
@@ -4635,7 +5283,16 @@ const MqttTranscript mqtt_session_transcripts[] = {
         SESSION_ROLE_GUEST,
         SESSION_COLOR_UNKNOWN,
         (uint8_t)(sizeof(bye_local_handshake_steps) /
-                  sizeof(bye_local_handshake_steps[0]))
+                   sizeof(bye_local_handshake_steps[0]))
+    },
+    {
+        "mqtt-bye-local-empty-room",
+        bye_local_empty_room_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(bye_local_empty_room_steps) /
+                  sizeof(bye_local_empty_room_steps[0]))
     },
     {
         "mqtt-bye-local-success",

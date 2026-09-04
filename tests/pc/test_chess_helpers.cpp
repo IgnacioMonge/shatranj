@@ -1,4 +1,5 @@
 #include "pc/client/chess_helpers.h"
+#include "common/chess/rules_compact.h"
 
 #include <cstdio>
 
@@ -18,6 +19,23 @@ int main()
     int fromCol;
     int toRow;
     int toCol;
+    static const char pieces[] = ".PNBRQKpnbrqk";
+    static const int8_t compact[] = {
+        NETCHESSZX_RULE_EMPTY,
+        NETCHESSZX_RULE_WP, NETCHESSZX_RULE_WN, NETCHESSZX_RULE_WB,
+        NETCHESSZX_RULE_WR, NETCHESSZX_RULE_WQ, NETCHESSZX_RULE_WK,
+        NETCHESSZX_RULE_BP, NETCHESSZX_RULE_BN, NETCHESSZX_RULE_BB,
+        NETCHESSZX_RULE_BR, NETCHESSZX_RULE_BQ, NETCHESSZX_RULE_BK
+    };
+
+    for (int index = 0; index < 13; ++index) {
+        check(ChessHelpers::compactPieceFromAscii(pieces[index]) == compact[index] &&
+                  ChessHelpers::asciiPieceFromCompact(compact[index]) == pieces[index],
+              "compact piece round trip");
+    }
+    check(ChessHelpers::compactPieceFromAscii('?') == NETCHESSZX_RULE_EMPTY &&
+              ChessHelpers::asciiPieceFromCompact(7) == '.',
+          "invalid compact piece");
 
     check(ChessHelpers::squareName(7, 4) == QStringLiteral("e1"),
           "square name");
@@ -32,10 +50,16 @@ int main()
           "promotion syntax");
     check(!ChessHelpers::isMoveSyntaxOk(QStringLiteral("a7a8k")),
           "invalid promotion syntax");
-    check(ChessHelpers::isMqttRoomSyntaxOk(QStringLiteral("NC12ABCD")),
-          "eight-character room syntax");
-    check(!ChessHelpers::isMqttRoomSyntaxOk(QStringLiteral("NC12ABCDE")),
+    check(ChessHelpers::isMqttRoomSyntaxOk(QStringLiteral("NC12AF")),
+          "six-character room syntax");
+    check(!ChessHelpers::isMqttRoomSyntaxOk(QStringLiteral("NC12A")),
+          "short room syntax");
+    check(!ChessHelpers::isMqttRoomSyntaxOk(QStringLiteral("NC12AF0")),
           "overlong room syntax");
+    check(!ChessHelpers::isMqttRoomSyntaxOk(QStringLiteral("NC12AG")),
+          "non-hexadecimal room syntax");
+    check(!ChessHelpers::isMqttRoomSyntaxOk(QStringLiteral("AB12AF")),
+          "room prefix syntax");
     check(!ChessHelpers::isMqttRoomSyntaxOk(QStringLiteral("nc12af")),
           "lowercase room syntax");
     check(ChessHelpers::isDirectIpSyntaxOk(QStringLiteral("127.0.0.1")),

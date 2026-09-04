@@ -1,8 +1,17 @@
-#define NETCHESSZX_PC_MQTT_TX_FAILURE_TEST 1
+#include <QAbstractSocket>
 #include <QApplication>
+#include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QHostAddress>
+#include <QSettings>
+#include <QTcpServer>
 #include <QTimer>
+#include <QVector>
 
-#include "../../src/pc/client/main_window.h"
+#include "common/session/session.h"
+#include "pc/client/desktop_transport_codec.h"
+#include "pc/client/main_window.h"
 
 #include <cstdio>
 #include <memory>
@@ -20,6 +29,38 @@ bool portableClientId(const QByteArray &clientId)
         }
     }
     return true;
+}
+
+QByteArray expectedLocalMachPayload()
+{
+#if defined(Q_OS_MACOS)
+    return QByteArrayLiteral("MACH MAC");
+#elif defined(Q_OS_LINUX)
+    return QByteArrayLiteral("MACH LNX");
+#elif defined(Q_OS_WIN)
+    return QByteArrayLiteral("MACH PC");
+#else
+    return QByteArray();
+#endif
+}
+
+QByteArray takeDirectBytes(QTcpSocket *peer)
+{
+    QElapsedTimer wait;
+    QElapsedTimer idle;
+    wait.start();
+    idle.start();
+    QByteArray bytes;
+    while (wait.elapsed() < 1000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        if (peer->bytesAvailable() != 0) {
+            bytes.append(peer->readAll());
+            idle.restart();
+        } else if (!bytes.isEmpty() && idle.elapsed() >= 50) {
+            break;
+        }
+    }
+    return bytes;
 }
 
 QByteArray mqttAckPacket(bool unsubscribe, uint16_t packetId,
@@ -398,8 +439,24 @@ bool runMqttHostPeerReplacementCase()
     QVector<QByteArray> packets = takeMqttPackets(peer.get());
     if (!window.testSessionReady() ||
         !window.testDisconnectButtonAvailable() ||
-        mqttPublishPayloadCount(packets, QByteArray("H W 77")) != 1) {
+        mqttPublishPayloadCount(packets, QByteArray("H W 77")) != 1 ||
+        mqttPublishPayloadCount(packets, expectedLocalMachPayload()) != 1 ||
+        !window.testStatusContextText().endsWith(QStringLiteral("VS ?"))) {
         std::fputs("FAIL: initial MQTT host peer did not become ready\n", stderr);
+        return false;
+    }
+
+    window.testFeedMqtt("b2w", "MACH ZX", false);
+    if (!window.testStatusContextText().endsWith(QStringLiteral("VS ZX"))) {
+        std::fputs("FAIL: MQTT host did not show peer machine\n", stderr);
+        return false;
+    }
+    window.testFeedMqtt("w2b", "MACH NXT", false);
+    window.testFeedMqtt("b2w", "MACH ZZ", false);
+    window.testFeedMqtt("b2w", "MACH NXT", true);
+    if (!window.testStatusContextText().endsWith(QStringLiteral("VS ZX"))) {
+        std::fputs("FAIL: invalid, wrong-route, or retained MACH replaced peer\n",
+                   stderr);
         return false;
     }
 
@@ -408,6 +465,7 @@ bool runMqttHostPeerReplacementCase()
     if (window.testSocket()->state() != QAbstractSocket::ConnectedState ||
         window.testSessionReady() ||
         !window.testDisconnectButtonAvailable() ||
+        window.testStatusContextText().contains(QStringLiteral("VS ")) ||
         mqttPublishPayloadCount(packets, QByteArray("O W 77")) != 1 ||
         mqttPublishPayloadCount(packets, QByteArray("H W 77")) != 1) {
         std::fputs("FAIL: MQTT host did not restart on the live broker link\n",
@@ -420,7 +478,11 @@ bool runMqttHostPeerReplacementCase()
     const bool ready = window.testSessionReady() &&
                        window.testDisconnectButtonAvailable() &&
                        mqttPublishPayloadCount(packets,
-                                               QByteArray("H W 77")) == 1;
+                                               QByteArray("H W 77")) == 1 &&
+                       mqttPublishPayloadCount(
+                           packets, expectedLocalMachPayload()) == 1 &&
+                       window.testStatusContextText().endsWith(
+                           QStringLiteral("VS ?"));
     if (!ready) {
         std::fputs("FAIL: replacement MQTT guest did not become ready\n", stderr);
     }
@@ -444,8 +506,15 @@ bool runMqttGuestHostReplacementCase()
     QVector<QByteArray> packets = takeMqttPackets(peer.get());
     if (!window.testSessionReady() ||
         mqttPublishPayloadCount(packets, QByteArray("O B 77")) != 1 ||
-        mqttPublishPayloadCount(packets, QByteArray("J 77")) != 1) {
+        mqttPublishPayloadCount(packets, QByteArray("J 77")) != 1 ||
+        mqttPublishPayloadCount(packets, expectedLocalMachPayload()) != 1 ||
+        !window.testStatusContextText().endsWith(QStringLiteral("VS ?"))) {
         std::fputs("FAIL: initial MQTT guest did not become ready\n", stderr);
+        return false;
+    }
+    window.testFeedMqtt("w2b", "MACH NXT", false);
+    if (!window.testStatusContextText().endsWith(QStringLiteral("VS NXT"))) {
+        std::fputs("FAIL: MQTT guest did not show peer machine\n", stderr);
         return false;
     }
 
@@ -453,7 +522,8 @@ bool runMqttGuestHostReplacementCase()
     (void)takeMqttPackets(peer.get());
     if (window.testSocket()->state() != QAbstractSocket::ConnectedState ||
         window.testSessionReady() ||
-        !window.testDisconnectButtonAvailable()) {
+        !window.testDisconnectButtonAvailable() ||
+        window.testStatusContextText().contains(QStringLiteral("VS "))) {
         std::fputs("FAIL: MQTT guest did not rearm on the live broker link\n",
                    stderr);
         return false;
@@ -466,13 +536,67 @@ bool runMqttGuestHostReplacementCase()
                        mqttPublishPayloadCount(packets,
                                                QByteArray("O B 88")) == 1 &&
                        mqttPublishPayloadCount(packets,
-                                               QByteArray("J 88")) == 1;
+                                               QByteArray("J 88")) == 1 &&
+                       mqttPublishPayloadCount(
+                           packets, expectedLocalMachPayload()) == 1 &&
+                       window.testStatusContextText().endsWith(
+                           QStringLiteral("VS ?"));
     if (!ready) {
         std::fputs("FAIL: replacement MQTT host did not restore guest ready\n",
                    stderr);
     }
     window.testSocket()->abort();
     return ready;
+}
+
+bool runMqttRestoreReplacementUiCase()
+{
+    MainWindow window;
+    QTcpServer server;
+    std::unique_ptr<QTcpSocket> peer;
+    if (!connectMqttTestPeer(window, server, peer)) {
+        std::fputs("FAIL: prepare MQTT restore replacement UI\n", stderr);
+        return false;
+    }
+    (void)takeMqttPackets(peer.get());
+    window.testFeedMqtt("meta", "H W 77", false);
+    acknowledgeSubscribes(window, window.testMqttPendingSubacks());
+    (void)takeMqttPackets(peer.get());
+
+    if (!window.testSessionReady() || !window.testBeginMqttRestore() ||
+        mqttPublishPayloadCount(takeMqttPackets(peer.get()),
+                                QByteArray("RQ")) != 1) {
+        std::fputs("FAIL: local MQTT restore did not become busy\n", stderr);
+        return false;
+    }
+    window.testFeedMqtt("meta", "H W 88", false);
+    QVector<QByteArray> packets = takeMqttPackets(peer.get());
+    if (!window.testRestoreUiIdle() ||
+        mqttPublishPayloadCount(packets, QByteArray("O B 88")) != 1 ||
+        mqttPublishPayloadCount(packets, QByteArray("J 88")) != 1) {
+        std::fputs("FAIL: peer replacement did not release restore busy\n",
+                   stderr);
+        return false;
+    }
+
+    window.testFeedMqtt("w2b", "RQ", false);
+    if (window.testRestoreUiIdle()) {
+        std::fputs("FAIL: remote MQTT restore did not open prompt\n", stderr);
+        return false;
+    }
+    window.testFeedMqtt("meta", "H W 99", false);
+    packets = takeMqttPackets(peer.get());
+    const bool ok = window.testRestoreUiIdle() &&
+                    mqttPublishPayloadCount(packets,
+                                            QByteArray("O B 99")) == 1 &&
+                    mqttPublishPayloadCount(packets,
+                                            QByteArray("J 99")) == 1;
+    if (!ok) {
+        std::fputs("FAIL: peer replacement did not close restore prompt\n",
+                   stderr);
+    }
+    window.testSocket()->abort();
+    return ok;
 }
 
 bool runDirectRetryReconnectCase(MainWindow &window)
@@ -526,18 +650,20 @@ bool runDirectRetryReconnectCase(MainWindow &window)
     QEventLoop helloLoop;
     QTimer helloTimeout;
     helloTimeout.setSingleShot(true);
-    QObject::connect(host.get(), &QTcpSocket::readyRead, &helloLoop, [&]() {
-        guestHello.append(host->readAll());
-        if (guestHello.contains('\n')) {
-            helloLoop.quit();
-        }
-    });
+    const QMetaObject::Connection helloReadyConnection =
+        QObject::connect(host.get(), &QTcpSocket::readyRead, &helloLoop, [&]() {
+            guestHello.append(host->readAll());
+            if (guestHello.contains('\n')) {
+                helloLoop.quit();
+            }
+        });
     QObject::connect(&helloTimeout, &QTimer::timeout, &helloLoop,
                      &QEventLoop::quit);
     if (!guestHello.contains('\n')) {
         helloTimeout.start(2000);
         helloLoop.exec();
     }
+    QObject::disconnect(helloReadyConnection);
     if (guestHello != "HELLO DIRECT GUEST\n") {
         std::fputs("FAIL: reconnected direct guest did not send HELLO\n", stderr);
         return false;
@@ -548,15 +674,135 @@ bool runDirectRetryReconnectCase(MainWindow &window)
     while (!window.testSessionReady() && wait.elapsed() < 2000) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     }
-    const bool connected = window.testSessionReady() &&
-                           window.testSocket()->state() ==
-                               QAbstractSocket::ConnectedState;
+    const bool sessionConnected = window.testSessionReady() &&
+        window.testSocket()->state() == QAbstractSocket::ConnectedState;
+    const QByteArray directOutput = takeDirectBytes(host.get());
+    const bool announcementSent = directOutput.count(
+        expectedLocalMachPayload() + '\n') == 1;
+    const bool legacyShown = window.testStatusContextText().endsWith(
+        QStringLiteral("VS ?"));
+    const bool connected = sessionConnected && announcementSent && legacyShown;
+    if (!sessionConnected) {
+        std::fputs("FAIL: direct MACH session not connected\n", stderr);
+    } else if (!announcementSent) {
+        std::fprintf(stderr, "FAIL: direct MACH announcement missing: %s\n",
+                     directOutput.toHex().constData());
+    } else if (!legacyShown) {
+        std::fprintf(stderr, "FAIL: direct legacy machine missing: %s\n",
+                     window.testStatusContextText().toUtf8().constData());
+    }
+    if (connected &&
+        (host->write("MACH NXT\n") != 9 ||
+         !host->waitForBytesWritten(2000))) {
+        std::fputs("FAIL: send direct peer machine\n", stderr);
+        return false;
+    }
+    wait.restart();
+    while (connected &&
+           !window.testStatusContextText().endsWith(QStringLiteral("VS NXT")) &&
+           wait.elapsed() < 2000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    }
+    const bool recognized = connected &&
+        window.testStatusContextText().endsWith(QStringLiteral("VS NXT"));
     window.testSocket()->abort();
     QCoreApplication::processEvents();
-    if (!connected) {
-        std::fputs("FAIL: direct retry did not complete HELLO handshake\n", stderr);
+    if (!recognized) {
+        std::fputs("FAIL: direct retry did not exchange peer machine\n", stderr);
     }
-    return connected;
+    return recognized;
+}
+
+bool runDirectRemoteMoveFlashCancellationCase()
+{
+    QTcpServer server;
+    if (!server.listen(QHostAddress::LocalHost, 0)) {
+        std::fputs("FAIL: listen for remote move flash cancellation\n", stderr);
+        return false;
+    }
+
+    MainWindow window;
+    window.testStartDirectGuestConnection(QStringLiteral("127.0.0.1"),
+                                          server.serverPort());
+    QElapsedTimer wait;
+    wait.start();
+    while (!server.hasPendingConnections() && wait.elapsed() < 2000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
+    if (!server.hasPendingConnections()) {
+        std::fputs("FAIL: accept remote move flash peer\n", stderr);
+        return false;
+    }
+
+    std::unique_ptr<QTcpSocket> peer(server.nextPendingConnection());
+    if (!peer || takeDirectBytes(peer.get()) !=
+                     QByteArrayLiteral("HELLO DIRECT GUEST\n")) {
+        std::fputs("FAIL: remote move flash guest HELLO\n", stderr);
+        return false;
+    }
+
+    const QByteArray hostHello =
+        QByteArrayLiteral("HELLO DIRECT HOST WHITE=HOST\n");
+    if (peer->write(hostHello) != hostHello.size() ||
+        !peer->waitForBytesWritten(2000)) {
+        std::fputs("FAIL: send remote move flash host HELLO\n", stderr);
+        return false;
+    }
+    wait.restart();
+    while (!window.testSessionReady() && wait.elapsed() < 2000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
+    if (!window.testSessionReady()) {
+        std::fputs("FAIL: remote move flash direct session not ready\n", stderr);
+        return false;
+    }
+    (void)takeDirectBytes(peer.get());
+
+    const QByteArray start = QByteArrayLiteral("GAME START WHITE=HOST\n");
+    if (peer->write(start) != start.size() ||
+        !peer->waitForBytesWritten(2000)) {
+        std::fputs("FAIL: send remote move flash GAME START\n", stderr);
+        return false;
+    }
+    QByteArray startReply;
+    wait.restart();
+    while (!startReply.contains("ACK GAME START\n") && wait.elapsed() < 2000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        startReply.append(peer->readAll());
+    }
+    if (!startReply.contains("ACK GAME START\n")) {
+        std::fputs("FAIL: remote move flash GAME START ACK\n", stderr);
+        return false;
+    }
+
+    const QByteArray move = QByteArrayLiteral("MOVE 1 e2e4\n");
+    if (peer->write(move) != move.size() ||
+        !peer->waitForBytesWritten(2000)) {
+        std::fputs("FAIL: send remote move flash MOVE\n", stderr);
+        return false;
+    }
+    bool cancelled = false;
+    wait.restart();
+    while (!cancelled && wait.elapsed() < 1000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
+        cancelled = window.testCancelPendingPieceFlash();
+    }
+
+    QByteArray reply;
+    wait.restart();
+    while (!reply.contains("NACK 1") && wait.elapsed() < 1000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        reply.append(peer->readAll());
+    }
+    const bool ok = cancelled && reply.contains("NACK 1");
+    if (!ok) {
+        std::fputs("FAIL: cancelled remote move stranded reducer/busy state\n",
+                   stderr);
+    }
+    window.testSocket()->abort();
+    peer->abort();
+    QCoreApplication::processEvents();
+    return ok;
 }
 
 bool runDirectHostPreHelloCancelCase()
@@ -833,13 +1079,23 @@ int main(int argc, char *argv[])
         return 1;
     }
     MainWindow window;
+    if (!window.testStatusBarAligned()) {
+        std::fputs("FAIL: status bar is not aligned to board controls\n", stderr);
+        return 1;
+    }
+    if (!window.testSessionEndPresentation()) {
+        std::fputs("FAIL: session end cause presentation\n", stderr);
+        return 1;
+    }
     if (!window.testResignRestartUiProjection() ||
         !window.testRestoredMoveProjection() ||
         !runMqttClientIdCase(window) ||
         !runMqttPreSubackReplayCase() ||
         !runMqttSubscriptionTransitionCase() ||
         !runMqttHostPeerReplacementCase() ||
+        !runMqttRestoreReplacementUiCase() ||
         !runDirectRetryReconnectCase(window) ||
+        !runDirectRemoteMoveFlashCancellationCase() ||
         !runDirectHostPreHelloCancelCase() ||
         !runDirectHostRapidReplacementCase() ||
         !runMqttGuestHostReplacementCase() ||

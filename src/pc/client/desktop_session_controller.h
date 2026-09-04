@@ -1,8 +1,7 @@
 #ifndef DESKTOP_SESSION_CONTROLLER_H
 #define DESKTOP_SESSION_CONTROLLER_H
 
-#include "direct_session_adapter.h"
-#include "mqtt_session_adapter.h"
+#include "desktop_session_adapter.h"
 
 #include <array>
 #include <cstdint>
@@ -34,7 +33,7 @@ public:
         std::function<void(uint8_t, uint8_t, uint16_t)> decision;
         std::function<void(Mode, uint8_t, uint8_t, uint16_t,
                            const QByteArray &, QVector<DesktopSessionFollowup> &)> game;
-        std::function<void(uint8_t)> sessionChanged;
+        std::function<void(uint8_t, uint8_t)> sessionChanged;
         std::function<void(Mode, uint8_t, uint16_t)> sideChanged;
         std::function<void(const QString &)> error;
     };
@@ -44,7 +43,6 @@ public:
     void setCallbacks(Callbacks callbacks);
     bool initializeDirect(uint8_t role, uint8_t hostColor);
     bool initializeMqtt(uint8_t role, uint8_t hostColor, uint16_t sessionId);
-    void stop();
     bool initialized() const { return initialized_; }
     Mode mode() const { return mode_; }
 
@@ -75,19 +73,17 @@ private:
     void dispatch(const SessionAction &action, const QByteArray &payload,
                   QVector<DesktopSessionFollowup> &followups);
     void applyFollowups(const QVector<DesktopSessionFollowup> &followups);
-    bool dispatchMqttBatch(const MqttActionBatch &batch,
+    bool dispatchMqttBatch(const DesktopActionBatch &batch,
                            uint8_t *next,
                            QVector<DesktopSessionFollowup> &followups,
                            uint32_t generation);
     void clearDeferredMqttActions();
     void invalidateDeferredMqttActions();
 
-    DirectSessionAdapter direct_;
-    MqttSessionAdapter mqtt_;
+    DesktopSessionAdapter session_;
     Callbacks callbacks_;
-    std::array<QTimer *, SESSION_TIMER_COUNT> timers_ = {};
-    std::array<quint32, SESSION_TIMER_COUNT> timerGeneration_ = {};
-    MqttActionBatch deferredMqttBatch_ = {};
+    std::array<QTimer, SESSION_TIMER_COUNT> timers_;
+    DesktopActionBatch deferredMqttBatch_ = {};
     QVector<DesktopSessionFollowup> deferredMqttFollowups_;
     uint8_t deferredMqttNext_ = 0u;
     bool mqttBatchDeferred_ = false;

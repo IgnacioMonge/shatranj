@@ -1,21 +1,98 @@
 #include "app_banner.h"
+#include "piece_renderer.h"
+#include "ui_theme.h"
 #include <QColor>
-#include <QFont>
 #include <QKeyEvent>
 #include <QLinearGradient>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
+#include <QPen>
+#include <QRectF>
+#include <QResizeEvent>
+
+namespace {
+
+constexpr qreal kWordmarkPadX = 16.0;
+constexpr qreal kWordmarkPadY = 5.0;
+constexpr qreal kBezelRadius = 10.0;
+
+QRectF wordmarkDest(const QImage &wordmark, int bannerW, int bannerH)
+{
+    if (wordmark.isNull() || wordmark.width() <= 0 || wordmark.height() <= 0) {
+        return QRectF();
+    }
+    const qreal maxW = qMax(1.0, bannerW - kWordmarkPadX * 2.0);
+    const qreal maxH = qMax(1.0, bannerH - kWordmarkPadY * 2.0);
+    const qreal scale = qMin(maxW / wordmark.width(), maxH / wordmark.height());
+    const qreal destW = wordmark.width() * scale;
+    const qreal destH = wordmark.height() * scale;
+    return QRectF(kWordmarkPadX, (bannerH - destH) * 0.5, destW, destH);
+}
+
+int boardStripWidth(int bannerW, int bannerH, const QImage &wordmark)
+{
+    bannerW = qMax(1, bannerW);
+    const QRectF logo = wordmarkDest(wordmark, bannerW, bannerH);
+    if (logo.isEmpty()) {
+        return qMax(1, bannerW / 2);
+    }
+    const int overlap = int(qRound(logo.width() * 0.32));
+    return qMax(1, bannerW - int(qRound(logo.right())) + overlap);
+}
+
+QImage fadedBoardStrip(const QImage &source, int width, int height, int fadePx,
+                       qreal dpr)
+{
+    width = qMax(1, width);
+    height = qMax(1, height);
+    dpr = qMax(1.0, dpr);
+    fadePx = qMax(1, fadePx);
+    const int physW = qMax(1, int(qRound(width * dpr)));
+    const int physH = qMax(1, int(qRound(height * dpr)));
+    const int fadePhys = qMax(1, qMin(physW, int(qRound(fadePx * dpr))));
+    QImage image(physW, physH, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    if (source.isNull() || source.width() <= 0 || source.height() <= 0) {
+        return image;
+    }
+
+    const qreal scale = qMax(qreal(physW) / source.width(),
+                             qreal(physH) / source.height());
+    const qreal dw = source.width() * scale;
+    const qreal dh = source.height() * scale;
+    const qreal dx = physW - dw;
+    const qreal dy = (physH - dh) / 2.0;
+
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    painter.drawImage(QRectF(dx, dy, dw, dh), source, QRectF(source.rect()));
+    painter.setCompositionMode(QPainter::CompositionMode_DestinationIn);
+    QLinearGradient fade(0, 0, fadePhys, 0);
+    fade.setColorAt(0.00, QColor(0, 0, 0, 0));
+    fade.setColorAt(0.20, QColor(0, 0, 0, 50));
+    fade.setColorAt(0.50, QColor(0, 0, 0, 170));
+    fade.setColorAt(0.78, QColor(0, 0, 0, 240));
+    fade.setColorAt(1.00, QColor(0, 0, 0, 255));
+    painter.fillRect(0, 0, fadePhys, physH, fade);
+    if (fadePhys < physW) {
+        painter.fillRect(fadePhys, 0, physW - fadePhys, physH,
+                         QColor(0, 0, 0, 255));
+    }
+    painter.end();
+    return image;
+}
+
+}  // namespace
 
 AppBanner::AppBanner(QWidget *parent)
     : QWidget(parent)
-    , mosaicImage_(620, 70, QImage::Format_ARGB32_Premultiplied)
 {
-    setFixedHeight(70);
+    setFixedHeight(76);
     setAccessibleName(QStringLiteral("About Shatranj"));
     setCursor(Qt::PointingHandCursor);
     setFocusPolicy(Qt::StrongFocus);
     setToolTip(QStringLiteral("About Shatranj"));
-    renderBridgeMosaic();
 }
 
 void AppBanner::keyPressEvent(QKeyEvent *event)
@@ -41,90 +118,82 @@ void AppBanner::mouseReleaseEvent(QMouseEvent *event)
     if (activate && clicked) clicked();
 }
 
-void AppBanner::paintEvent(QPaintEvent *)
+void AppBanner::resizeEvent(QResizeEvent *event)
 {
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setRenderHint(QPainter::TextAntialiasing, true);
-    painter.drawImage(rect(), mosaicImage_);
-    static const QColor borderColor(60, 60, 75);
-    static const QColor subtitleColor(0, 180, 220);
-    static const QFont titleFont("Segoe UI", 26, QFont::Bold);
-    static const QFont subtitleFont("Segoe UI", 9);
-
-    painter.setPen(borderColor);
-    painter.drawLine(0, height() - 1, width(), height() - 1);
-    painter.setPen(Qt::white);
-    painter.setFont(titleFont);
-    painter.drawText(QRectF(18, 2, width() - 36, 44), Qt::AlignLeft | Qt::AlignVCenter, "Shatranj");
-    painter.setPen(subtitleColor);
-    painter.setFont(subtitleFont);
-    painter.drawText(QRectF(22, 43, width() - 44, 20), Qt::AlignLeft | Qt::AlignVCenter, "Network Chess for ZX Spectrum");
+    boardStrip_ = QImage();
+    QWidget::resizeEvent(event);
 }
 
-void AppBanner::renderBridgeMosaic()
+void AppBanner::ensureImages()
 {
-    static const MosaicPixel bridgeMosaic[] = {
-        {547,36,9,255,216,0,225},{481,19,6,216,0,0,139},{574,41,1,0,200,0,250},{574,38,8,0,180,220,250},
-        {537,36,1,0,200,0,212},{576,-8,18,255,216,0,247},{564,45,7,255,216,0,247},{456,52,4,255,216,0,107},
-        {410,-3,2,216,0,0,47},{569,29,4,0,180,220,254},{526,-6,16,255,216,0,198},{514,-5,2,0,180,220,182},
-        {602,42,3,0,180,220,213},{562,4,6,0,200,0,245},{626,57,9,0,200,0,182},{401,71,6,0,200,0,45},
-        {517,8,1,216,0,0,186},{610,76,3,216,0,0,203},{543,2,7,255,216,0,220},{492,73,1,216,0,0,154},
-        {367,70,15,255,216,0,45},{492,44,18,255,216,0,154},{431,37,7,0,200,0,74},{580,47,7,0,180,220,242},
-        {563,73,7,0,180,220,246},{520,35,3,255,216,0,190},{488,59,3,216,0,0,148},{594,32,7,0,200,0,224},
-        {629,22,4,0,180,220,178},{507,44,14,255,216,0,173},{594,18,19,216,0,0,224},{597,27,13,255,216,0,220},
-        {535,36,4,0,200,0,210},{523,44,8,216,0,0,194},{582,17,4,0,200,0,239},{523,1,2,216,0,0,194},
-        {522,48,6,255,216,0,193},{458,8,11,0,200,0,109},{453,48,9,255,216,0,103},{492,61,6,0,180,220,154},
-        {465,77,14,255,216,0,118},{456,6,4,0,180,220,107},{468,18,10,216,0,0,122},{602,72,7,0,180,220,213},
-        {520,47,9,216,0,0,190},{605,40,4,255,216,0,210},{578,63,8,0,180,220,245},{489,59,13,0,200,0,150},
-        {596,22,18,0,180,220,221},{612,61,3,0,180,220,200},{584,8,18,0,180,220,237},{502,70,3,255,216,0,167},
-        {585,25,14,0,180,220,236},{496,48,1,0,200,0,159},{444,40,9,0,180,220,91},{474,45,1,0,180,220,130},
-        {608,67,4,255,216,0,206},{579,67,16,0,180,220,243},{565,68,14,0,200,0,248},{514,31,6,255,216,0,182},
-        {435,32,2,0,180,220,80},{435,62,5,255,216,0,80},{553,43,16,0,180,220,233},{492,33,2,255,216,0,154},
-        {528,15,4,216,0,0,200},{548,23,2,216,0,0,226},{588,-5,12,0,180,220,232},{588,-5,19,216,0,0,232},
-        {524,45,2,0,200,0,195},{595,40,6,216,0,0,222},{614,17,3,0,180,220,198},{573,68,15,255,216,0,251},
-        {547,34,3,255,216,0,225},{542,-7,6,255,216,0,219},{476,75,6,0,200,0,133},{582,-3,2,255,216,0,239},
-        {537,19,10,216,0,0,212},{574,-8,9,0,200,0,250},{549,42,13,216,0,0,228},{483,73,9,216,0,0,142},
-        {515,38,17,255,216,0,184},{517,6,16,216,0,0,186},{507,73,6,216,0,0,173},{601,60,19,0,200,0,215},
-        {574,12,4,0,180,220,250},{556,70,18,216,0,0,237},{576,2,10,216,0,0,247},{459,1,4,255,216,0,111},
-        {546,77,12,0,180,220,224},{340,44,5,255,216,0,45},{591,37,17,216,0,0,228},{543,56,15,0,180,220,220},
-        {533,10,8,0,200,0,207},{529,45,3,255,216,0,202},{457,65,12,216,0,0,108},{576,3,11,216,0,0,247},
-        {578,5,17,255,216,0,245},{531,30,4,255,216,0,204},{511,16,5,216,0,0,178},{585,35,7,255,216,0,236},
-        {435,-1,3,0,180,220,80},{436,4,1,255,216,0,81},{578,29,11,0,180,220,245},{570,48,2,255,216,0,255},
-        {560,71,10,255,216,0,242},{455,65,3,216,0,0,106},{567,34,8,0,180,220,251},{600,12,7,0,200,0,216},
-        {568,4,6,216,0,0,252},{451,-2,17,216,0,0,100},{492,40,2,0,200,0,154},{560,13,4,0,200,0,242},
-        {600,12,9,216,0,0,216},{523,48,7,0,180,220,194},{371,68,2,255,216,0,45},{595,-6,4,0,200,0,222},
-        {487,35,4,255,216,0,147},{469,29,16,255,216,0,124},{500,5,18,255,216,0,164},{488,58,12,0,180,220,148},
-        {616,61,8,216,0,0,195},{582,57,6,0,180,220,239},{496,-8,12,0,180,220,159},{564,43,7,255,216,0,247},
-        {620,77,4,255,216,0,190},{525,71,7,216,0,0,196},{592,-6,15,0,200,0,226},{455,31,9,0,200,0,106},
-        {595,67,4,0,200,0,222},{602,5,8,0,200,0,213},{551,45,2,216,0,0,230},{523,56,15,255,216,0,194},
-        {568,12,13,0,200,0,252},{397,45,9,255,216,0,45},{508,18,10,0,200,0,174},{627,50,17,0,180,220,181},
-        {505,27,7,0,200,0,170},{511,1,1,255,216,0,178},{426,36,2,216,0,0,68},{608,-4,9,0,180,220,206},
-        {558,61,13,255,216,0,239},{617,0,2,216,0,0,194},{594,30,13,216,0,0,224},{584,66,10,216,0,0,237},
-        {555,13,9,0,180,220,236},{561,19,4,0,180,220,243},{542,34,7,216,0,0,219},{438,24,3,216,0,0,83},
-        {626,36,4,0,200,0,182},{369,32,2,0,180,220,45},{607,54,6,0,180,220,207},{489,25,6,255,216,0,150},
-        {621,27,1,0,180,220,189},{560,53,8,0,200,0,242},{428,3,4,0,180,220,70},{557,74,2,0,180,220,238},
-        {570,55,5,216,0,0,255},{498,-8,4,255,216,0,161},{629,25,15,0,200,0,178},{477,69,4,216,0,0,134},
-        {617,36,3,0,180,220,194},{582,4,4,0,180,220,239},{538,57,8,216,0,0,213},{367,18,1,255,216,0,45},
-        {621,43,8,216,0,0,189},{448,16,12,0,180,220,96},{495,5,8,216,0,0,158},{377,40,13,0,180,220,45},
-        {533,2,19,0,200,0,207},{563,60,7,0,180,220,246},{504,2,2,216,0,0,169},{546,34,6,255,216,0,224},
-        {595,-7,11,255,216,0,222},{488,74,12,216,0,0,148},{575,41,17,255,216,0,248},{565,47,2,0,180,220,248},
-        {470,29,7,0,200,0,125},{518,44,9,0,200,0,187},{586,4,3,0,180,220,234},{358,23,14,255,216,0,45},
-        {414,40,16,216,0,0,52},{554,0,15,255,216,0,234},{516,3,5,216,0,0,185},{512,10,9,255,216,0,180},
-        {490,27,7,255,216,0,151},{621,-2,12,216,0,0,189},{363,-8,7,216,0,0,45},{599,49,5,216,0,0,217},
-        {557,10,6,0,200,0,238},{624,41,8,216,0,0,185},{626,-6,1,216,0,0,182},{555,46,16,0,180,220,236},
-        {563,10,17,216,0,0,246},{503,49,5,0,200,0,168},{505,60,6,255,216,0,170},{546,14,4,0,180,220,224},
-        {476,10,4,0,200,0,133},{500,22,4,216,0,0,164},{564,6,11,0,180,220,247},{466,52,16,216,0,0,120},
-        {587,60,15,0,200,0,233},{584,4,17,0,180,220,237},{515,-5,3,216,0,0,184},{476,43,3,0,200,0,133},
-        {546,69,1,255,216,0,224},{549,74,7,255,216,0,228},{420,63,12,0,200,0,60},{576,60,8,255,216,0,247},
-        {354,60,13,216,0,0,45},{533,39,10,0,180,220,207},
-    };
-    QPainter painter(&mosaicImage_);
+    if (imagesLoaded_) {
+        return;
+    }
+    imagesLoaded_ = true;
+    wordmarkImage_ = QImage(PieceRenderer::assetPath(
+        QStringLiteral("assets/pc-client/about/banner-wordmark.png")));
+    boardImage_ = QImage(PieceRenderer::assetPath(
+        QStringLiteral("assets/pc-client/about/banner-board.png")));
+    if (boardImage_.isNull()) {
+        mosaicImage_ = QImage(PieceRenderer::assetPath(
+            QStringLiteral("assets/pc-client/about/banner-mosaic.png")));
+        if (mosaicImage_.isNull()) {
+            mosaicImage_ = QImage(620, 70, QImage::Format_RGB32);
+            mosaicImage_.fill(QColor(22, 22, 30));
+        }
+    }
+}
+
+void AppBanner::ensureBoardStrip()
+{
+    ensureImages();
+    if (boardImage_.isNull()) {
+        boardStrip_ = QImage();
+        return;
+    }
+    const int stripW = boardStripWidth(width(), height(), wordmarkImage_);
+    const int fadePx = qMax(48, int(stripW * 0.46));
+    const qreal dpr = qMax(1.0, devicePixelRatioF());
+    const int physW = qMax(1, int(qRound(stripW * dpr)));
+    const int physH = qMax(1, int(qRound(height() * dpr)));
+    if (!boardStrip_.isNull() && boardStrip_.width() == physW &&
+        boardStrip_.height() == physH) {
+        return;
+    }
+    boardStrip_ = fadedBoardStrip(boardImage_, stripW, height(), fadePx, dpr);
+}
+
+void AppBanner::paintEvent(QPaintEvent *)
+{
+    ensureImages();
+    QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    QLinearGradient bg(QPointF(0, 0), QPointF(620, 0));
-    bg.setColorAt(0.0, QColor(22, 22, 30));
-    bg.setColorAt(1.0, QColor(32, 32, 42));
-    painter.fillRect(0, 0, 620, 70, bg);
-    for (const MosaicPixel &pixel : bridgeMosaic)
-        painter.fillRect(pixel.x, pixel.y, pixel.size, pixel.size, QColor(pixel.r, pixel.g, pixel.b, pixel.a));
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+    const QRectF bounds = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    QPainterPath clip;
+    clip.addRoundedRect(bounds, kBezelRadius, kBezelRadius);
+    painter.setClipPath(clip);
+    painter.fillRect(rect(), QColor(22, 22, 30));
+
+    ensureBoardStrip();
+    const int stripW = boardStrip_.isNull()
+                           ? 0
+                           : boardStripWidth(width(), height(), wordmarkImage_);
+    if (stripW > 0) {
+        painter.drawImage(QRect(width() - stripW, 0, stripW, height()),
+                          boardStrip_, boardStrip_.rect());
+    } else {
+        painter.drawImage(rect(), mosaicImage_);
+    }
+
+    const QRectF logo = wordmarkDest(wordmarkImage_, width(), height());
+    if (!logo.isEmpty()) {
+        painter.drawImage(logo, wordmarkImage_);
+    }
+
+    painter.setClipping(false);
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(QColor(SHZ_BORDER_SOFT), 1));
+    painter.drawRoundedRect(bounds, kBezelRadius, kBezelRadius);
 }

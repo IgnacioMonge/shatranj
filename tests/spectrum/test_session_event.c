@@ -148,6 +148,27 @@ static void test_common_protocol_events(void)
                  0u,
                  NETCHESSZX_SESSION_EVENT_HOST_BUSY,
                  "direct busy");
+    expect_event("MACH ZX", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_MACH_ZX,
+                 "mach zx");
+    expect_event("MACH NXT", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_MACH_NXT,
+                 "mach next");
+    expect_event("MACH MAC", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_MACH_MAC,
+                 "mach mac");
+    expect_event("MACH LNX", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_MACH_LNX,
+                 "mach linux");
+    expect_event("MACH PC", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_MACH_PC,
+                 "mach pc");
+    expect_event("MACH SPCX", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_MACH_SPCX,
+                 "mach spectranext");
+    expect_event("MACH ZX ", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN,
+                 "mach boundary");
     expect_event("RESET",
                  0u,
                  0u,

@@ -7,15 +7,15 @@
 </p>
 
 <p align="center">
-  <strong>Ajedrez en red desde 48K hasta los escritorios actuales.</strong><br>
-  Direct TCP o MQTT · ZX Spectrum clásico y Next · Windows, macOS y Linux
+  <strong>Ajedrez en línea para la familia ZX Spectrum y los escritorios actuales.</strong><br>
+  Direct TCP o MQTT · ZX Spectrum clásico, Next y Spectranext · Windows, macOS y Linux
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/versi%C3%B3n-1.1-blue" alt="Versión 1.1">
+  <img src="https://img.shields.io/badge/versi%C3%B3n-1.2-blue" alt="Versión 1.2">
   <img src="https://img.shields.io/badge/protocolos-Direct%20TCP%20%7C%20MQTT-2ea44f" alt="Protocolos: Direct TCP y MQTT">
   <img src="https://img.shields.io/badge/escritorio-Windows%20%7C%20macOS%20%7C%20Linux-41cd52" alt="Escritorio: Windows, macOS y Linux">
-  <img src="https://img.shields.io/badge/Spectrum-cl%C3%A1sico%20%7C%20Next-d52b1e" alt="Spectrum: clásico y Next">
+  <img src="https://img.shields.io/badge/Spectrum-cl%C3%A1sico%20%7C%20Next%20%7C%20Spectranext-d52b1e" alt="Spectrum: clásico, Next y Spectranext">
   <img src="https://img.shields.io/badge/licencia-GPL--2.0-555" alt="Licencia: GPL 2.0">
 </p>
 
@@ -29,9 +29,10 @@
 ---
 
 Shatranj permite jugar al ajedrez en red desde un Spectrum original de 48K, un
-Spectrum Next o el cliente Qt para Windows, macOS y Linux. Todos los clientes
-utilizan el mismo protocolo y las mismas reglas, de modo que cualquier
-plataforma compatible puede jugar contra cualquier otra.
+Spectrum Next, un Spectrum equipado con el cartucho Spectranext o el cliente Qt
+para Windows, macOS y Linux. Todos los clientes utilizan el mismo protocolo y
+las mismas reglas, de modo que cualquier plataforma compatible puede jugar
+contra cualquier otra.
 
 Juega Spectrum contra Spectrum, Spectrum contra escritorio o escritorio contra
 escritorio. Usa una conexión directa cuando el invitado pueda alcanzar al
@@ -44,21 +45,41 @@ necesitan cuentas ni un servidor central de partidas.
 | --- | --- |
 | **Juego** | Spectrum ↔ Spectrum, Spectrum ↔ escritorio o escritorio ↔ escritorio |
 | **Conexión** | Direct TCP sin broker, o MQTT mediante un broker y una sala compartidos |
-| **Plataformas** | ZX Spectrum clásico, Spectrum Next, Windows, macOS y Linux |
+| **Plataformas** | ZX Spectrum clásico, Spectrum Next, Spectranext, Windows, macOS y Linux |
 | **Partida** | Ayudas legales, relojes, historial, chat, tablas, abandono, deshacer jugadas y partidas guardadas |
 | **Partidas coherentes** | Las mismas reglas, protocolo, partidas guardadas y comportamiento de sesión en todos los clientes |
-| **Versiones retro nativas** | TAP + OVL + DAT para Classic; un NEX autocontenido para Next |
+| **Versiones retro nativas** | TAP + OVL + DAT para Classic y Spectranext; un NEX autocontenido para Next |
+
+## Novedades de la versión 1.2
+
+- **Spectranext se suma al tablero:** versión nativa para cartucho con Direct
+  TCP, MQTT, RTC, almacenamiento persistente e instalador guiado.
+- **Spectrum recuerda la configuración:** se pueden guardar conexión, reloj,
+  color, notación, tablero, piezas y ayudas, con previsualización en directo.
+- **Interacción retro más rápida:** navegación y escritura más fluidas, cambios
+  de tema instantáneos, repintado más veloz e información de reloj más clara.
+- **Cliente de escritorio renovado:** presentación Qt actualizada, tablero y
+  red más ágiles, y mensajes de conexión y final de partida más precisos.
+- **Sabes contra qué plataforma juegas:** las partidas ahora identifican la
+  plataforma del oponente, desde los clientes ZX Spectrum hasta la aplicación Qt.
+- **Partidas más seguras:** guardado, reconexión, restauración, deshacer,
+  revancha y juego entre plataformas más fiables.
+
+Consulta las [notas de la versión](CHANGELOG.md) para ver el resumen completo
+de Shatranj 1.2.
 
 ## Índice
 
+- [Novedades de la versión 1.2](#novedades-de-la-versión-12)
 - [Plataformas y protocolos](#plataformas-y-protocolos)
 - [Descarga](#descarga)
+- [Instalación](#instalación)
 - [Inicio rápido](#inicio-rápido)
 - [Galería](#galería)
 - [Juegos de piezas y temas de tablero](#juegos-de-piezas-y-temas-de-tablero)
 - [Uso de Shatranj](#uso-de-shatranj)
 - [Compilar desde el código fuente](#compilar-desde-el-código-fuente)
-- [Documentación para desarrolladores](#documentación-para-desarrolladores)
+- [Desarrollo](#desarrollo)
 - [Créditos y licencia](#créditos-y-licencia)
 
 ## Plataformas y protocolos
@@ -68,6 +89,7 @@ necesitan cuentas ni un servidor central de partidas.
 | Escritorio Qt | Windows, macOS, Linux | Direct TCP, MQTT | Paquete o ejecutable de la plataforma |
 | ZX Spectrum clásico | ZX Spectrum de 48K | Direct TCP, MQTT | `SHATRANJ.tap` + `SHATRANJ.OVL` + `SHATRANJ.DAT` |
 | Spectrum Next | ZX Spectrum Next | Direct TCP, MQTT | `SHATRANJ.nex` |
+| Spectranext | ZX Spectrum con cartucho Spectranext | Direct TCP, MQTT | Paquete instalador de Spectranext |
 
 Direct TCP es una conexión entre pares: el invitado debe poder alcanzar la
 dirección y el puerto del anfitrión. MQTT evita exigir una conexión entrante
@@ -75,17 +97,61 @@ directa; ambos clientes se conectan en su lugar al mismo broker y sala.
 
 ### Hardware Spectrum
 
-El juego en red desde Spectrum utiliza un enlace UART-ESP compatible con
+El juego en red de Classic y Next utiliza un enlace UART-ESP compatible con
 firmware ESP-AT 1.7.6. El cliente clásico también necesita divMMC/esxDOS para
-cargar sus ficheros OVL y DAT. La versión de Next es autocontenida, por lo que
-solo hay que copiar el fichero NEX.
+cargar sus ficheros OVL y DAT. Una UART compatible con ZX-Uno requiere control
+de flujo CTS en la transmisión del ESP;
+[NetMan](https://github.com/nihirash/netman-zx) configura el ajuste necesario.
+La versión de Next es autocontenida, por lo que solo hay que copiar el fichero
+NEX. La edición Spectranext usa la red del propio cartucho, requiere su última
+versión estable de firmware y se instala como recurso.
 
 ## Descarga
 
 Descarga las versiones listas para usar desde la
 [última publicación](https://github.com/IgnacioMonge/Shatranj/releases/latest).
 Elige el paquete de escritorio para tu sistema operativo, el conjunto de tres
-ficheros para Classic o el NEX autocontenido para Next.
+ficheros para Classic, el NEX autocontenido para Next o el instalador de
+cartucho Spectranext.
+
+## Instalación
+
+### Escritorio
+
+Descarga el paquete para Windows, macOS o Linux, extráelo si es necesario e
+inicia Shatranj. No se necesita hardware Spectrum para jugar entre clientes de
+escritorio.
+
+### ZX Spectrum clásico
+
+Copia `SHATRANJ.tap`, `SHATRANJ.OVL` y `SHATRANJ.DAT` en el mismo directorio de
+la tarjeta divMMC, conserva sus nombres y carga `SHATRANJ.tap`.
+
+### Spectrum Next
+
+Copia `SHATRANJ.nex` en la tarjeta SD del Next e inícialo desde el navegador de
+NextZXOS.
+
+### Cartucho Spectranext
+
+1. Actualiza el cartucho a la **última versión estable del firmware de
+   Spectranext** y configura el cartucho y la Wi-Fi siguiendo las
+   [instrucciones oficiales de Spectranext](https://docs.spectranext.net/tutorials/setting-up-mounts).
+2. En el menú de Spectranext, selecciona **Load Resource URL** e introduce:
+   <code>https://ignaciomonge.github.io/Shatranj/</code>
+3. El instalador guiado instala Shatranj en el almacenamiento local del
+   cartucho y lo inicia.
+4. En adelante, inicia `SHATRANJ.ZX` desde el XFS local. Para actualizar
+   Shatranj, vuelve a usar **Load Resource URL**; la configuración y las
+   partidas guardadas se conservan.
+
+<p align="center">
+  <img src="docs/screenshots/shatranj-1.2-spectranext-installer.png" alt="Instalador guiado de Shatranj 1.2 en Spectranext" width="400"><br>
+  <sub>Instalador guiado del recurso para Spectranext.</sub>
+</p>
+
+Un ZIP de GitHub Releases no es un recurso montable de Spectranext; introduce
+la URL HTTPS anterior.
 
 ## Inicio rápido
 
@@ -116,26 +182,65 @@ puedan acceder al broker.
 
 ### Escritorio
 
-| macOS — partida MQTT | Windows — partida MQTT | Linux — deshacer jugada |
-| --- | --- | --- |
-| ![Cliente Qt Shatranj 1.1 en macOS durante una partida MQTT](docs/screenshots/shatranj-qt-macos.png) | ![Cliente Qt Shatranj 1.1 en Windows durante una partida MQTT](docs/screenshots/shatranj-qt-windows.jpg) | ![Cliente Qt Shatranj 1.1 en Linux confirmando deshacer una jugada](docs/screenshots/shatranj-qt-linux.jpg) |
+<table>
+  <tr>
+    <td align="center" width="50%"><strong>macOS — invitado Direct</strong><br><img src="docs/screenshots/shatranj-1.2-qt-macos.jpg" alt="Cliente Qt Shatranj 1.2 en macOS durante una partida Direct" width="400"></td>
+    <td align="center" width="50%"><strong>Windows — partida MQTT</strong><br><img src="docs/screenshots/shatranj-1.2-qt-windows.png" alt="Cliente Qt Shatranj 1.2 en Windows durante una partida MQTT" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><strong>Linux — partida restaurada</strong><br><img src="docs/screenshots/shatranj-1.2-qt-linux.jpg" alt="Cliente Qt Shatranj 1.2 en Linux con una partida restaurada" width="400"></td>
+  </tr>
+</table>
 
-### Spectrum
+### ZX Spectrum clásico
 
-| ZX Spectrum clásico — Direct | Spectrum Next — MQTT |
-| --- | --- |
-| ![Partida Direct de Shatranj 1.1 en ZX Spectrum clásico](docs/screenshots/shatranj-classic-game.png) | ![Partida MQTT de Shatranj 1.1 en Spectrum Next](docs/screenshots/shatranj-next-game.png) |
+<table>
+  <tr>
+    <td align="center" width="50%"><strong>Configuración y previsualización</strong><br><img src="docs/screenshots/shatranj-1.2-classic-setup.png" alt="Configuración de Shatranj 1.2 en ZX Spectrum clásico" width="400"></td>
+    <td align="center" width="50%"><strong>Partida en red</strong><br><img src="docs/screenshots/shatranj-1.2-classic-game.png" alt="Partida en red de Shatranj 1.2 en ZX Spectrum clásico" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Acerca de</strong><br><img src="docs/screenshots/shatranj-1.2-classic-about.png" alt="Pantalla Acerca de de Shatranj 1.2 en ZX Spectrum clásico" width="400"></td>
+    <td align="center"><strong>Tema de tablero alternativo</strong><br><img src="docs/screenshots/shatranj-1.2-classic-theme.png" alt="Tema de tablero alternativo de Shatranj 1.2 en ZX Spectrum clásico" width="400"></td>
+  </tr>
+</table>
+
+### Spectrum Next
+
+<table>
+  <tr>
+    <td align="center" width="50%"><strong>Configuración con sprites hardware</strong><br><img src="docs/screenshots/shatranj-1.2-next-setup.png" alt="Configuración de Shatranj 1.2 en Spectrum Next" width="400"></td>
+    <td align="center" width="50%"><strong>Partida Direct y chat</strong><br><img src="docs/screenshots/shatranj-1.2-next-chat.png" alt="Partida Direct y chat de Shatranj 1.2 en Spectrum Next" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><strong>Tema de tablero verde</strong><br><img src="docs/screenshots/shatranj-1.2-next-theme-save.png" alt="Tema de tablero verde de Shatranj 1.2 en Spectrum Next" width="400"></td>
+    <td align="center" width="50%"><strong>Opciones durante la partida</strong><br><img src="docs/screenshots/shatranj-1.2-next-in-game-options.png" alt="Opciones durante la partida de Shatranj 1.2 en Spectrum Next" width="400"></td>
+  </tr>
+</table>
+
+### Spectranext
+
+<table>
+  <tr>
+    <td align="center" width="50%"><strong>Ayudas de movimiento</strong><br><img src="docs/screenshots/shatranj-1.2-spectranext-hints.png" alt="Ayudas de movimiento de Shatranj 1.2 en Spectranext" width="400"></td>
+    <td align="center" width="50%"><strong>Tema rojo y blanco</strong><br><img src="docs/screenshots/shatranj-1.2-spectranext-promotion.png" alt="Tema de tablero rojo y blanco de Shatranj 1.2 en Spectranext" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><strong>Partidas guardadas</strong><br><img src="docs/screenshots/shatranj-1.2-spectranext-saved-games.png" alt="Navegador de partidas guardadas de Shatranj 1.2 en Spectranext" width="400"></td>
+    <td align="center" width="50%"><strong>Opciones durante la partida</strong><br><img src="docs/screenshots/shatranj-1.2-spectranext-tab-options.png" alt="Opciones durante la partida de Shatranj 1.2 en Spectranext" width="400"></td>
+  </tr>
+</table>
 
 ## Juegos de piezas y temas de tablero
 
 El tema y las piezas se eligen durante la configuración de la partida en
 Spectrum.
 
-### ZX Spectrum clásico
+### ZX Spectrum clásico y Spectranext
 
-El cliente clásico incluye tres juegos de piezas de 16×16 — **BRRY**, **SPCY** y
-**PIXL** — y cinco paletas: **Classic**, **Blue**, **Green**, **Cyan** y
-**Magenta**.
+Los clientes Classic y Spectranext incluyen tres juegos de piezas de 16×16 —
+**BRRY**, **SPCY** y **PIXL** — y cinco paletas: **Classic**, **Blue**,
+**Green**, **Cyan** y **Magenta**.
 
 <table>
   <tr>
@@ -167,9 +272,9 @@ tablero RGB333: **Black & White**, **Blue 3**, **Green**, **Brown** y **Wood**.
 
 ## Uso de Shatranj
 
-El anfitrión controla el inicio y el reinicio; el invitado se incorpora a la
-sesión en curso. Solo se aceptan movimientos del bando cuyo turno aparece en
-pantalla.
+El anfitrión inicia la partida; ambos jugadores pueden solicitar tablas,
+deshacer, reiniciar o restaurar una partida guardada compatible. Solo se
+aceptan movimientos del bando cuyo turno aparece en pantalla.
 
 ### Controles de escritorio
 
@@ -211,7 +316,7 @@ después Espacio/Enter.
 | `/resign` | Abandonar la partida | Qt y Spectrum |
 | `/takeback` | Solicitar deshacer la última jugada | Qt y Spectrum |
 | `/save [nombre]` | Guardar localmente la posición | Qt; usa FILE en Spectrum |
-| `/load [nombre]` | Solicitar restaurar una posición guardada | Anfitrión Qt; usa FILE como anfitrión en Spectrum |
+| `/load [nombre]` | Solicitar restaurar una posición guardada | Qt; usa FILE en Spectrum |
 
 Cualquier otro texto se envía como chat. Qt solicita `q`, `r`, `b` o `n` al
 promocionar; los clientes Spectrum promocionan automáticamente a dama.
@@ -224,70 +329,19 @@ El punto de entrada soportado es el Makefile del repositorio:
 make tap              # TAP + OVL + DAT del Spectrum clásico
 make nex              # NEX autocontenido para Spectrum Next
 make client-test      # compilación y pruebas de Qt
-make client           # empaquetado de Qt para distribución
 make test             # pruebas compartidas y de Spectrum en host
 ```
 
 `make tap` escribe los ficheros Classic en `release/`; mantén juntos su TAP,
 OVL y DAT. `make nex` escribe la imagen autocontenida de Next en
-`release/Next/SHATRANJ.nex`. Las compilaciones Spectrum configuradas aceptan:
+`release/Next/SHATRANJ.nex`.
 
-```sh
-PORT=5000 MQTT_HOST=broker.example MQTT_PORT=1883 MQTT_CODE=ABC123 make tap
-```
+## Desarrollo
 
-Consulta [`client/README.es.md`](client/README.es.md) para los requisitos, el
-ciclo de desarrollo Qt y el empaquetado de cada plataforma. El procedimiento
-completo de validación y publicación se encuentra en
-[`docs/maintenance.md`](docs/maintenance.md).
-
-## Documentación para desarrolladores
-
-### Capas
-
-```text
-entrada del usuario
-  -> FSM de Spectrum o controlador Qt
-  -> política de sesión Direct/MQTT
-  -> gramática y reglas de ajedrez compartidas
-  -> transporte ESP-UART o TCP/MQTT de Qt
-  -> validación, ACK/NACK y actualización del tablero
-  -> respuesta de la interfaz
-```
-
-El código C portable compartido contiene el ajedrez, la construcción y el
-análisis del protocolo, la gramática MQTT, los reductores de sesión y el
-formato de guardado. Los clientes Spectrum mantienen máquinas de estados
-compactas; la aplicación Qt adapta los mismos contratos a la red, la
-persistencia y la interfaz Widgets. Las pruebas de transcripción comprueban
-todas las implementaciones frente al mismo comportamiento independiente de la
-plataforma.
-
-### Mapa del repositorio
-
-| Ruta | Responsabilidad |
-| --- | --- |
-| `src/common/` | Ajedrez, protocolo, MQTT, sesión y guardado compartidos |
-| `src/spectrum/` | Aplicación Classic/Next, tablero, configuración, sesión, transporte, interfaz y overlays |
-| `asm/` | Renderizado Z80, UART, esxDOS, overlays y runtime de bajo nivel |
-| `src/pc/`, `client/` | Núcleo de escritorio, cliente Qt, configuración de compilación y empaquetado |
-| `assets/` | Fuentes, sprites, piezas y demás recursos originales |
-| `tests/` | Pruebas de host, transcripción, capas, ABI, tamaños y escritorio |
-| `tools/` | Generadores, comprobaciones, empaquetado e informes de tamaño |
-
-### Documentos canónicos
-
-- [`docs/README.es.md`](docs/README.es.md): índice y orden de lectura.
-- [`docs/wire-contract.md`](docs/wire-contract.md): contrato normativo Direct/MQTT.
-- [`docs/session-core-contract.md`](docs/session-core-contract.md): semántica y transiciones compartidas.
-- [`docs/source-layout.md`](docs/source-layout.md): responsabilidad del código fuente y límites entre capas.
-- [`docs/architecture-decisions.md`](docs/architecture-decisions.md): decisiones arquitectónicas duraderas.
-- [`docs/maintenance.md`](docs/maintenance.md): validación, publicaciones y pruebas con hardware.
-- [`docs/zesarux-zxespemu.md`](docs/zesarux-zxespemu.md): integración local de software para Classic y Next.
-
-Los contratos de red y sesión son la autoridad; este README no duplica toda su
-gramática. Una pérdida de enlace termina la sesión activa y una conexión
-posterior comienza un saludo nuevo.
+Consulta la [documentación para desarrolladores](docs/README.es.md) para los
+requisitos de compilación, la arquitectura, las especificaciones del protocolo
+y la validación. Las instrucciones específicas del cliente de escritorio están
+en la [guía de Qt](client/README.es.md).
 
 ## Créditos y licencia
 
@@ -295,11 +349,11 @@ posterior comienza un saludo nuevo.
 - **Piezas SPCY:** basadas en [Chess Pieces](https://spicygame.itch.io/chess-pieces) de [Spicy Game](https://spicygame.itch.io).
 - **Piezas PIXL:** basadas en [Pixel Art Chess Pieces](https://benrosen.github.io/posts/pixel-art-chess-pieces/) de [Ben Rosen](https://benrosen.github.io).
 - **Fuente Ikkle:** [Ikkle 4](https://www.dafont.com/es/ikkle-4.font) de Brixdee, base del texto compacto de Spectrum.
-- **mcu-max:** motor de ajedrez para sistemas de pocos recursos, con licencia MIT, de [Gissio](https://github.com/Gissio), incluido con su licencia original.
 - El código y el arte de terceros conservan sus licencias y avisos originales.
 
 Shatranj es software libre publicado bajo la
-[GNU General Public License v2.0](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html).
+[GNU General Public License v2.0](LICENSE). Los términos de terceros figuran
+en el [archivo de avisos](THIRD_PARTY_NOTICES.md).
 
 ## Autor
 

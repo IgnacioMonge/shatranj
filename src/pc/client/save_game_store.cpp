@@ -33,14 +33,21 @@ bool parseSlotBaseName(const QString &base, int *slot, QDateTime *when)
         return false;
     }
     const int slotValue = base.mid(0, 2).toInt();
+    if (slotValue < 1 || slotValue > SaveGameStore::kSlotCount) {
+        return false;
+    }
+    if (base.mid(2) == QStringLiteral("000000")) {
+        *slot = slotValue;
+        *when = QDateTime(QDate(2020, 1, 1), QTime(0, 0));
+        return true;
+    }
     const int year = slotB32Value(base.at(2));
     const int month = slotB32Value(base.at(3));
     const int day = slotB32Value(base.at(4));
     const int hour = slotB32Value(base.at(5));
     const int minute = base.mid(6, 2).toInt();
 
-    if (slotValue < 1 || slotValue > SaveGameStore::kSlotCount ||
-        year < 0 || month < 1 || month > 12 || day < 1 || day > 31 ||
+    if (year < 0 || month < 1 || month > 12 || day < 1 || day > 31 ||
         hour < 0 || hour > 23 || minute > 59) {
         return false;
     }
@@ -116,6 +123,9 @@ QString slotBaseName(int slot, const QDateTime &when)
 
     name += QChar('0' + slot / 10);
     name += QChar('0' + slot % 10);
+    if (!when.isValid() || date.year() < 2020 || date.year() > 2051) {
+        return name + QStringLiteral("000000");
+    }
     name += slotB32(date.year() - 2020);
     name += slotB32(date.month());
     name += slotB32(date.day());

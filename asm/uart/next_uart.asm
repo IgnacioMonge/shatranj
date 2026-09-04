@@ -22,6 +22,7 @@ PUBLIC _net_uart_ready
 PUBLIC _net_uart_ready_fast
 PUBLIC _net_uart_direct_idle_ticks
 PUBLIC _net_uart_hard_reset
+PUBLIC _net_uart_set_baud_230400
 
 UART_TX            EQU 0x133B
 UART_RX            EQU 0x143B
@@ -72,7 +73,7 @@ _net_uart_init:
     ld a, UART_FRAME_8N1
     out (c), a
 
-    ld hl, baud_table
+    ; CF is still clear from the leading XOR A: keep the 115200 divisor.
     jp next_uart_set_baud_from_table
 
 ; fastcall: byte in L. Returns L=0 sent, L=1 timed out.
@@ -149,9 +150,11 @@ next_uart_read_none:
     ret
 
 ; Last-resort ESP reset through NextReg 0x02 bit 7.
-; Requires frame interrupts and returns with interrupts enabled.
+; Uses ROM IM1 frame interrupts and returns with interrupts enabled. The CRT
+; selects IM1 only on its exit path, so establish it here before either EI.
 _net_uart_hard_reset:
     di
+    im 1
     ld bc, NEXTREG_SELECT
     ld a, NEXTREG_RESET
     out (c), a
@@ -179,13 +182,18 @@ next_uart_reset_boot:
     ret
 
 ; Reads nextreg 0x11 (video timing index 0..7) and writes the matching
-; 115200 baud divisor from baud_table to the UART baud register.
+; divisor to the UART baud register. 230400 is ceil(115200 divisor / 2),
+; so both rates share the one authoritative timing table.
 ; Index out of range (>= NEXT_TIMING_COUNT, e.g. garbage from a buggy or
 ; future nextreg) is CLAMPED to NEXT_TIMING_DEFAULT (mode 0) instead of
 ; wrapping, so a bad index never silently selects a wrong-but-valid baud.
+; These are normal app/preflight paths, so this helper owns DI/EI
+; unconditionally.
+_net_uart_set_baud_230400:
+    scf                         ; halve the 115200 divisor below
 next_uart_set_baud_from_table:
-    ld a, i
     push af
+    ld hl, baud_table_115200
     di
     ld bc, NEXTREG_SELECT
     ld a, NEXTREG_VIDEO_TIMING
@@ -199,10 +207,7 @@ next_uart_set_baud_from_table:
     inc b
     in a, (c)
     ld d, a
-    pop af
-    jp po, next_uart_keep_di
     ei
-next_uart_keep_di:
     ld a, e
     cp NEXT_TIMING_COUNT
     jr c, next_uart_index_valid
@@ -224,7 +229,13 @@ next_uart_store_idle_ticks:
     inc hl
     ld d, (hl)
     ex de, hl
+    pop af
+    jr nc, next_uart_write_baud
+    inc hl
+    srl h
+    rr l
 
+next_uart_write_baud:
     ld bc, UART_SET_BAUD
     ld a, l
     and 0x7F
@@ -249,5 +260,5 @@ next_uart_store_idle_ticks:
 ;   idx 5: VGA setting 5     -> 278
 ;   idx 6: VGA setting 6     -> 286
 ;   idx 7: HDMI timing       -> 234
-baud_table:
+baud_table_115200:
     DEFW 243, 248, 256, 260, 269, 278, 286, 234

@@ -318,9 +318,15 @@ static void test_spectrum_encoder_bounds(void)
 static void test_spectrum_publish_parser_bounds(void)
 {
     uint8_t wrapped_topic_len[] = {0x30u, 0x04u, 0xffu, 0xfdu, 'X', 'Y'};
+    uint8_t malformed_varint[] = {0x30u, 0x80u, 0x02u, 0u, 0u};
+    uint8_t wrapped_varint[] = {0x30u, 0x83u, 0x02u, 0u, 0u};
+    uint8_t continued_varint[] = {0x30u, 0x80u, 0x80u, 0u, 0u};
+    uint8_t truncated[] = {0x30u, 0x04u, 0u, 1u};
     uint8_t packet[SPECTRUM_MQTT_PACKET_MAX];
+    uint8_t oversized_packet[SPECTRUM_MQTT_PACKET_MAX + 1u];
     char payload[8];
     char route_payload[24];
+    char bounded_payload[SPECTRUM_MQTT_PACKET_MAX];
     uint16_t packet_id;
     uint8_t flags;
     uint16_t n;
@@ -380,6 +386,119 @@ static void test_spectrum_publish_parser_bounds(void)
                                        &packet_id,
                                        &flags);
     check(got < 0, "spectrum publish wrapped topic length rejected");
+
+    memset(packet, 'P', sizeof(packet));
+    packet[0u] = 0x30u;
+    packet[1u] = 0x7fu;
+    packet[2u] = 0u;
+    packet[3u] = 1u;
+    packet[4u] = 't';
+    got = spectrum_mqtt_parse_publish(packet, 129u,
+                                      bounded_payload,
+                                      sizeof(bounded_payload),
+                                      &packet_id, &flags);
+    check(got == 124, "spectrum publish remaining 127 accepted");
+
+    packet[1u] = 0x80u;
+    packet[2u] = 0x01u;
+    packet[3u] = 0u;
+    packet[4u] = 1u;
+    packet[5u] = 't';
+    got = spectrum_mqtt_parse_publish(packet, 131u,
+                                      bounded_payload,
+                                      sizeof(bounded_payload),
+                                      &packet_id, &flags);
+    check(got == 125, "spectrum publish remaining 128 accepted");
+
+    got = spectrum_mqtt_parse_publish(malformed_varint,
+                                      sizeof(malformed_varint),
+                                      bounded_payload,
+                                      sizeof(bounded_payload),
+                                      &packet_id, &flags);
+    check(got < 0, "spectrum publish remaining 256 rejected");
+
+    got = spectrum_mqtt_parse_publish(wrapped_varint,
+                                      sizeof(wrapped_varint),
+                                      bounded_payload,
+                                      sizeof(bounded_payload),
+                                      &packet_id, &flags);
+    check(got < 0, "spectrum publish wrapped varint rejected");
+
+    memset(oversized_packet, 'P', sizeof(oversized_packet));
+    oversized_packet[0u] = 0x30u;
+    oversized_packet[1u] = 0x9eu;
+    oversized_packet[2u] = 0x01u;
+    oversized_packet[3u] = 0u;
+    oversized_packet[4u] = 1u;
+    oversized_packet[5u] = 't';
+    got = spectrum_mqtt_parse_publish(oversized_packet,
+                                      sizeof(oversized_packet),
+                                      bounded_payload,
+                                      sizeof(bounded_payload),
+                                      &packet_id, &flags);
+    check(got < 0, "spectrum publish beyond packet capacity rejected");
+
+    got = spectrum_mqtt_parse_publish(continued_varint,
+                                      sizeof(continued_varint),
+                                      bounded_payload,
+                                      sizeof(bounded_payload),
+                                      &packet_id, &flags);
+    check(got < 0, "spectrum publish extra varint continuation rejected");
+
+    got = spectrum_mqtt_parse_publish(truncated,
+                                      sizeof(truncated),
+                                      bounded_payload,
+                                      sizeof(bounded_payload),
+                                      &packet_id, &flags);
+    check(got < 0, "spectrum publish truncated packet rejected");
+}
+
+static void test_spectrum_publish_embedded_nul(void)
+{
+    static const uint8_t restore_prefix[] =
+        "RS00 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    uint8_t packet[SPECTRUM_MQTT_PACKET_MAX];
+    char payload[SPECTRUM_LINK_PAYLOAD_MAX];
+    uint16_t packet_id;
+    uint8_t flags;
+    uint8_t i;
+    int16_t got;
+
+    memset(packet, 0u, sizeof(packet));
+    packet[0u] = 0x30u;
+    packet[2u] = 0u;
+    packet[3u] = 1u;
+    packet[4u] = 't';
+
+    packet[1u] = 43u;
+    memcpy(packet + 5u, restore_prefix, sizeof(restore_prefix) - 1u);
+    packet[40u] = 0u;
+    memcpy(packet + 41u, "XXXX", 4u);
+    got = spectrum_mqtt_parse_publish(packet, 45u, payload, sizeof(payload),
+                                      &packet_id, &flags);
+    check(got < 0, "spectrum publish embedded NUL rejected");
+
+    packet[1u] = 5u;
+    packet[5u] = 0u;
+    packet[6u] = 'X';
+    got = spectrum_mqtt_parse_publish(packet, 7u, payload, sizeof(payload),
+                                      &packet_id, &flags);
+    check(got < 0, "spectrum publish leading NUL rejected");
+
+    packet[1u] = 3u;
+    got = spectrum_mqtt_parse_publish(packet, 5u, payload, sizeof(payload),
+                                      &packet_id, &flags);
+    check(got == 0 && payload[0] == '\0',
+          "spectrum publish empty payload accepted");
+
+    packet[1u] = 38u;
+    for (i = 0u; i < 35u; ++i) {
+        packet[5u + i] = (uint8_t)('A' + (i % 26u));
+    }
+    got = spectrum_mqtt_parse_publish(packet, 40u, payload, sizeof(payload),
+                                      &packet_id, &flags);
+    check(got == 35 && payload[35u] == '\0',
+          "spectrum publish exact 35-byte payload accepted");
 }
 
 static void test_spectrum_broker_keepalive(void)
@@ -439,6 +558,7 @@ int main(void)
     test_subscribe_and_control_encoders();
     test_spectrum_encoder_bounds();
     test_spectrum_publish_parser_bounds();
+    test_spectrum_publish_embedded_nul();
     test_spectrum_broker_keepalive();
 
     if (failures != 0) {

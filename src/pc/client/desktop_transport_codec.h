@@ -60,7 +60,8 @@ public:
     static QByteArray encodeMqttPing();
 
 private:
-    int availableMqttPacketLength() const;
+    int availableMqttPacketLength(const QByteArray &buffer,
+                                  qsizetype offset) const;
 
     QHash<uint8_t, QByteArray> directBuffers_;
     QByteArray mqttBuffer_;

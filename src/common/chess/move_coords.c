@@ -4,6 +4,11 @@
 
 uint16_t netchesszx_move_parse_coords(const char *move) NETCHESSZX_FASTCALL
 {
+    if (move == 0 || move[0] == '\0' || move[1] == '\0' ||
+        move[2] == '\0' || move[3] == '\0') {
+        return NETCHESSZX_MOVE_COORDS_INVALID;
+    }
+
     uint8_t fc = (uint8_t)(move[0] - 'a');
     uint8_t fr = (uint8_t)('8' - move[1]);
     uint8_t tc = (uint8_t)(move[2] - 'a');

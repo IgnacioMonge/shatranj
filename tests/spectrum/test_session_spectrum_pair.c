@@ -42,6 +42,7 @@ static void test_direct_spectrum_pair_contract(void)
     netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
                                  NETCHESSZX_TRANSPORT_DIRECT,
                                  NETCHESSZX_COLOR_WHITE);
+    netchesszx_host_color_ready = 0u;
     check(netchesszx_session_direct_apply_hello(host_hello),
           "direct Spectrum guest accepts host hello");
     check(netchesszx_local_color == NETCHESSZX_COLOR_WHITE,

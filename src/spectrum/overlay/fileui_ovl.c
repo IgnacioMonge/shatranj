@@ -2,7 +2,7 @@
  * fileui_ovl.c -- FILE browser overlay: single-column saved-game list
  * inside the board frame, 10 slots with name plus FAT date/time taken
  * straight from the esxDOS directory entry (no extra file I/O). Rows come
- * from a /SYS/CONFIG scan (*.STJ, size>0); remaining slots are free and
+ * from a target storage scan (*.STJ, size>0); remaining slots are free and
  * saving there auto-names NNYMDHMM, where YMDHMM encodes date/time.
  *
  * Cursor navigation is handled by the resident spectrum/fileui module so
@@ -13,6 +13,9 @@
 
 #include "spectrum/overlay/overlay_api.h"
 #include "spectrum/overlay/overlay_context.h"
+#if defined(NETCHESSZX_SPECTRANEXT) && !defined(NETCHESSZX_HOST_TEST)
+#include "spectrum/lowram_map.h"
+#endif
 /* Resident render helpers (declared locally: overlays do not include
    spectrum/ui headers; the capabilities policy governs these imports). */
 void spectrum_render_ikkle_at(const char *spec) __z88dk_fastcall;
@@ -54,58 +57,81 @@ void esx_readdir(void);
 #define FILEUI_DIRENT_MAX 24u
 #define FILEUI_ATTR_DIR 0x10u
 
+#ifdef NETCHESSZX_SPECTRANEXT
+static char fileui_dir[] = "/CFG";
+static unsigned char fileui_xfs_stamp[4];
+#if !defined(NETCHESSZX_HOST_TEST)
+#define FILEUI_DIR_ARG ((char *)NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR)
+#define fileui_stage_dir() spectrum_append_text(FILEUI_DIR_ARG, fileui_dir)
+#else
+#define FILEUI_DIR_ARG fileui_dir
+#define fileui_stage_dir() ((void)0)
+#endif
+#else
 static char fileui_dir[] = "/SYS/CONFIG";
-static unsigned char fileui_name_stamp[4];
+#define FILEUI_DIR_ARG fileui_dir
+#define fileui_stage_dir() ((void)0)
+#endif
 
 /* FAT stamp (time lo/hi, date lo/hi) of the entry accepted last by
    fileui_entry_stj; points into the caller's dirent buffer. */
 static const unsigned char *fileui_stamp;
+
+#ifdef NETCHESSZX_SPECTRANEXT
+static uint8_t fileui_b32(char c) __z88dk_fastcall
+{
+    if (c >= '0' && c <= '9') {
+        return (uint8_t)(c - '0');
+    }
+    if (c >= 'A' && c <= 'V') {
+        return (uint8_t)(c - 'A' + 10u);
+    }
+    return 0xffu;
+}
+
+/* XFS READDIR has no FAT timestamp. Save names carry the same compact
+   date/time stamp used by saveload_ovl.c, so synthesize the old four-byte
+   entry view for the unchanged renderer. */
+static uint8_t fileui_stamp_from_name(const char *name) __z88dk_fastcall
+{
+    uint8_t year = fileui_b32(name[2]);
+    uint8_t month = fileui_b32(name[3]);
+    uint8_t day = fileui_b32(name[4]);
+    uint8_t hour = fileui_b32(name[5]);
+    uint8_t minute_tens = fileui_b32(name[6]);
+    uint8_t minute_ones = fileui_b32(name[7]);
+    uint16_t date;
+    uint16_t time;
+
+    /* A save made before the runtime clock is ready carries 000000. Keep it
+       visible with a deterministic FAT epoch rather than hiding the save. */
+    if (year == 0u && month == 0u && day == 0u && hour == 0u &&
+        minute_tens == 0u && minute_ones == 0u) {
+        month = 1u;
+        day = 1u;
+    }
+    if (year == 0xffu || month == 0u || month > 12u || day == 0u ||
+        day > 31u || hour > 23u || minute_tens > 5u || minute_ones > 9u) {
+        return 0u;
+    }
+    date = (uint16_t)(((uint16_t)(year + 40u) << 9) |
+                      ((uint16_t)month << 5) | day);
+    time = (uint16_t)(((uint16_t)hour << 11) |
+                      ((uint16_t)(minute_tens * 10u + minute_ones) << 5));
+    fileui_xfs_stamp[0] = (uint8_t)time;
+    fileui_xfs_stamp[1] = (uint8_t)(time >> 8);
+    fileui_xfs_stamp[2] = (uint8_t)date;
+    fileui_xfs_stamp[3] = (uint8_t)(date >> 8);
+    fileui_stamp = fileui_xfs_stamp;
+    return 1u;
+}
+#endif
 
 static char *fileui_ctx_name(uint8_t *ctx)
 {
     return (char *)((uint16_t)ctx[SPECTRUM_OVL_CTX_FILEUI_NAME_LO] |
                     ((uint16_t)ctx[SPECTRUM_OVL_CTX_FILEUI_NAME_HI] << 8));
 }
-
-static uint8_t fileui_b32_value(char c)
-{
-    if (c >= '0' && c <= '9') {
-        return (uint8_t)(c - '0');
-    }
-    if (c >= 'A' && c <= 'V') {
-        return (uint8_t)(c - ('A' - 10));
-    }
-    return 0xffu;
-}
-
-
-static uint8_t fileui_decode_name_stamp(const char *name)
-{
-    uint8_t year = fileui_b32_value(name[2]);
-    uint8_t month = fileui_b32_value(name[3]);
-    uint8_t day = fileui_b32_value(name[4]);
-    uint8_t hour = fileui_b32_value(name[5]);
-    uint8_t minute;
-
-    if (name[6] < '0' || name[6] > '9' ||
-        name[7] < '0' || name[7] > '9') {
-        return 0u;
-    }
-    minute = (uint8_t)(((uint8_t)(name[6] - '0') * 10u) +
-                       (uint8_t)(name[7] - '0'));
-    if (year > 31u || month == 0u || month > 12u ||
-        day == 0u || day > 31u || hour >= 24u || minute >= 60u) {
-        return 0u;
-    }
-    fileui_name_stamp[0] = (uint8_t)(minute << 5);
-    fileui_name_stamp[1] = (uint8_t)((hour << 3) | (minute >> 3));
-    fileui_name_stamp[2] = (uint8_t)(((month & 7u) << 5) | day);
-    fileui_name_stamp[3] = (uint8_t)(((year + 40u) << 1) | (month >> 3));
-    fileui_stamp = fileui_name_stamp;
-    return 1u;
-}
-
-
 
 /* Accepts a plain *.STJ file entry with size > 0; copies the name without
    the extension into out (out[FILEUI_NAME_MAX + 1]) and latches the FAT
@@ -138,7 +164,12 @@ static uint8_t fileui_entry_stj(const unsigned char *ent, char *out)
     if (!(p[5] | p[6] | p[7] | p[8])) {
         return 0u;
     }
+#ifdef NETCHESSZX_SPECTRANEXT
+    /* The adapter synthesizes size but has no timestamp; decode the stamp
+       embedded in the eight-character XFS basename instead. */
+#else
     fileui_stamp = p + 1u;
+#endif
     p = ent + 1u;
     while (p < dot && n < FILEUI_NAME_MAX) {
         out[n++] = (char)*p++;
@@ -154,7 +185,12 @@ static uint8_t fileui_entry_stj(const unsigned char *ent, char *out)
     if (slot == 0u || slot > FILEUI_SLOTS) {
         return 0u;
     }
-    return fileui_decode_name_stamp(out);
+#ifdef NETCHESSZX_SPECTRANEXT
+    if (!fileui_stamp_from_name(out)) {
+        return 0u;
+    }
+#endif
+    return 1u;
 }
 
 /* Copies the name of the index-th saved game into out. Returns 1 if found. */
@@ -163,14 +199,17 @@ static uint8_t fileui_nth_name(uint8_t index, char *out)
     unsigned char ent[FILEUI_DIRENT_MAX];
     uint8_t found = 0u;
 
-    esx_opendir(fileui_dir);
+    fileui_stage_dir();
+    esx_opendir(FILEUI_DIR_ARG);
     if (!esx_handle) {
         return 0u;
     }
     for (;;) {
         esx_buf = (uint16_t)ent;
         esx_readdir();
+#ifndef NETCHESSZX_SPECTRANEXT
         spectrum_net_background_drain();
+#endif
         if (!esx_result) {
             break;
         }
@@ -322,12 +361,15 @@ uint8_t fileui_render_ovl(uint8_t *ctx) __z88dk_fastcall
                     legend);
         fileui_footer();
     }
-    esx_opendir(fileui_dir);
+    fileui_stage_dir();
+    esx_opendir(FILEUI_DIR_ARG);
     if (esx_handle) {
         while (count < FILEUI_SLOTS) {
             esx_buf = (uint16_t)ent;
             esx_readdir();
+#ifndef NETCHESSZX_SPECTRANEXT
             spectrum_net_background_drain();
+#endif
             if (!esx_result) {
                 break;
             }

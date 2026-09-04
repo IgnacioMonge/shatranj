@@ -76,8 +76,13 @@ uint8_t netchesszx_session_mqtt_host_flags(const char *payload,
         *bad_color = 1u;
         return 0u;
     }
-    if (new_live_session) {
+    if (new_live_session ||
+        (color_changed && netchesszx_session_peer_ready_state)) {
         netchesszx_session_peer_ready_state = 0u;
+        flags |= NETCHESSZX_SESSION_MQTT_HOST_NEW_LIVE_SESSION;
+        if (color_changed) {
+            host_color = 2u;
+        }
     }
     if (color_changed) {
         flags |= NETCHESSZX_SESSION_MQTT_HOST_COLOR_CHANGED;

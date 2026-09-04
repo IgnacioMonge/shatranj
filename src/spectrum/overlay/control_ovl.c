@@ -6,6 +6,8 @@
 
 #ifdef NETCHESSZX_FIXED_LOW_RAM
 #include "spectrum/overlay/overlay_context.h"
+#include "spectrum/overlay/overlay_api.h"
+#include "spectrum/lowram_map.h"
 #endif
 
 #define SESSION_CONTROL_ACK 0u
@@ -92,6 +94,7 @@ netchesszx_session_event_t netchesszx_session_classify_game_payload(
 {
     const char *tail;
     uint16_t takeback_ply;
+    uint8_t platform;
 
     if (netchess_after_prefix(payload, NETCHESS_PROTO_MOVE_PREFIX) != 0) {
         return NETCHESSZX_SESSION_EVENT_MOVE;
@@ -105,6 +108,10 @@ netchesszx_session_event_t netchesszx_session_classify_game_payload(
     }
     if (netchess_after_prefix(payload, NETCHESS_PROTO_CHAT_PREFIX) != 0) {
         return NETCHESSZX_SESSION_EVENT_CHAT;
+    }
+    if (netchess_proto_parse_mach(payload, &platform)) {
+        return (netchesszx_session_event_t)
+            (NETCHESSZX_SESSION_EVENT_MACH_BASE | platform);
     }
     tail = netchess_after_prefix(payload, NETCHESS_PROTO_CANCEL_RESET);
     if (tail != 0 && *tail == '\0') {
@@ -167,4 +174,22 @@ uint8_t control_classify_ovl(volatile uint8_t *ctx) __z88dk_fastcall
     return (uint8_t)netchesszx_session_classify_game_payload(
         (const char *)payload_addr);
 }
+
+#ifdef NETCHESSZX_SPECTRANEXT
+uint8_t control_format_busy_ovl(volatile uint8_t *ctx) __z88dk_fastcall
+{
+    const char *ply = (const char *)((uint16_t)ctx[0] |
+                                     ((uint16_t)ctx[1] << 8));
+    char *payload = (char *)NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR;
+    char *out = spectrum_append_text(payload, "NACK ");
+
+    if (ply == 0) {
+        (void)spectrum_append_text(out, "GAME START BUSY");
+    } else {
+        out = spectrum_append_text(out, ply);
+        (void)spectrum_append_text(out, " BUSY");
+    }
+    return 1u;
+}
+#endif
 #endif

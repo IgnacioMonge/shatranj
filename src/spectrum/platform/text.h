@@ -13,5 +13,11 @@
 
 char *spectrum_append_text(char *dst, const char *src) NETCHESSZX_CALLEE;
 char *spectrum_append_u16(char *dst, uint16_t value) NETCHESSZX_CALLEE;
+#ifdef NETCHESSZX_SDCC_IY
+uint8_t spectrum_streq(const char *a, const char *b) NETCHESSZX_CALLEE;
+#else
+#include <string.h>
+#define spectrum_streq(a, b) ((uint8_t)(strcmp((a), (b)) == 0))
+#endif
 
 #endif

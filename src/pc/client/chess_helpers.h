@@ -14,6 +14,8 @@ struct CompactRulesState {
 namespace ChessHelpers {
 
 int8_t compactPieceFromAscii(char piece);
+char asciiPieceFromCompact(int8_t piece);
+void asciiBoardFromCompact(const int8_t compact[64], char ascii[64]);
 
 QString squareName(int row, int col);
 

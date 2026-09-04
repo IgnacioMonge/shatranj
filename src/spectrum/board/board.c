@@ -1,33 +1,11 @@
 #include "spectrum/board/board.h"
 #include "common/chess/move_coords.h"
+#include "common/chess/rules_compact.h"
 #include "spectrum/lowram_map.h"
 #include <string.h>
 #ifndef NETCHESSZX_HOST_TEST
 #include "spectrum/overlay/overlay.h"
-#else
-#include "common/chess/rules_compact.h"
 #endif
-
-#define NETCHESSZX_RULE_EMPTY 0
-#define NETCHESSZX_RULE_WHITE 0u
-#define NETCHESSZX_RULE_BLACK 1u
-#define NETCHESSZX_RULE_WP 1
-#define NETCHESSZX_RULE_WN 2
-#define NETCHESSZX_RULE_WB 3
-#define NETCHESSZX_RULE_WR 4
-#define NETCHESSZX_RULE_WQ 5
-#define NETCHESSZX_RULE_WK 6
-#define NETCHESSZX_RULE_BP -1
-#define NETCHESSZX_RULE_BN -2
-#define NETCHESSZX_RULE_BB -3
-#define NETCHESSZX_RULE_BR -4
-#define NETCHESSZX_RULE_BQ -5
-#define NETCHESSZX_RULE_BK -6
-#define NETCHESSZX_RULE_CASTLE_WK 1u
-#define NETCHESSZX_RULE_CASTLE_WQ 2u
-#define NETCHESSZX_RULE_CASTLE_BK 4u
-#define NETCHESSZX_RULE_CASTLE_BQ 8u
-#define NETCHESSZX_RULE_NO_SQUARE (-1)
 
 #define NO_EP NETCHESSZX_RULE_NO_SQUARE
 
@@ -94,6 +72,8 @@ static char promotion_piece(char pawn, char promo)
 
     return promo;
 }
+
+#include "spectrum/board/board_apply_impl.h"
 #endif
 
 void spectrum_board_reset(void)
@@ -325,165 +305,6 @@ uint8_t spectrum_board_check_state(void)
 #endif
 }
 
-#ifdef NETCHESSZX_HOST_TEST
-static void clear_castle_rights(uint8_t from_idx, uint8_t to_idx,
-                                char piece, char target)
-{
-    if (piece == 'K') {
-        castle_rights &= (uint8_t)~(NETCHESSZX_RULE_CASTLE_WK |
-                                    NETCHESSZX_RULE_CASTLE_WQ);
-    } else if (piece == 'k') {
-        castle_rights &= (uint8_t)~(NETCHESSZX_RULE_CASTLE_BK |
-                                    NETCHESSZX_RULE_CASTLE_BQ);
-    } else if (piece == 'R') {
-        if (from_idx == 56u) {
-            castle_rights &= (uint8_t)~NETCHESSZX_RULE_CASTLE_WQ;
-        } else if (from_idx == 63u) {
-            castle_rights &= (uint8_t)~NETCHESSZX_RULE_CASTLE_WK;
-        }
-    } else if (piece == 'r') {
-        if (from_idx == 0u) {
-            castle_rights &= (uint8_t)~NETCHESSZX_RULE_CASTLE_BQ;
-        } else if (from_idx == 7u) {
-            castle_rights &= (uint8_t)~NETCHESSZX_RULE_CASTLE_BK;
-        }
-    }
-
-    if (target == 'R') {
-        if (to_idx == 56u) {
-            castle_rights &= (uint8_t)~NETCHESSZX_RULE_CASTLE_WQ;
-        } else if (to_idx == 63u) {
-            castle_rights &= (uint8_t)~NETCHESSZX_RULE_CASTLE_WK;
-        }
-    } else if (target == 'r') {
-        if (to_idx == 0u) {
-            castle_rights &= (uint8_t)~NETCHESSZX_RULE_CASTLE_BQ;
-        } else if (to_idx == 7u) {
-            castle_rights &= (uint8_t)~NETCHESSZX_RULE_CASTLE_BK;
-        }
-    }
-}
-
-static uint8_t apply_parsed_move(const char *move,
-                                 uint8_t from_row, uint8_t from_col,
-                                 uint8_t to_row, uint8_t to_col,
-                                 spectrum_board_undo_t *undo)
-{
-    uint8_t from_idx = (uint8_t)((from_row << 3) + from_col);
-    uint8_t to_idx = (uint8_t)((to_row << 3) + to_col);
-    char piece = chess_board[from_idx];
-    char target = chess_board[to_idx];
-    uint8_t promotion = (uint8_t)((piece == 'P' && to_row == 0u) ||
-                                  (piece == 'p' && to_row == 7u));
-
-    if (piece == '.' || piece_side(piece) != side_to_move ||
-        (target != '.' && piece_side(target) == side_to_move)) {
-        return 0u;
-    }
-    if (promotion && move[4] == '\0') {
-        return 0u;
-    }
-
-    if (undo != 0) {
-        undo->from = (uint8_t)(from_idx |
-            (promotion ? SPECTRUM_BOARD_UNDO_PROMOTION : 0u));
-        undo->to = to_idx;
-        undo->captured = target;
-        undo->castle = castle_rights;
-        undo->ep = ep_square;
-    }
-
-    clear_castle_rights(from_idx, to_idx, piece, target);
-
-    ep_square = NO_EP;
-
-    if (((piece == 'K' && from_row == 7u) ||
-         (piece == 'k' && from_row == 0u)) &&
-        from_col == 4u && (to_col == 6u || to_col == 2u)) {
-        uint8_t rook_from = (uint8_t)((from_row << 3) +
-                                      (to_col == 6u ? 7u : 0u));
-        uint8_t rook_to = (uint8_t)((from_row << 3) +
-                                    (to_col == 6u ? 5u : 3u));
-        char rook = chess_board[rook_from];
-
-        chess_board[rook_to] = rook;
-        rules_board[rook_to] = rules_piece_from_char(rook);
-        chess_board[rook_from] = '.';
-        rules_board[rook_from] = NETCHESSZX_RULE_EMPTY;
-    }
-
-    if ((piece == 'P' || piece == 'p') &&
-        from_col != to_col && target == '.') {
-        uint8_t captured_idx = (uint8_t)((from_row << 3) + to_col);
-
-        chess_board[captured_idx] = '.';
-        rules_board[captured_idx] = NETCHESSZX_RULE_EMPTY;
-    }
-
-    if ((piece == 'P' || piece == 'p') &&
-        abs_delta(from_row, to_row) == 2u) {
-        uint8_t mid = (uint8_t)((from_row + to_row) >> 1);
-        ep_square = (int8_t)((mid * 8u) + from_col);
-    }
-
-    if (promotion) {
-        piece = promotion_piece(piece, move[4]);
-    }
-
-    chess_board[to_idx] = piece;
-    chess_board[from_idx] = '.';
-    rules_board[to_idx] = rules_piece_from_char(piece);
-    rules_board[from_idx] = NETCHESSZX_RULE_EMPTY;
-
-    side_to_move ^= 1u;
-    return 1u;
-}
-
-static void undo_set_cell(uint8_t index, char piece)
-{
-    chess_board[index] = piece;
-    rules_board[index] = rules_piece_from_char(piece);
-}
-
-static void undo_restore(const spectrum_board_undo_t *undo)
-{
-    char moved = chess_board[undo->to];
-    char original = moved;
-    uint8_t side = piece_side(moved);
-    uint8_t from_idx = (uint8_t)(undo->from &
-                                  SPECTRUM_BOARD_UNDO_INDEX_MASK);
-    uint8_t from_row = (uint8_t)(from_idx >> 3);
-    uint8_t from_col = (uint8_t)(from_idx & 7u);
-    uint8_t to_col = (uint8_t)(undo->to & 7u);
-
-    if (undo->from & SPECTRUM_BOARD_UNDO_PROMOTION) {
-        original = side == NETCHESSZX_RULE_WHITE ? 'P' : 'p';
-    }
-    undo_set_cell(from_idx, original);
-    undo_set_cell(undo->to, undo->captured);
-
-    if ((moved == 'P' || moved == 'p') && from_col != to_col &&
-        undo->captured == '.' && undo->ep == (int8_t)undo->to) {
-        undo_set_cell((uint8_t)((from_row << 3) + to_col),
-                      side == NETCHESSZX_RULE_WHITE ? 'p' : 'P');
-    } else if (((moved == 'K' && from_row == 7u) ||
-                (moved == 'k' && from_row == 0u)) && from_col == 4u &&
-               (to_col == 6u || to_col == 2u)) {
-        uint8_t rook_from = (uint8_t)((from_row << 3) +
-                                      (to_col == 6u ? 7u : 0u));
-        uint8_t rook_to = (uint8_t)((from_row << 3) +
-                                    (to_col == 6u ? 5u : 3u));
-
-        undo_set_cell(rook_from,
-                      side == NETCHESSZX_RULE_WHITE ? 'R' : 'r');
-        undo_set_cell(rook_to, '.');
-    }
-    side_to_move = side;
-    castle_rights = undo->castle;
-    ep_square = undo->ep;
-}
-#endif
-
 static uint8_t board_apply_trusted(const char *move,
                                    spectrum_board_undo_t *undo)
 {
@@ -519,7 +340,8 @@ static uint8_t board_apply_trusted(const char *move,
     }
     return spectrum_overlay_exec(SPECTRUM_OVL_BOARD, SPECTRUM_OVL_BOARD_APPLY);
 #else
-    return apply_parsed_move(move, from_row, from_col, to_row, to_col, undo);
+    return board_apply_parsed_move(move, from_row, from_col, to_row, to_col,
+                                   undo);
 #endif
 }
 
@@ -545,7 +367,7 @@ void spectrum_board_undo_restore(const spectrum_board_undo_t *undo)
     (void)spectrum_overlay_exec(SPECTRUM_OVL_BOARD,
                                 SPECTRUM_OVL_BOARD_UNDO_RESTORE);
 #else
-    undo_restore(undo);
+    board_apply_undo_restore(undo);
 #endif
 }
 
@@ -569,6 +391,6 @@ uint8_t spectrum_board_apply_move(const char *move) NETCHESSZX_FASTCALL
     to_row = (uint8_t)(to_col >> 3);
     from_col &= 7u;
     to_col &= 7u;
-    return apply_parsed_move(move, from_row, from_col, to_row, to_col, 0);
+    return board_apply_parsed_move(move, from_row, from_col, to_row, to_col, 0);
 }
 #endif

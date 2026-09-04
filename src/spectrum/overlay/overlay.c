@@ -3,6 +3,13 @@
 #include "spectrum/session/event.h"
 #include "spectrum/ui/gui.h"
 
+#ifdef NETCHESSZX_SPECTRANEXT
+#define SPECTRUM_OVL_GUI_LOG_ANIMATE_PRIVATE 4u
+#define SPECTRUM_OVL_GUI_LOG_MORPH_PRIVATE 5u
+#define SPECTRUM_OVL_GUI_LOG_RESTORE_PANELS_PRIVATE 6u
+#define SPECTRUM_OVL_GUI_LOG_APPLY_MOVE_PRIVATE 7u
+#endif
+
 netchesszx_session_event_t netchesszx_session_classify_game_payload(
     const char *payload)
 {
@@ -16,6 +23,38 @@ netchesszx_session_event_t netchesszx_session_classify_game_payload(
                                      SPECTRUM_OVL_CONTROL_CLASSIFY);
 }
 
+#ifdef NETCHESSZX_SPECTRANEXT
+void spectrum_gui_animate_board_pieces(void)
+{
+    (void)spectrum_overlay_exec_cached(SPECTRUM_OVL_GUI_LOG,
+                                       SPECTRUM_OVL_GUI_LOG_ANIMATE_PRIVATE);
+}
+
+void spectrum_gui_morph_board_pieces(void)
+{
+    (void)spectrum_overlay_exec_cached(SPECTRUM_OVL_GUI_LOG,
+                                       SPECTRUM_OVL_GUI_LOG_MORPH_PRIVATE);
+}
+
+void spectrum_gui_restore_side_panels(void)
+{
+    (void)spectrum_overlay_exec_cached(
+        SPECTRUM_OVL_GUI_LOG,
+        SPECTRUM_OVL_GUI_LOG_RESTORE_PANELS_PRIVATE);
+}
+
+void spectrum_gui_apply_move(const char *move) NETCHESSZX_FASTCALL
+{
+    uint16_t move_addr = (uint16_t)move;
+
+    spectrum_overlay_context[SPECTRUM_OVL_CTX_PTR_LO] = (uint8_t)move_addr;
+    spectrum_overlay_context[SPECTRUM_OVL_CTX_PTR_HI] =
+        (uint8_t)(move_addr >> 8);
+    (void)spectrum_overlay_exec_cached(
+        SPECTRUM_OVL_GUI_LOG, SPECTRUM_OVL_GUI_LOG_APPLY_MOVE_PRIVATE);
+}
+#endif
+
 void spectrum_gui_status_phase(uint8_t phase) __z88dk_fastcall
 {
     spectrum_overlay_context[SPECTRUM_OVL_CTX_STATUS_PHASE] = phase;
@@ -26,6 +65,8 @@ void spectrum_gui_status_phase(uint8_t phase) __z88dk_fastcall
 void spectrum_gui_add_move(const char *ply, const char *move)
 {
     uint16_t ply_addr = (uint16_t)ply;
+
+    spectrum_gui_set_turn_label(SPECTRUM_GUI_TURN_MARKER_CLEAR);
     uint16_t move_addr = (uint16_t)move;
 
     spectrum_overlay_context[SPECTRUM_OVL_CTX_GUI_MOVE_PLY_LO] =
@@ -38,6 +79,14 @@ void spectrum_gui_add_move(const char *ply, const char *move)
         (uint8_t)(move_addr >> 8);
     spectrum_overlay_context[SPECTRUM_OVL_CTX_GUI_RENDER] =
         spectrum_gui_side_panels_visible();
+    (void)spectrum_overlay_exec_cached(SPECTRUM_OVL_GUI_LOG,
+                                       SPECTRUM_OVL_GUI_LOG_ADD_MOVE);
+}
+
+void spectrum_gui_prepare_move_row(void)
+{
+    spectrum_overlay_context[SPECTRUM_OVL_CTX_GUI_RENDER] =
+        (uint8_t)(0x80u | spectrum_gui_side_panels_visible());
     (void)spectrum_overlay_exec_cached(SPECTRUM_OVL_GUI_LOG,
                                        SPECTRUM_OVL_GUI_LOG_ADD_MOVE);
 }

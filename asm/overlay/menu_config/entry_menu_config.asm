@@ -5,6 +5,7 @@ PUBLIC _menu_config_paint_attrs_ovl_entry
 PUBLIC _menu_config_validate_ip_ovl_entry
 PUBLIC _menu_config_edit_line_ovl_entry
 PUBLIC _menu_config_render_ovl_entry
+PUBLIC _menu_config_nav_ovl_entry
 PUBLIC _menu_config_piece_set_options_asm
 
 EXTERN _spectrum_info_line
@@ -14,22 +15,46 @@ EXTERN _spectrum_info_show_setup
 EXTERN _setup_choice
 EXTERN _setup_focus_choice
 EXTERN _setup_focus_board_theme
+EXTERN _setup_game_focus
 EXTERN _setup_visible_mask
 EXTERN _setup_defined_mask
 EXTERN _setup_cursor
+EXTERN _setup_config_dirty
+EXTERN _setup_action_focus
 EXTERN _setup_room_editing
 EXTERN _setup_edit_row
-EXTERN _setup_port_text
-EXTERN _netchesszx_mqtt_code
 EXTERN _netchesszx_direct_host
 EXTERN _last_ip
 
-    DEFB 5
+ROW_GAME        EQU 0
+ROW_LINK1       EQU 1
+ROW_LINK2       EQU 2
+ROW_TIME        EQU 4
+ROW_COLOR       EQU 5
+ROW_NOTATION    EQU 6
+ROW_BOARD       EQU 7
+ROW_SET         EQU 8
+ROW_HINTS       EQU 9
+ROW_ACTION      EQU 10
+SETUP_CLEAR_ENDPOINT EQU 0xfe
+CTX_KEY         EQU 0x5fe0
+CTX_FORCE_LO    EQU 0x5fe1
+CTX_CLEAR_FROM  EQU 0x5fe3
+CTX_FLAGS       EQU 0x5fe6
+PAINT_MASK_ALL EQU 0x03ef
+KEY_UP          EQU 0x81
+KEY_DOWN        EQU 0x82
+FLAG_PAINT      EQU 0x02
+FLAG_TIME_UI    EQU 0x10
+FLAG_ACTION_UI  EQU 0x20
+
+    DEFB 6
     DW _menu_config_run_ovl_entry
     DW _menu_config_paint_attrs_ovl_entry
     DW _menu_config_validate_ip_ovl_entry
     DW _menu_config_edit_line_ovl_entry
     DW _menu_config_render_ovl_entry
+    DW _menu_config_nav_ovl_entry
 
 _menu_config_run_ovl_entry:
     inc de
@@ -46,29 +71,23 @@ menu_config_run_dirty:
     bit 1, c
     ld hl, menu_config_line_link
     call nz, menu_config_info_line
-    bit 3, c
-    ld hl, menu_config_line_mqtt
-    call nz, menu_config_info_line
     ld a, c
-    and 0x30
+    and 0x60
     call nz, menu_config_show_game_setup
-    bit 4, c
-    ld hl, menu_config_line_side
-    call nz, menu_config_info_line
     bit 5, c
-    ld hl, menu_config_line_notation
+    ld hl, menu_config_line_color
     call nz, menu_config_info_line
     bit 6, c
-    ld hl, menu_config_line_board
+    ld hl, menu_config_line_notation
     call nz, menu_config_info_line
     bit 7, c
-    ld hl, menu_config_line_set
+    ld hl, menu_config_line_board
     call nz, menu_config_info_line
     bit 0, b
-    ld hl, menu_config_line_hints
+    ld hl, menu_config_line_set
     call nz, menu_config_info_line
     bit 1, b
-    ld hl, menu_config_line_start
+    ld hl, menu_config_line_hints
     call nz, menu_config_info_line
     ld l, 1
     ret
@@ -108,37 +127,62 @@ menu_config_render_cursor_ready:
     call _spectrum_info_show_setup
     jr menu_config_render_force
 menu_config_render_incremental:
-    push de
-    inc de
     inc de
     ld a, (de)
-    cpl
-    ld c, a
-    inc de
-    ld a, (de)
-    cpl
-    ld b, a
+    cp SETUP_CLEAR_ENDPOINT
+    jr nz, menu_config_render_incremental_normal
+    ; CONNECTION rows only. Skip the GAME SETUP header and NOTAT..HINTS.
+    ; Do not merge CTX force: it used to carry COLOR and retriggered the
+    ; header via run_dirty's 0x60 test. Wipe COLOR/ACTION when hidden;
+    ; recreate COLOR only when its info-panel pixels are blank.
     ld hl, (_setup_visible_mask)
     ld a, l
-    and c
+    and 0x0f
     ld l, a
-    ld a, h
-    and b
-    ld h, a
+    ld h, 0
     ld (menu_config_render_dirty), hl
-    pop de
-    inc de
-    ld a, (de)
+    ld a, (_setup_visible_mask)
+    bit 5, a
+    jr nz, menu_config_endpoint_color
+    ld a, 14
+    call menu_config_clear_row
+    jr menu_config_endpoint_action
+menu_config_endpoint_color:
+    ld hl, 0x48d2
+    ld a, (hl)
+    inc hl
+    or (hl)
+    inc hl
+    or (hl)
+    jr nz, menu_config_endpoint_action
+    ld hl, menu_config_line_color
+    call menu_config_info_line
+menu_config_endpoint_action:
+    ld a, (_setup_visible_mask + 1)
+    bit 2, a
+    jr nz, menu_config_endpoint_apply
+    ld a, 20
+    call menu_config_clear_row
+menu_config_endpoint_apply:
+    ld hl, (menu_config_render_dirty)
+    jr menu_config_render_apply
+menu_config_render_incremental_normal:
+    ld hl, (_setup_visible_mask)
+    ld (menu_config_render_dirty), hl
     cp 0xff
     jr z, menu_config_render_force
-    cp 9
+    cp ROW_ACTION
     jr nz, menu_config_render_clear_normal
     ld a, 13
     jr menu_config_render_clear
 menu_config_render_clear_normal:
-    cp 4
+    cp ROW_TIME
     jr c, menu_config_render_clear
-    add a, 3
+    jr nz, menu_config_render_clear_game
+    ld a, 3
+    jr menu_config_render_clear
+menu_config_render_clear_game:
+    add a, 2
 menu_config_render_clear:
     ld l, a
     call menu_config_clear_tail
@@ -159,16 +203,9 @@ menu_config_render_force:
     or d
     ld h, a
     ld (menu_config_render_dirty), hl
-    ld a, (_setup_choice + 1)
-    or a
+menu_config_render_apply:
     ld a, l
-    jr z, menu_config_render_edit_direct
-    and 0x04
-    jr menu_config_render_edit_ready
-menu_config_render_edit_direct:
     and 0x0c
-menu_config_render_edit_ready:
-    ld (menu_config_render_edit), a
     cpl
     and l
     ld l, a
@@ -179,35 +216,73 @@ menu_config_render_edit_ready:
     ld c, l
     call menu_config_run_dirty
 menu_config_render_overlay_done:
-    ld a, (menu_config_render_edit)
-    and 0x04
-    jr z, menu_config_render_mqtt
-    ld a, 2
-    call menu_config_edit_line
-menu_config_render_mqtt:
-    ld a, (menu_config_render_edit)
-    and 0x08
-    jr z, menu_config_render_paint
-    ld a, 3
-    call menu_config_edit_line
-menu_config_render_paint:
-    call _menu_config_paint_attrs_ovl_entry
-    ld l, 1
-    ret
+    ld hl, (menu_config_render_dirty)
+    ld a, h
+    or a
+    jr nz, menu_config_paint_attrs_all
+    ld a, l
+    and 0xc0
+    jr nz, menu_config_paint_attrs_all
+    ; CONNECTION-only dirty (ENDPOINT): keep GAME SETUP attrs, including
+    ; BOARD swatches, on screen. COLOR attrs follow visibility.
+    ld a, (_setup_visible_mask)
+    and 0x20
+    or l
+    ld l, a
+    jp menu_config_paint_attrs_masked
 
 menu_config_clear_tail:
     ld a, l
     add a, 7
 menu_config_clear_tail_loop:
-    cp 22
+    cp 21
     ret nc
-    ld (menu_config_blank_line), a
     push af
-    ld hl, menu_config_blank_line
-    call _spectrum_info_line
+    call menu_config_clear_row
     pop af
     inc a
     jr menu_config_clear_tail_loop
+
+menu_config_clear_row:
+    ld c, a
+    and 7
+    rrca
+    rrca
+    rrca
+    add a, 18
+    ld e, a
+    ld a, c
+    and 0x18
+    add a, 0x40
+    ld d, a
+    ld b, 8
+menu_config_clear_pixels:
+    push bc
+    push de
+    ld h, d
+    ld l, e
+    ld (hl), 0
+    inc de
+    ld bc, 13
+    ldir
+    pop de
+    pop bc
+    inc d
+    djnz menu_config_clear_pixels
+    ld l, e
+    ld a, c
+    srl a
+    srl a
+    srl a
+    add a, 0x58
+    ld h, a
+    ld (hl), 0x07
+    ld d, h
+    ld e, l
+    inc de
+    ld bc, 13
+    ldir
+    ret
 
 menu_config_info_line:
     push bc
@@ -222,16 +297,14 @@ menu_config_show_game_setup:
     ret
 
 _menu_config_paint_attrs_ovl_entry:
-IFDEF NETCHESSZX_NEXT
-    ; Setup previews use ULA+ group 3; START reapplies the chosen game theme.
-    ld bc, 0x243b
-    ld a, 0x68
-    out (c), a
-    inc b
-    in a, (c)
-    or 0x08
-    out (c), a
-ENDIF
+    ld hl, (CTX_FORCE_LO)
+    ld a, h
+    or l
+    jr nz, menu_config_paint_attrs_masked
+menu_config_paint_attrs_all:
+    ld hl, PAINT_MASK_ALL
+menu_config_paint_attrs_masked:
+    ld (menu_config_paint_mask), hl
     ld hl, _setup_choice + 4
     call menu_config_pack_choices
     ld (menu_config_values), a
@@ -256,16 +329,19 @@ ENDIF
     ld (menu_config_piece_set), a
     ld a, (_setup_choice + 5)
     ld (menu_config_piece_selected), a
-    call menu_config_paint_game_attrs
-    call menu_config_paint_link_attrs
-    call menu_config_paint_room_attrs
-    call menu_config_paint_mqtt_attrs
-    call menu_config_paint_side_attrs
-    call menu_config_paint_notation_attrs
-    call menu_config_paint_board_attrs
-    call menu_config_paint_set_attrs
-    call menu_config_paint_hints_attrs
-    call menu_config_paint_action_attrs
+    call menu_config_paint_binary_attrs
+    ld a, (menu_config_paint_mask)
+    bit 2, a
+    call nz, menu_config_paint_room_attrs
+    ld a, (menu_config_paint_mask)
+    bit 3, a
+    call nz, menu_config_paint_mqtt_attrs
+    ld a, (menu_config_paint_mask)
+    bit 7, a
+    call nz, menu_config_paint_board_attrs
+    ld a, (menu_config_paint_mask + 1)
+    bit 0, a
+    call nz, menu_config_paint_set_attrs
     ld l, 1
     ret
 
@@ -279,223 +355,271 @@ menu_config_pack_choices_loop:
     djnz menu_config_pack_choices_loop
     ret
 
-_menu_config_edit_line_ovl_entry:
-    ld a, (de)
-menu_config_edit_line:
-    ld (menu_config_edit_row), a
-    ld a, (_setup_choice + 1)
-    or a
-    jr z, menu_config_edit_direct
-    ld a, 1
-    ld (menu_config_edit_flags), a
-    ld hl, _netchesszx_mqtt_code
-    ld a, 6
-    jr menu_config_edit_selected
-menu_config_edit_direct:
-    xor a
-    ld (menu_config_edit_flags), a
-    ld a, (menu_config_edit_row)
-    cp 2
-    jr nz, menu_config_edit_port
-    ld a, (_setup_choice)
-    or a
-    jr nz, menu_config_edit_join_host
-    ld hl, _last_ip
-    ld a, 4
-    ld (menu_config_edit_flags), a
-    jr menu_config_edit_direct_host_ready
-menu_config_edit_join_host:
-    ld hl, _netchesszx_direct_host
-menu_config_edit_direct_host_ready:
-    ld a, 15
-    jr menu_config_edit_selected
-menu_config_edit_port:
-    ld hl, _setup_port_text
-    ld a, 5
-menu_config_edit_selected:
-    ld (menu_config_edit_max), a
-    ld a, (_setup_room_editing)
-    or a
-    jr z, menu_config_edit_have_cursor
-    ld a, (_setup_edit_row)
-    ld c, a
-    ld a, (menu_config_edit_row)
-    cp c
-    jr nz, menu_config_edit_have_cursor
-    ld a, (menu_config_edit_flags)
-    or 2
-    ld (menu_config_edit_flags), a
-menu_config_edit_have_cursor:
-    ld a, (menu_config_edit_flags)
-    bit 2, a
-    jr z, menu_config_edit_have_text
-    ld a, (hl)
-    or a
-    jr nz, menu_config_edit_have_text
-    ld hl, menu_config_text_local
-menu_config_edit_have_text:
-    push hl
-    ld hl, menu_config_edit_line_buf
-    ld a, (menu_config_edit_row)
-    call menu_config_setup_screen_row
-    ld (hl), a
-    inc hl
-    ld a, (menu_config_edit_flags)
-    bit 0, a
-    jr nz, menu_config_edit_label_room
-    ld a, (menu_config_edit_row)
-    cp 2
-    jr z, menu_config_edit_label_ip
-    ld de, menu_config_label_port
-    jr menu_config_edit_copy_label
-menu_config_edit_label_room:
-    ld de, menu_config_label_room
-    jr menu_config_edit_copy_label
-menu_config_edit_label_ip:
-    ld de, menu_config_label_ip
-menu_config_edit_copy_label:
-    ld b, 7
-menu_config_edit_copy_label_loop:
-    ld a, (de)
-    ld (hl), a
-    inc de
-    inc hl
-    djnz menu_config_edit_copy_label_loop
-    pop de
-    ld b, 0
-menu_config_edit_copy_text_loop:
-    ld a, (de)
-    or a
-    jr z, menu_config_edit_after_text
-    ld (hl), a
-    inc de
-    inc hl
-    inc b
-    jr menu_config_edit_copy_text_loop
-menu_config_edit_after_text:
-    ld a, (menu_config_edit_flags)
-    bit 1, a
-    jr z, menu_config_edit_finish
-    ld a, (menu_config_edit_max)
-    cp b
-    jr z, menu_config_edit_finish
-    jr c, menu_config_edit_finish
-    ld (hl), '_'
-    inc hl
-menu_config_edit_finish:
-    ld (hl), 0
-    ld hl, menu_config_edit_line_buf
-    call _spectrum_info_line
+_menu_config_nav_ovl_entry:
+    call menu_config_nav_clear_ctx
+    ld a, (CTX_KEY)
+    cp KEY_UP
+    jr z, menu_config_nav_prev
+    cp KEY_DOWN
+    jr z, menu_config_nav_next
     ld l, 1
     ret
 
-menu_config_setup_screen_row:
-    cp 9
-    jr z, menu_config_setup_screen_row_action
+menu_config_nav_clear_ctx:
+    xor a
+    ld hl, CTX_FORCE_LO
+    ld b, 6
+menu_config_nav_clear_loop:
+    ld (hl), a
+    inc hl
+    djnz menu_config_nav_clear_loop
+    dec a
+    ld (CTX_CLEAR_FROM), a
+    ret
+
+menu_config_nav_prev:
+    xor a
+    jr menu_config_nav_go
+menu_config_nav_next:
+    ld a, 1
+menu_config_nav_go:
+    ld b, a
+    ld a, (_setup_cursor)
+    ld (menu_config_nav_scratch), a
+    ld a, b
+    call menu_config_nav_step_row
+    ld (_setup_cursor), a
+    cp ROW_ACTION
+    jr nz, menu_config_nav_paint
+    ld a, (_setup_config_dirty)
+    xor 1
+    ld (_setup_action_focus), a
+menu_config_nav_paint:
+    ld a, (menu_config_nav_scratch)
+    call menu_config_nav_mark_row
+    ld a, (menu_config_nav_scratch)
+    cp ROW_BOARD
+    jr nz, menu_config_nav_mark_next
+    ld a, (_setup_game_focus)
+    ld (_setup_focus_board_theme), a
+menu_config_nav_mark_next:
+    ld a, (_setup_cursor)
+    call menu_config_nav_mark_row
+    ld l, 1
+    ret
+
+menu_config_nav_mark_row:
+    push af
+    call menu_config_nav_row_bit
+    ld hl, (CTX_FORCE_LO)
+    ld a, l
+    or c
+    ld l, a
+    ld a, h
+    or b
+    ld h, a
+    ld (CTX_FORCE_LO), hl
+    pop af
+    ld d, FLAG_TIME_UI
+    cp ROW_TIME
+    jr z, menu_config_nav_mark_flag
+    ld d, FLAG_ACTION_UI
+    cp ROW_ACTION
+    jr z, menu_config_nav_mark_flag
+    ld d, FLAG_PAINT
+menu_config_nav_mark_flag:
+    ld a, (CTX_FLAGS)
+    or d
+    ld (CTX_FLAGS), a
+    ret
+
+menu_config_nav_step_row:
+    or a
+    jr z, menu_config_nav_step_prev
+    ld a, (_setup_cursor)
+    inc a
+menu_config_nav_step_next_loop:
+    cp 11
+    jr nc, menu_config_nav_step_restore
+    call menu_config_nav_visible
+    ld a, e
+    ret nz
+    inc a
+    jr menu_config_nav_step_next_loop
+menu_config_nav_step_prev:
+    ld a, (_setup_cursor)
+    or a
+    jr z, menu_config_nav_step_restore
+    dec a
+menu_config_nav_step_prev_loop:
+    call menu_config_nav_visible
+    ld a, e
+    ret nz
+    or a
+    jr z, menu_config_nav_step_restore
+    dec a
+    jr menu_config_nav_step_prev_loop
+menu_config_nav_step_restore:
+    ld a, (_setup_cursor)
+    ret
+
+menu_config_nav_visible:
     ld e, a
-    cp 4
+    cp ROW_LINK2
+    jr nz, menu_config_nav_check_port
+    ld a, (_setup_choice + 1)
+    or a
+    jr nz, menu_config_nav_bit_restore
+    ld a, (_setup_choice)
+    or a
+    jr z, menu_config_nav_false
+menu_config_nav_bit_restore:
+    ld a, e
+menu_config_nav_check_port:
+    cp 3
+    jr nz, menu_config_nav_bit
+    ld a, (_setup_choice + 1)
+    or a
+    jr nz, menu_config_nav_false
+    ld a, e
+menu_config_nav_bit:
+    call menu_config_nav_row_bit
+    ld hl, (_setup_visible_mask)
+    ld a, l
+    and c
+    ret nz
+    ld a, h
+    and b
+    ret
+menu_config_nav_false:
+    xor a
+    ret
+
+menu_config_nav_row_bit:
+    ld bc, 1
+    or a
+    ret z
+menu_config_nav_row_bit_loop:
+    sla c
+    rl b
+    dec a
+    jr nz, menu_config_nav_row_bit_loop
+    ret
+
+_menu_config_edit_line_ovl_entry:
+    ld l, 0
+    ret
+
+menu_config_setup_screen_row:
+    cp ROW_ACTION
+    jr z, menu_config_setup_screen_row_action
+    cp ROW_TIME
+    jr z, menu_config_setup_screen_row_time
+    cp 3
+    jr nz, menu_config_setup_screen_row_normal
+    dec a
+menu_config_setup_screen_row_normal:
+    ld e, a
+menu_config_setup_screen_row_norm:
+    ld a, e
+    cp ROW_COLOR
     ld a, e
     jr c, menu_config_setup_screen_row_base
-    add a, 3
+    add a, 2
 menu_config_setup_screen_row_base:
     add a, 7
+    ret
+menu_config_setup_screen_row_time:
+    ld a, 10
     ret
 menu_config_setup_screen_row_action:
     ld a, 20
     ret
 
-menu_config_paint_game_attrs:
-    ld a, (menu_config_visible_l)
-    bit 0, a
-    ret z
+menu_config_paint_binary_attrs:
+    ld hl, menu_config_binary_attrs
     ld a, 1
-    ld (menu_config_binary_mask), a
-    ld (menu_config_binary_row), a
-    dec a
-    ld (menu_config_binary_row), a
-    ld a, 1
+menu_config_paint_binary_loop:
     ld (menu_config_binary_bit), a
-    xor a
-    ld (menu_config_binary_invert), a
-    call menu_config_prepare_binary
-    ld hl, 0x58f2
-    ld b, 3
-    call menu_config_header_span
-    ld hl, 0x58f6
-    ld b, 3
-    call menu_config_paint_left_binary
-    ld hl, 0x58fb
-    ld b, 2
-    jp menu_config_paint_right_binary
-
-menu_config_paint_link_attrs:
-    ld a, (menu_config_visible_l)
-    bit 1, a
+    ld a, (hl)
+    or a
     ret z
-    ld a, 2
     ld (menu_config_binary_mask), a
-    ld a, 1
+    inc hl
+    ld a, (hl)
+    ld c, a
+    and 0x3f
     ld (menu_config_binary_row), a
-    ld a, 2
-    ld (menu_config_binary_bit), a
-    ld a, 1
+    ld a, c
     ld (menu_config_binary_invert), a
-    call menu_config_prepare_binary
-    ld hl, 0x5912
-    ld b, 3
-    call menu_config_header_span
-    ld hl, 0x5916
-    ld b, 2
-    call menu_config_paint_left_binary
-    ld hl, 0x591b
-    ld b, 3
-    jp menu_config_paint_right_binary
-
-menu_config_paint_side_attrs:
+    inc hl
+    push hl
+    bit 7, c
+    jr nz, menu_config_paint_binary_high
+    ld a, (menu_config_paint_mask)
+    ld b, a
     ld a, (menu_config_visible_l)
-    bit 4, a
-    ret z
-    ld a, 16
-    ld (menu_config_binary_mask), a
-    ld a, 4
-    ld (menu_config_binary_row), a
-    ld a, 4
-    ld (menu_config_binary_bit), a
-    xor a
-    ld (menu_config_binary_invert), a
+    jr menu_config_paint_binary_active
+menu_config_paint_binary_high:
+    ld a, (menu_config_paint_mask + 1)
+    ld b, a
+    ld a, (menu_config_visible_h)
+menu_config_paint_binary_active:
+    and b
+    ld b, a
+    ld a, (menu_config_binary_mask)
+    and b
+    jr z, menu_config_paint_binary_skip
     call menu_config_prepare_binary
-    ld hl, 0x59d2
-    ld b, 4
+    ld a, (menu_config_binary_row)
+    call menu_config_setup_screen_row
+    ld l, a
+    ld h, 0
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    ld de, 0x5812
+    add hl, de
+    ex (sp), hl
+    ld b, (hl)
+    inc hl
+    ex (sp), hl
     call menu_config_header_span
-    ld hl, 0x59d6
-    ld b, 3
+    ; CONNECTION SETUP values start on an odd 4-pixel column after the
+    ; 4-pixel shift, so the first option cell is immediately after a
+    ; 3-cell label. GAME SETUP still uses a 4-cell label and lands here
+    ; without a skip.
+menu_config_paint_binary_left:
+    ex (sp), hl
+    ld b, (hl)
+    inc hl
+    ld c, b
+    ex (sp), hl
     call menu_config_paint_left_binary
-    ld hl, 0x59db
-    ld b, 3
-    jp menu_config_paint_right_binary
-
-menu_config_paint_notation_attrs:
-    ld a, (menu_config_visible_l)
-    bit 5, a
-    ret z
-    ld a, 32
-    ld (menu_config_binary_mask), a
     ld a, 5
-    ld (menu_config_binary_row), a
-    ld a, 8
-    ld (menu_config_binary_bit), a
-    xor a
-    ld (menu_config_binary_invert), a
-    call menu_config_prepare_binary
-    ld hl, 0x59f2
-    ld b, 4
-    call menu_config_header_span
-    ld hl, 0x59f6
-    ld b, 3
-    call menu_config_paint_left_binary
-    ld hl, 0x59fb
-    ld b, 2
-    jp menu_config_paint_right_binary
+    sub c
+menu_config_paint_binary_gap:
+    inc hl
+    dec a
+    jr nz, menu_config_paint_binary_gap
+    ex (sp), hl
+    ld b, (hl)
+    inc hl
+    ex (sp), hl
+    call menu_config_paint_right_binary
+    pop hl
+    jr menu_config_paint_binary_next
+menu_config_paint_binary_skip:
+    pop hl
+    inc hl
+    inc hl
+    inc hl
+menu_config_paint_binary_next:
+    ld a, (menu_config_binary_bit)
+    add a, a
+    jr menu_config_paint_binary_loop
 
 menu_config_prepare_binary:
     ld a, (menu_config_binary_bit)
@@ -507,7 +631,7 @@ menu_config_prepare_binary:
     and b
     ld e, a
     ld a, (menu_config_binary_invert)
-    or a
+    bit 6, a
     jr z, menu_config_prepare_binary_no_invert
     ld a, c
     xor b
@@ -520,7 +644,12 @@ menu_config_prepare_binary_no_invert:
     ld (menu_config_value_flag), a
     ld a, e
     ld (menu_config_focus_value), a
+    ld a, (menu_config_binary_invert)
+    bit 7, a
     ld a, (menu_config_defined_l)
+    jr z, menu_config_prepare_binary_defined
+    ld a, (menu_config_defined_h)
+menu_config_prepare_binary_defined:
     ld c, a
     ld a, (menu_config_binary_mask)
     and c
@@ -590,78 +719,167 @@ menu_config_right_focused_done:
     ld b, a
     jp menu_config_option_span
 
+; A = defined bit, C = setup row. D=1 if defined and not being edited.
+; B (span width) is preserved; E is scratch.
+menu_config_text_selected:
+    ld e, a
+    ld d, 0
+    ld a, (_setup_room_editing)
+    or a
+    jr z, menu_config_text_selected_def
+    ld a, (_setup_edit_row)
+    cp c
+    ret z
+menu_config_text_selected_def:
+    ld a, (menu_config_defined_l)
+    and e
+    ret z
+    inc d
+    ret
+
 menu_config_paint_room_attrs:
     ld a, (menu_config_visible_l)
     bit 2, a
     ret z
     ld hl, 0x5932
+    ld de, 0x5935
+    push de
     ld b, 3
     call menu_config_header_span
-    ld hl, 0x5936
+    pop hl
     ld a, (menu_config_values)
     bit 1, a
-    ld b, 6
-    jr nz, menu_config_room_width_done
-    ld b, 8
-menu_config_room_width_done:
-    ld d, 0
-    ld a, (menu_config_defined_l)
-    bit 2, a
-    jr z, menu_config_room_selected_done
-    inc d
-menu_config_room_selected_done:
+    jr nz, menu_config_room_mqtt
+    ; DIRECT keeps IP and PORT as independent controls. The 4-pixel shift
+    ; puts ':' and PORT[0] in one ULA cell, so PORT's span owns that cell
+    ; and ':' inherits PORT's colour. IP never paints into 0x593d.
+    ; Repaint the whole IP field unfocused first: swapping seats changes
+    ; the source between _last_ip and the peer host, and a shorter value
+    ; would leave the previous one's attributes standing to its right.
+    ld a, 4
+    ld c, 2
+    call menu_config_text_selected
+    push hl
     ld e, 0
-    ld a, (menu_config_cursor)
-    cp 2
-    jr nz, menu_config_room_focused_done
-    inc e
-menu_config_room_focused_done:
+    ld b, 8
+    call menu_config_option_span
+    pop hl
+    call menu_config_direct_ip_width
+    ld b, a
+    jr menu_config_room_width_done
+menu_config_room_mqtt:
+    ld b, 4
+menu_config_room_width_done:
+    ld a, 4
+    ld c, 2
+    call menu_config_text_selected
+    call menu_config_focus_box
     jp menu_config_option_span
+
+menu_config_direct_ip_width:
+    ld de, _last_ip
+    ld a, (_setup_choice)
+    or a
+    jr z, menu_config_direct_ip_count
+    ld de, _netchesszx_direct_host
+menu_config_direct_ip_count:
+    ld b, 0
+menu_config_direct_ip_count_loop:
+    ld a, (de)
+    or a
+    jr z, menu_config_direct_ip_width_ready
+    inc de
+    inc b
+    jr menu_config_direct_ip_count_loop
+menu_config_direct_ip_width_ready:
+    ld a, b
+    or a
+    jr nz, menu_config_direct_ip_nonempty
+    inc a
+menu_config_direct_ip_nonempty:
+    add a, 2
+    srl a
+    cp 9
+    ret c
+    ld a, 8
+    ret
 
 menu_config_paint_mqtt_attrs:
     ld a, (menu_config_visible_l)
+    bit 2, a
+    ret z
+    ld a, (_setup_choice + 1)
+    or a
+    jr z, menu_config_port_attrs
+    ; HIVEMQ starts with JOIN at attr 26 after the 4-pixel value shift.
+    ld hl, 0x593a
+    ld b, 4
+    ld a, 0x05
+    jp menu_config_attr_span
+menu_config_port_attrs:
+    ld a, (menu_config_visible_l)
     bit 3, a
     ret z
-    ld hl, 0x5952
+    ; Colon plus five port digits occupy attrs 29-31 (':' shares PORT[0]'s
+    ; cell and therefore PORT's colour). All five digits stay on-screen.
+    ld hl, 0x593d
     ld b, 3
-    call menu_config_header_span
-    ld hl, 0x5956
-    ld a, (menu_config_values)
-    bit 1, a
-    ld b, 3
-    jr z, menu_config_mqtt_width_done
-    ld b, 6
-menu_config_mqtt_width_done:
-    ld d, 0
-    ld a, (menu_config_defined_l)
-    bit 3, a
-    jr z, menu_config_mqtt_selected_done
-    inc d
-menu_config_mqtt_selected_done:
-    ld e, 0
-    ld a, (menu_config_cursor)
-    cp 3
-    jr nz, menu_config_mqtt_focused_done
-    inc e
-menu_config_mqtt_focused_done:
+    ld a, 8
+    ld c, 3
+    call menu_config_text_selected
+    call menu_config_focus_box
+    ld a, e
+    or a
+    jr z, menu_config_port_unfocused
+    ; PORT's marker replaces ':' while focused.
+    push hl
+    ld hl, 0x4b3d
+    res 7, (hl)
+    ld h, 0x4e
+    res 7, (hl)
+    pop hl
     jp menu_config_option_span
+menu_config_port_unfocused:
+    call menu_config_option_span
+    ; Restore ':' after removing the PORT marker.
+    ld hl, 0x4b3d
+    set 7, (hl)
+    ld h, 0x4e
+    set 7, (hl)
+    ret
+
+; C = setup row. Sets E if the cursor is on that row and it is not being edited.
+menu_config_focus_box:
+    ld e, 0
+    ld a, (_setup_room_editing)
+    or a
+    jr z, menu_config_focus_box_cursor
+    ld a, (_setup_edit_row)
+    cp c
+    ret z
+menu_config_focus_box_cursor:
+    ld a, (menu_config_cursor)
+    cp c
+    ret nz
+    inc e
+    ret
 
 menu_config_paint_board_attrs:
     ld a, (menu_config_visible_l)
-    bit 6, a
+    bit 7, a
     ret z
     ld hl, 0x5a12
     ld b, 4
     call menu_config_header_span
     ld a, (menu_config_cursor)
-    cp 6
+    cp ROW_BOARD
     jr nz, menu_config_board_not_cursor
     ld a, (menu_config_board_theme)
     ld l, a
     jp menu_config_board_swatches
 menu_config_board_not_cursor:
     ld a, (menu_config_defined_l)
-    bit 6, a
+    bit 7, a
     jr z, menu_config_board_not_defined
     ld a, (menu_config_board_theme)
     add a, 5
@@ -672,14 +890,14 @@ menu_config_board_not_defined:
     jp menu_config_board_swatches
 
 menu_config_paint_set_attrs:
-    ld a, (menu_config_visible_l)
-    bit 7, a
+    ld a, (menu_config_visible_h)
+    bit 0, a
     ret z
     ld hl, 0x5a32
     ld b, 3
     call menu_config_header_span
-    ld a, (menu_config_defined_l)
-    bit 7, a
+    ld a, (menu_config_defined_h)
+    bit 0, a
     jr nz, menu_config_set_selected_ready
     ld a, 0xff
     jr menu_config_set_selected_store
@@ -688,7 +906,7 @@ menu_config_set_selected_ready:
 menu_config_set_selected_store:
     ld (menu_config_piece_selected), a
     ld a, (menu_config_cursor)
-    cp 7
+    cp ROW_SET
     jr nz, menu_config_set_not_cursor
     ld a, (menu_config_piece_set)
     ld l, a
@@ -697,60 +915,24 @@ menu_config_set_not_cursor:
     ld l, 0xff
     jp _menu_config_piece_set_options_asm
 
-menu_config_paint_hints_attrs:
-    ld a, (menu_config_visible_h)
-    bit 0, a
-    ret z
-    xor a
-    ld (menu_config_binary_mask), a
-    ld a, 8
-    ld (menu_config_binary_row), a
-    ld a, 16
-    ld (menu_config_binary_bit), a
-    xor a
-    ld (menu_config_binary_invert), a
-    call menu_config_prepare_binary
-    ld a, (menu_config_defined_h)
-    and 1
-    ld (menu_config_defined_flag), a
-    ld hl, 0x5a52
-    ld b, 4
-    call menu_config_header_span
-    ld hl, 0x5a56
-    ld b, 2
-    call menu_config_paint_left_binary
-    ld hl, 0x5a5b
-    ld b, 1
-    jp menu_config_paint_right_binary
-
-menu_config_paint_action_attrs:
-    ld a, (menu_config_visible_h)
-    bit 1, a
-    ret z
-    ld a, (menu_config_cursor)
-    cp 9
-    ld a, 0x44
-    jr nz, menu_config_paint_action_span
-    ld a, 0x38
-menu_config_paint_action_span:
-    ld hl, 0x5a9d
-    ld b, 3
-    jp menu_config_attr_span
-
 menu_config_option_span:
+    call menu_config_option_marker
     ld a, e
     or a
     jr z, menu_config_option_not_focused
+    ; Ink-only focus: ULA cells are 8 pixels and the font is 4, so a paper
+    ; box always spills into the neighbouring glyph. Bright ink on black
+    ; paper leaves padding spaces invisible.
     ld a, d
     or a
-    ld a, 0x38
+    ld a, 0x47
     jr z, menu_config_attr_span
-    inc a
+    dec a
     jr menu_config_attr_span
 menu_config_option_not_focused:
     ld a, d
     or a
-    ld a, 0x06
+    ld a, 0x05
     jr nz, menu_config_attr_span
     ld a, 0x07
 menu_config_attr_span:
@@ -758,6 +940,104 @@ menu_config_attr_span:
     inc hl
     djnz menu_config_attr_span
     ret
+
+; HL = first option attribute cell. E != 0 only for the focused option.
+menu_config_option_marker:
+    push bc
+    push de
+    push hl
+    ld b, 0
+    ld a, e
+    or a
+    jr z, menu_config_marker_focus_ready
+    inc b
+menu_config_marker_focus_ready:
+    ld a, h
+    sub 0x58
+    add a, a
+    add a, a
+    add a, a
+    ld d, a
+    ld a, l
+    and 0xe0
+    rlca
+    rlca
+    rlca
+    or d
+    ld d, a
+    ld a, l
+    and 0x1f
+    add a, a
+    ld e, a
+    ld a, d
+    cp 14
+    jr c, menu_config_marker_col
+    cp 19
+    jr nc, menu_config_marker_col
+    dec e
+menu_config_marker_col:
+    ld a, b
+    or a
+    ld c, 0x03
+    jr z, menu_config_marker_attr_ready
+    ld c, 0x47
+menu_config_marker_attr_ready:
+    ld a, d
+    cp 14
+    jr c, menu_config_marker_attr_store
+    cp 19
+    jr nc, menu_config_marker_attr_store
+    dec hl
+menu_config_marker_attr_store:
+    ld (hl), c
+
+    ld a, e
+    srl a
+    ld c, a
+    ld a, d
+    and 0x18
+    add a, 0x40
+    ld h, a
+    ld a, d
+    and 0x07
+    rrca
+    rrca
+    rrca
+    add a, c
+    ld l, a
+    bit 0, e
+    ld de, menu_config_marker_left
+    jr z, menu_config_marker_pixels
+    ld de, menu_config_marker_right
+menu_config_marker_pixels:
+    inc h
+    ld c, 6
+menu_config_marker_scan:
+    ld a, (de)
+    cpl
+    and (hl)
+    ld (hl), a
+    ld a, b
+    or a
+    jr z, menu_config_marker_next
+    ld a, (de)
+    or (hl)
+    ld (hl), a
+menu_config_marker_next:
+    inc de
+    inc h
+    dec c
+    jr nz, menu_config_marker_scan
+    pop hl
+    pop de
+    pop bc
+    ret
+
+; 4x8 glyph; the cell supplies blank top and bottom scanlines.
+menu_config_marker_left:
+    DEFB 0x00, 0x40, 0x20, 0x20, 0x40, 0x00
+menu_config_marker_right:
+    DEFB 0x00, 0x04, 0x02, 0x02, 0x04, 0x00
 
 _menu_config_validate_ip_ovl_entry:
     ld l, 0
@@ -777,6 +1057,13 @@ _menu_config_piece_set_options_asm:
     ld hl, 0x5a3c
     ld d, 2
 menu_config_piece_set_option_span:
+    ld e, 0
+    ld a, c
+    cp b
+    jr nz, menu_config_piece_set_marker
+    inc e
+menu_config_piece_set_marker:
+    call menu_config_option_marker
     call menu_config_piece_set_option_attr
 menu_config_piece_set_option_store:
     ld (hl), a
@@ -797,9 +1084,9 @@ menu_config_piece_set_option_attr:
 menu_config_piece_set_option_focus:
     ld a, (menu_config_piece_selected)
     cp b
-    ld a, 0x38
+    ld a, 0x47
     ret nz
-    inc a
+    dec a
     ret
 menu_config_piece_set_option_selected:
     ld a, 0x06
@@ -807,7 +1094,11 @@ menu_config_piece_set_option_selected:
 
 ; Swatches read the per-platform theme attrs straight from the resident DAT.
 ; Next replaces only wood with its dedicated ULA+ group-3 colour pair.
+IFDEF NETCHESSZX_NEXT_BANKING
+menu_config_dat_light_attrs EQU 0x3500 + 786
+ELSE
 menu_config_dat_light_attrs EQU 0x6000 + 786
+ENDIF
 
 menu_config_board_swatches:
     ld c, l
@@ -832,58 +1123,56 @@ IFDEF NETCHESSZX_NEXT
     ld a, 0xc1
 menu_config_board_swatch_attr_ready:
 ENDIF
+    push af
+    ld e, 0
+    ld a, c
+    cp b
+    jr nz, menu_config_board_swatch_marker
+    inc e
+menu_config_board_swatch_marker:
+    call menu_config_option_marker
+    pop af
     ld e, a
     ld a, c
     cp b
     ld a, e
-    jr z, menu_config_board_swatch_flash
+    jr z, menu_config_board_swatch_focus
     ld a, b
     add a, 5
     cp c
     ld a, e
     jr nz, menu_config_board_swatch_store
+menu_config_board_swatch_focus:
 IFDEF NETCHESSZX_NEXT
     ; Keep the ULA+ palette group selected by the theme attribute.
 ELSE
     or 0x40
-ENDIF
-    jr menu_config_board_swatch_store
-menu_config_board_swatch_flash:
-    ld a, e
-    and 0xc0
-    ld d, a
-    ld a, e
-    and 0x07
-    rlca
-    rlca
-    rlca
-    or d
-    ld d, a
-    ld a, e
-    and 0x38
-    rrca
-    rrca
-    rrca
-    or d
-IFDEF NETCHESSZX_NEXT
-    ; Swapping ink/paper is enough to mark focus without changing palette group.
-ELSE
-    or 0x80
 ENDIF
 menu_config_board_swatch_store:
     ld (hl), a
     inc hl
     ld (hl), 0x07
     inc hl
+    ; Keep the original 4-pixel bar under the chip as a second focus cue.
+    ld a, b
+    add a, a
+    add a, 0x16
+    ld e, a
+    ld d, 0x57
+    ld a, c
+    cp b
+    ld a, 0xf0
+    jr z, menu_config_board_swatch_bar
+    xor a
+menu_config_board_swatch_bar:
+    ld (de), a
     ret
 
 menu_config_line_game:
-    DEFB 7, "GAME   CREATE    JOIN", 0
+    DEFB 7, "GAME  CREATE    JOIN", 0
 menu_config_line_link:
-    DEFB 8, "LINK   MQTT      DIRECT", 0
-menu_config_line_mqtt:
-    DEFB 10, "MQTT   HIVEMQ:1883", 0
-menu_config_line_side:
+    DEFB 8, "LINK  MQTT      DIRECT", 0
+menu_config_line_color:
     DEFB 14, "COLOR  WHITE     BLACK", 0
 menu_config_line_notation:
     DEFB 15, "NOTAT  COORD     SAN", 0
@@ -891,32 +1180,19 @@ menu_config_line_board:
     DEFB 16, "BOARD  ", 127, "   ", 127, "   ", 127, "   ", 127, "   ", 127, 0
 menu_config_line_set:
 IFDEF NETCHESSZX_NEXT
-    ; Next sprite sets: california, mpchess, totoy (lichess), truncated to fit.
     DEFB 17, "SET    CALI  MPCH  TOTY", 0
 ELSE
     DEFB 17, "SET    BRRY  SPCY  PIXL", 0
 ENDIF
 menu_config_line_hints:
     DEFB 18, "HINTS  OFF       ON", 0
-menu_config_line_start:
-    DEFB 20, "                     START", 0
-
-menu_config_label_room:
-    DEFB "ROOM   "
-menu_config_label_ip:
-    DEFB "IP     "
-menu_config_label_port:
-    DEFB "PORT   "
-menu_config_text_local:
-    DEFB "LOCAL", 0
-menu_config_edit_row:
+menu_config_binary_attrs:
+    DEFB 1, 0x00, 3, 4, 3
+    DEFB 2, 0x41, 3, 3, 4
+    DEFB 32, 0x05, 4, 3, 3
+    DEFB 64, 0x06, 4, 3, 2
+    DEFB 2, 0x89, 4, 2, 1
     DEFB 0
-menu_config_edit_flags:
-    DEFB 0
-menu_config_edit_max:
-    DEFB 0
-menu_config_edit_line_buf:
-    DEFS 24
 menu_config_values:
     DEFB 0
 menu_config_visible_l:
@@ -957,9 +1233,7 @@ menu_config_option_width:
     DEFB 0
 menu_config_render_dirty:
     DEFW 0
-menu_config_render_edit:
+menu_config_nav_scratch:
     DEFB 0
-menu_config_blank_line:
-    DEFB 0
-    DEFM "              "
-    DEFB 0
+menu_config_paint_mask:
+    DEFW 0

@@ -175,7 +175,7 @@ ASM_LOWRAM_EQUS = {
     (
         "asm/next/overlay_loader_next.asm",
         "_overlay_scratch_base",
-    ): "NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR",
+    ): "NETCHESSZX_NEXT_OVERLAY_SCRATCH_ADDR",
     (
         "asm/overlay/setup/entry_setup.asm",
         "CTX",

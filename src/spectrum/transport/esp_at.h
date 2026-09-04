@@ -23,16 +23,15 @@ uint8_t spectrum_net_ensure_command_mode(void);
 uint8_t spectrum_net_sync_time(void);
 
 #define spectrum_esp_at_last_ip spectrum_net_last_ip
-#define spectrum_esp_at_cmd spectrum_net_at_cmd
-#define spectrum_esp_at_guard_wait spectrum_net_guard_wait
-#define spectrum_esp_at_ensure_command_mode spectrum_net_ensure_command_mode
-#define spectrum_esp_at_sync_time spectrum_net_sync_time
 
 #ifdef NETCHESSZX_HOST_TEST
 void netchesszx_esp_at_test_capture_ip(const char *line);
-void netchesszx_esp_at_test_capture_time(const char *line);
+void netchesszx_esp_at_test_recovery_begin(void);
 uint8_t netchesszx_esp_at_test_capture_msdos_time(uint16_t date,
                                                   uint16_t time);
+uint8_t netchesszx_esp_at_test_validate_msdos_time(uint16_t date,
+                                                   uint16_t time,
+                                                   uint8_t apply);
 #endif
 
 #endif

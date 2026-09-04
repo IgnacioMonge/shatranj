@@ -34,6 +34,12 @@ C_WRAPPERS = {
         "_board_undo_restore_ovl",
     "asm/overlay/control/entry_control.asm::_control_classify_ovl_entry":
         "_control_classify_ovl",
+    "asm/overlay/config/entry_config.asm::_config_load_ovl_entry":
+        "_config_load_ovl",
+    "asm/overlay/config/entry_config.asm::_config_save_ovl_entry":
+        "_config_save_ovl",
+    "asm/overlay/config/entry_config.asm::_config_defaults_ovl_entry":
+        "_config_defaults_ovl",
     "asm/overlay/direct/entry_direct.asm::_direct_read_payload_ovl_entry":
         "_direct_read_payload_ovl",
     "asm/overlay/direct/entry_direct.asm::_direct_send_text_ovl_entry":
@@ -60,6 +66,8 @@ C_WRAPPERS = {
         "_input_edit_key_ovl",
     "asm/overlay/input_edit/entry_input_edit.asm::_input_edit_history_add_ovl_entry":
         "_input_edit_history_add_ovl",
+    "asm/overlay/input_edit/entry_input_edit.asm::_input_edit_setup_line_ovl_entry":
+        "_input_edit_setup_line_ovl",
     "asm/overlay/menu_logic/entry_menu_logic.asm::_status_phase_ovl_entry":
         "_status_phase_ovl",
     "asm/overlay/mqtt_tx/entry_mqtt_tx.asm::_mqtt_tx_send_text_ovl_entry":
@@ -81,19 +89,36 @@ C_WRAPPERS = {
 ASM_ENTRIES = {
     "asm/overlay/about/entry_about.asm::_about_render_ovl_entry",
     "asm/overlay/board/entry_board.asm::_board_snapshot_save_ovl_entry",
+    "asm/overlay/control/entry_control.asm::_control_format_busy_ovl_entry",
+    "asm/overlay/gui_log/entry_gui_log.asm::_gui_log_animate_board_ovl_entry",
+    "asm/overlay/gui_log/entry_gui_log.asm::_gui_log_morph_board_ovl_entry",
+    "asm/overlay/gui_log/entry_gui_log.asm::_gui_log_restore_side_panels_ovl_entry",
+    "asm/overlay/gui_log/entry_gui_log.asm::_gui_log_apply_move_ovl_entry",
     "asm/overlay/input_edit/entry_input_edit.asm::input_edit_parse_move_ovl_entry",
     "asm/overlay/menu_config/entry_menu_config.asm::_menu_config_run_ovl_entry",
     "asm/overlay/menu_config/entry_menu_config.asm::_menu_config_paint_attrs_ovl_entry",
     "asm/overlay/menu_config/entry_menu_config.asm::_menu_config_edit_line_ovl_entry",
     "asm/overlay/menu_config/entry_menu_config.asm::_menu_config_validate_ip_ovl_entry",
     "asm/overlay/menu_config/entry_menu_config.asm::_menu_config_render_ovl_entry",
+    "asm/overlay/menu_config/entry_menu_config.asm::_menu_config_nav_ovl_entry",
+    "asm/overlay/time_config/entry_time_config.asm::_time_config_ui_ovl_entry",
+    "asm/overlay/time_config/entry_time_config.asm::_time_config_step_ovl_entry",
+    "asm/overlay/time_config/entry_time_config.asm::_time_config_init_ovl_entry",
+    "asm/overlay/time_config/entry_time_config.asm::_time_config_commit_ovl_entry",
     "asm/overlay/setup/entry_setup.asm::_setup_compute_visible_ovl_entry",
     "asm/overlay/setup/entry_setup.asm::_setup_step_ovl_entry",
 }
 
 PRIVATE_ENTRY_MACROS = {
     "SPECTRUM_OVL_INPUT_EDIT_PARSE_MOVE_PRIVATE",
+    "SPECTRUM_OVL_INPUT_EDIT_SETUP_LINE_PRIVATE",
+    "SPECTRUM_OVL_MENU_CONFIG_NAV_PRIVATE",
     "SPECTRUM_OVL_SETUP_COMPUTE_VISIBLE_PRIVATE",
+    "SPECTRUM_OVL_GUI_LOG_ANIMATE_PRIVATE",
+    "SPECTRUM_OVL_GUI_LOG_MORPH_PRIVATE",
+    "SPECTRUM_OVL_GUI_LOG_RESTORE_PANELS_PRIVATE",
+    "SPECTRUM_OVL_GUI_LOG_APPLY_MOVE_PRIVATE",
+    "SPECTRUM_OVL_CONTROL_FORMAT_BUSY_PRIVATE",
 }
 
 ENTRY_TABLES = {
@@ -108,6 +133,12 @@ ENTRY_TABLES = {
     ],
     "asm/overlay/control/entry_control.asm": [
         ("SPECTRUM_OVL_CONTROL_CLASSIFY", "_control_classify_ovl_entry"),
+        ("SPECTRUM_OVL_CONTROL_FORMAT_BUSY_PRIVATE", "_control_format_busy_ovl_entry"),
+    ],
+    "asm/overlay/config/entry_config.asm": [
+        ("SPECTRUM_OVL_CONFIG_LOAD", "_config_load_ovl_entry"),
+        ("SPECTRUM_OVL_CONFIG_SAVE", "_config_save_ovl_entry"),
+        ("SPECTRUM_OVL_CONFIG_DEFAULTS", "_config_defaults_ovl_entry"),
     ],
     "asm/overlay/direct/entry_direct.asm": [
         ("SPECTRUM_OVL_DIRECT_LISTEN", "_direct_listen_ovl"),
@@ -124,6 +155,10 @@ ENTRY_TABLES = {
             "SPECTRUM_OVL_GUI_LOG_REMOVE_LAST_MOVE",
             "_gui_log_remove_last_move_ovl_entry",
         ),
+        ("SPECTRUM_OVL_GUI_LOG_ANIMATE_PRIVATE", "_gui_log_animate_board_ovl_entry"),
+        ("SPECTRUM_OVL_GUI_LOG_MORPH_PRIVATE", "_gui_log_morph_board_ovl_entry"),
+        ("SPECTRUM_OVL_GUI_LOG_RESTORE_PANELS_PRIVATE", "_gui_log_restore_side_panels_ovl_entry"),
+        ("SPECTRUM_OVL_GUI_LOG_APPLY_MOVE_PRIVATE", "_gui_log_apply_move_ovl_entry"),
     ],
     "asm/overlay/menu_config/entry_menu_config.asm": [
         ("SPECTRUM_OVL_MENU_CONFIG_RUN", "_menu_config_run_ovl_entry"),
@@ -131,6 +166,7 @@ ENTRY_TABLES = {
         ("SPECTRUM_OVL_MENU_CONFIG_VALIDATE_IP", "_menu_config_validate_ip_ovl_entry"),
         ("SPECTRUM_OVL_MENU_CONFIG_EDIT_LINE", "_menu_config_edit_line_ovl_entry"),
         ("SPECTRUM_OVL_MENU_CONFIG_RENDER", "_menu_config_render_ovl_entry"),
+        ("SPECTRUM_OVL_MENU_CONFIG_NAV_PRIVATE", "_menu_config_nav_ovl_entry"),
     ],
     "asm/overlay/menu_logic/entry_menu_logic.asm": [
         ("SPECTRUM_OVL_STATUS_PHASE", "_status_phase_ovl_entry"),
@@ -146,6 +182,8 @@ ENTRY_TABLES = {
         ("SPECTRUM_OVL_MQTT_TX_PUBLISH_SETUP", "_mqtt_tx_publish_setup_ovl_entry"),
         ("SPECTRUM_OVL_MQTT_TX_SYNC_TIME", "_mqtt_tx_sync_time_ovl"),
         ("SPECTRUM_OVL_MQTT_TX_PUBLISH_PRESENCE", "_mqtt_tx_publish_presence_ovl"),
+        ("SPECTRUM_OVL_MQTT_TX_CLOCK_RETRY_START", "_mqtt_tx_clock_retry_start_ovl"),
+        ("SPECTRUM_OVL_MQTT_TX_CLOCK_RETRY_POLL", "_mqtt_tx_clock_retry_poll_ovl"),
     ],
     "asm/overlay/restore/entry_restore.asm": [
         ("SPECTRUM_OVL_RESTORE_BUILD_FRAME", "_restore_build_frame_ovl_entry"),
@@ -176,6 +214,10 @@ ENTRY_TABLES = {
             "SPECTRUM_OVL_INPUT_EDIT_PARSE_MOVE_PRIVATE",
             "input_edit_parse_move_ovl_entry",
         ),
+        (
+            "SPECTRUM_OVL_INPUT_EDIT_SETUP_LINE_PRIVATE",
+            "_input_edit_setup_line_ovl_entry",
+        ),
     ],
     "asm/overlay/setup/entry_setup.asm": [
         ("SPECTRUM_OVL_SETUP_STEP", "_setup_step_ovl_entry"),
@@ -183,6 +225,12 @@ ENTRY_TABLES = {
             "SPECTRUM_OVL_SETUP_COMPUTE_VISIBLE_PRIVATE",
             "_setup_compute_visible_ovl_entry",
         ),
+    ],
+    "asm/overlay/time_config/entry_time_config.asm": [
+        ("SPECTRUM_OVL_TIME_CONFIG_UI", "_time_config_ui_ovl_entry"),
+        ("SPECTRUM_OVL_TIME_CONFIG_STEP", "_time_config_step_ovl_entry"),
+        ("SPECTRUM_OVL_TIME_CONFIG_INIT", "_time_config_init_ovl_entry"),
+        ("SPECTRUM_OVL_TIME_CONFIG_COMMIT", "_time_config_commit_ovl_entry"),
     ],
 }
 
@@ -248,27 +296,47 @@ def check_dispatchers(root: Path) -> list[str]:
     ):
         path = root / rel
         lines = path.read_text(encoding="utf-8").splitlines()
-        if instructions_after_label(lines, "_spectrum_overlay_exec_cached") != expected_decode:
+        decoded = instructions_after_label(lines, "_spectrum_overlay_exec_cached")
+        if rel == "asm/esxdos/overlay_loader.asm":
+            expected_spxn_guard = [
+                "ifdef netchesszx_spectranext",
+                "ld a, (_spxn_rom_held)",
+                "or a",
+                "jr nz, ovl_exec_nested_fail",
+                "endif",
+            ]
+            decode_ok = decoded == expected_spxn_guard + expected_decode
+        else:
+            decode_ok = decoded == expected_decode
+        if not decode_ok:
             errors.append(f"{path}: dispatcher must decode packed overlay arguments directly")
         canonical = instructions_after_label(lines, "ovl_args_canonical")
         if canonical[:3] != ["ld (ovl_id), a", "ld a, b", "ld (ovl_entry_id), a"]:
             errors.append(f"{path}: canonical overlay and entry ids must be stored together")
-        try:
-            start = lines.index("ovl_call_loaded:")
-        except ValueError:
+        if "ovl_call_loaded:" not in lines:
             errors.append(f"{path}: missing ovl_call_loaded")
             continue
-        instructions: list[str] = []
-        for raw_line in lines[start + 1:]:
-            if LABEL_RE.match(raw_line):
-                break
-            instruction = raw_line.split(";", 1)[0].strip().lower()
-            if instruction:
-                instructions.append(re.sub(r"\s+", " ", instruction))
-        if instructions[-len(expected):] != expected:
-            errors.append(f"{path}: dispatcher must pass context in both DE and HL")
-        if instructions[:2] != ["ld a, (ovl_entry_id)", "ld hl, _overlay_code_slot"]:
-            errors.append(f"{path}: dispatcher must consume the canonical entry id directly")
+        instructions = instructions_after_label(lines, "ovl_call_loaded")
+        if rel == "asm/esxdos/overlay_loader.asm":
+            text = "\n".join(line.strip().lower() for line in lines)
+            required = (
+                "call spxn_push_page_b",
+                "call spxn_pop_page_b",
+                "ld a, (ovl_entry_id)",
+                "ld hl, _overlay_code_slot",
+                "ld bc, ovl_spxn_return",
+                "ld bc, ovl_return",
+                "ld de, _spectrum_overlay_context",
+                "ld h, d",
+                "ld l, e",
+            )
+            if any(item not in text for item in required):
+                errors.append(f"{path}: Spectranext Page-B dispatcher contract incomplete")
+        else:
+            if instructions[-len(expected):] != expected:
+                errors.append(f"{path}: dispatcher must pass context in both DE and HL")
+            if instructions[:2] != ["ld a, (ovl_entry_id)", "ld hl, _overlay_code_slot"]:
+                errors.append(f"{path}: dispatcher must consume the canonical entry id directly")
 
         selector = instructions_after_label(lines, "ovl_select_atlas_entry")
         if selector[:4] != [
@@ -322,42 +390,68 @@ def check_setup_editability(root: Path) -> list[str]:
     endpoint = instructions_after_label(lines, "su_room_editable")
     if endpoint != [
         "ld a, (_setup_cursor)",
+        "cp 3",
+        "jr z, su_re_port",
         "sub 2",
-        "jr nz, su_re_port",
-        "ld hl, (_setup_choice)",
-        "ld a, h",
-        "or l",
-        "ret",
-    ]:
-        errors.append(f"{path}: HOST DIRECT IP must remain read-only")
-    port = instructions_after_label(lines, "su_re_port")
-    if port[:5] != [
-        "dec a",
         "jr nz, su_re_false",
+        "ld hl, _netchesszx_mqtt_code + 2",
         "ld a, (_setup_choice + 1)",
         "or a",
-        "jr z, su_re_true",
+        "ret nz",
+        "ld hl, _netchesszx_direct_host",
+        "ld a, (_setup_choice)",
+        "or a",
+        "ret",
     ]:
-        errors.append(f"{path}: DIRECT port must remain editable")
+        errors.append(f"{path}: ROOM/IP editability must follow transport and role")
+    port = instructions_after_label(lines, "su_re_port")
+    if port != [
+        "ld hl, _setup_port_text",
+        "ld a, (_setup_choice + 1)",
+        "or a",
+        "jr nz, su_re_false",
+        "inc a",
+        "ret",
+    ]:
+        errors.append(f"{path}: PORT must remain a separate DIRECT-only control")
     auto_room = instructions_after_label(lines, "su_link_auto_room")
     if auto_room[-3:] != [
         "ld a, 2",
-        "ld (su_clear_from), a",
+        "ld (ctx_clear_from), a",
         "jp su_define_row_and_finish",
     ]:
-        errors.append(f"{path}: HOST DIRECT must advance past the read-only IP")
+        errors.append(f"{path}: CREATE DIRECT must keep the static local IP defined")
+    host_direct = instructions_after_label(lines, "su_as_host_direct")
+    if host_direct != ["ld a, 3", "jr su_as_store_next"]:
+        errors.append(f"{path}: CREATE DIRECT must focus PORT after LINK")
     focus = instructions_after_label(lines, "su_visible_a")
-    if focus != [
-        "ld e, a",
-        "ld d, 0",
+    if focus != ["ld e, a"]:
+        errors.append(f"{path}: endpoint controls must remain navigable")
+    focus_mask = instructions_after_label(lines, "su_va_mask")
+    if focus_mask != [
+        "ld a, e",
         "cp 2",
-        "jr nz, su_va_mask",
-        "ld hl, (_setup_choice)",
-        "ld a, h",
-        "or l",
-        "ret z",
+        "jr nz, su_va_check_port",
+        "ld a, (_setup_choice + 1)",
+        "or a",
+        "jr nz, su_va_bit_restore",
+        "ld a, (_setup_choice)",
+        "or a",
+        "jp z, su_re_false",
     ]:
-        errors.append(f"{path}: HOST DIRECT navigation must skip the read-only IP")
+        errors.append(f"{path}: CREATE DIRECT must skip static IP navigation")
+    if instructions_after_label(lines, "su_va_bit_restore") != ["ld a, e"]:
+        errors.append(f"{path}: endpoint navigation must restore its logical row")
+    port_mask = instructions_after_label(lines, "su_va_check_port")
+    if port_mask != [
+        "cp 3",
+        "jr nz, su_va_bit",
+        "ld a, (_setup_choice + 1)",
+        "or a",
+        "jp nz, su_re_false",
+        "ld a, e",
+    ]:
+        errors.append(f"{path}: row 3 must navigate PORT for DIRECT and skip MQTT")
     return errors
 
 

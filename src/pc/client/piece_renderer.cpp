@@ -1,11 +1,12 @@
 #include "piece_renderer.h"
 
+#include "ui_theme.h"
+
 #include <QByteArray>
 #include <QColor>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
-#include <QFont>
 #include <QHash>
 #include <QImage>
 #include <QPainter>
@@ -14,16 +15,56 @@
 #include <QSvgRenderer>
 #include <QString>
 #include <QStringList>
+#include <QtGlobal>
 
 namespace PieceRenderer {
+
+struct SquareIconKey {
+    quint16 squareSize = 0;
+    quint16 pieceIconSize = 0;
+    qint8 row = 0;
+    qint8 col = 0;
+    char piece = 0;
+    quint8 flags = 0;
+
+    bool operator==(const SquareIconKey &other) const
+    {
+        return squareSize == other.squareSize &&
+               pieceIconSize == other.pieceIconSize &&
+               row == other.row &&
+               col == other.col &&
+               piece == other.piece &&
+               flags == other.flags;
+    }
+};
+
+static_assert(sizeof(SquareIconKey) == 8,
+              "SquareIconKey must stay packed for qHashBits");
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+inline size_t qHash(const SquareIconKey &key, size_t seed = 0) noexcept
+{
+    return qHashBits(&key, sizeof(key), seed);
+}
+#else
+inline uint qHash(const SquareIconKey &key, uint seed = 0)
+{
+    return qHashBits(&key, sizeof(key), seed);
+}
+#endif
 
 static QString g_pieceSet;
 static QString g_boardTexture;
 static QHash<QString, QIcon> s_iconCache;
-static QHash<QString, QIcon> s_squareIconCache;
+static QHash<SquareIconKey, QIcon> s_squareIconCache;
 static QString s_boardCacheName;
 static int s_boardCacheSquareSize = 0;
 static QImage s_boardCache;
+static QStringList s_pcClientRoots;
+static bool s_pcClientRootsResolved = false;
+static QColor s_wellColor;
+static QString s_wellTexture;
+static int s_wellSquareSize = -1;
 
 // --- Piece set discovery ---
 
@@ -77,22 +118,43 @@ void setBoardTexture(const QString &name)
     s_boardCache = QImage();
     s_boardCacheName.clear();
     s_boardCacheSquareSize = 0;
+    s_wellColor = QColor();
+    s_wellTexture.clear();
+    s_wellSquareSize = -1;
 }
 QString boardTexture() { return g_boardTexture; }
 
+static const char *cornerRadiusProperty(SquareCorner corner)
+{
+    switch (corner) {
+    case CornerTopLeft:     return "border-top-left-radius";
+    case CornerTopRight:    return "border-top-right-radius";
+    case CornerBottomLeft:  return "border-bottom-left-radius";
+    case CornerBottomRight: return "border-bottom-right-radius";
+    case CornerNone:        break;
+    }
+    return nullptr;
+}
+
 QString boardSquareStyle(int row, int col, int squareSize,
                          const QString &background, const QString &foreground,
-                         const QString &border)
+                         const QString &border, SquareCorner corner)
 {
     const bool light = ((row + col) % 2) == 0;
-    const QString defaultBg = light ? QStringLiteral("#f0f0ec")
-                                    : QStringLiteral("#5f6870");
+    const QString defaultBg = light ? QStringLiteral(SHZ_SQ_LIGHT)
+                                    : QStringLiteral(SHZ_SQ_DARK);
     const bool textured = background == defaultBg &&
                           !boardTextureImage(squareSize).isNull();
     const QString bg = textured ? QStringLiteral("transparent") : background;
+    QString roundedVertex;
+    if (const char *property = cornerRadiusProperty(corner)) {
+        roundedVertex = QString(" %1:%2px;").arg(QLatin1String(property))
+                                            .arg(SHZ_R_SQ);
+    }
     return QString("QPushButton { background:%1; color:%2; border:%3;"
-                   " font:700 24px Consolas; padding:0; margin:0; }")
-        .arg(bg, foreground, border);
+                   " border-radius:0;%4 font-weight:700; font-size:24px;"
+                   " padding:0; margin:0; min-height:0; }")
+        .arg(bg, foreground, border, roundedVertex);
 }
 
 // --- Procedural drawing (fallback) ---
@@ -204,17 +266,60 @@ QString pieceAssetName(char piece)
                           .arg(QLatin1Char(type));
 }
 
-QString assetPath(const QString &relativePath)
+static const QStringList &pcClientRoots()
 {
+    if (s_pcClientRootsResolved) {
+        return s_pcClientRoots;
+    }
+    s_pcClientRootsResolved = true;
+    const QString relative = QStringLiteral("assets/pc-client");
     const QString appDir = QCoreApplication::applicationDirPath();
     const QStringList bases = {
-        QDir::cleanPath(appDir + "/" + relativePath),
-        QDir::cleanPath(appDir + "/../Resources/" + relativePath),
-        QDir::cleanPath(appDir + "/../../" + relativePath),
-        QDir::cleanPath(QDir::currentPath() + "/" + relativePath),
+        QDir::cleanPath(appDir + QLatin1Char('/') + relative),
+        QDir::cleanPath(appDir + QStringLiteral("/../Resources/") + relative),
+        QDir::cleanPath(appDir + QStringLiteral("/../../") + relative),
+        QDir::cleanPath(QDir::currentPath() + QLatin1Char('/') + relative),
     };
     for (const QString &p : bases) {
-        if (QFileInfo::exists(p)) return p;
+        if (QFileInfo::exists(p)) {
+            s_pcClientRoots.append(p);
+        }
+    }
+    return s_pcClientRoots;
+}
+
+QString assetPath(const QString &relativePath)
+{
+    const QString prefix = QStringLiteral("assets/pc-client");
+    if (relativePath == prefix || relativePath.startsWith(prefix + QLatin1Char('/'))) {
+        const QStringList &roots = pcClientRoots();
+        if (roots.isEmpty()) {
+            return QString();
+        }
+        if (relativePath == prefix) {
+            return roots.constFirst();
+        }
+        const QString rest = relativePath.mid(prefix.size() + 1);
+        for (const QString &root : roots) {
+            const QString path = QDir(root).filePath(rest);
+            if (QFileInfo::exists(path)) {
+                return QDir::cleanPath(path);
+            }
+        }
+        return QString();
+    }
+
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList bases = {
+        QDir::cleanPath(appDir + QLatin1Char('/') + relativePath),
+        QDir::cleanPath(appDir + QStringLiteral("/../Resources/") + relativePath),
+        QDir::cleanPath(appDir + QStringLiteral("/../../") + relativePath),
+        QDir::cleanPath(QDir::currentPath() + QLatin1Char('/') + relativePath),
+    };
+    for (const QString &p : bases) {
+        if (QFileInfo::exists(p)) {
+            return p;
+        }
     }
     return QString();
 }
@@ -305,10 +410,13 @@ QIcon pieceIcon(char piece)
 
 void prewarmPieceIcons()
 {
-    if (s_prewarmed) return;
+    if (s_prewarmed || g_pieceSet.isEmpty()) {
+        return;
+    }
     s_prewarmed = true;
-    for (const char piece : QByteArray("PNBRQKpnbrqk"))
+    for (const char piece : QByteArray("PNBRQKpnbrqk")) {
         (void)pieceIcon(piece);
+    }
 }
 
 void clearIconCache()
@@ -333,6 +441,9 @@ QImage boardTextureImage(int squareSize)
     if (path.isEmpty()) return QImage();
     QImage img(path);
     if (img.isNull()) return QImage();
+    if (img.depth() == 1) {
+        img = img.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    }
     const int totalPx = squareSize * 8;
     s_boardCacheName = g_boardTexture;
     s_boardCacheSquareSize = squareSize;
@@ -341,20 +452,72 @@ QImage boardTextureImage(int squareSize)
     return s_boardCache;
 }
 
+QColor boardWellColor(int squareSize)
+{
+    if (s_wellTexture == g_boardTexture && s_wellSquareSize == squareSize &&
+        s_wellColor.isValid()) {
+        return s_wellColor;
+    }
+    const QImage board = boardTextureImage(squareSize);
+    if (board.isNull() || squareSize <= 0) {
+        s_wellColor = QColor(SHZ_BOARD_WELL);
+    } else {
+        // Average of one central dark square (edges and vignettes lie), darkened
+        // so the frame still reads as a well and the coordinates keep contrast.
+        const QImage sample = board.copy(4 * squareSize, 3 * squareSize,
+                                         squareSize, squareSize)
+                                   .scaled(1, 1, Qt::IgnoreAspectRatio,
+                                           Qt::SmoothTransformation);
+        s_wellColor = sample.pixelColor(0, 0).darker(190);
+    }
+    s_wellTexture = g_boardTexture;
+    s_wellSquareSize = squareSize;
+    return s_wellColor;
+}
+
+// Textured squares carry the board image inside the icon, where a style sheet
+// radius cannot reach it, so the blunt vertex is painted into the pixmap.
+static QPixmap bluntSquareVertex(const QPixmap &square, SquareCorner corner,
+                                 int squareSize)
+{
+    if (corner == CornerNone) {
+        return square;
+    }
+    const qreal r = SHZ_R_SQ;
+    QPainterPath path;
+    path.addRoundedRect(QRectF(0, 0, squareSize, squareSize), r, r);
+    QPainterPath squaredOff;
+    if (corner != CornerTopLeft)     squaredOff.addRect(0, 0, r, r);
+    if (corner != CornerTopRight)    squaredOff.addRect(squareSize - r, 0, r, r);
+    if (corner != CornerBottomLeft)  squaredOff.addRect(0, squareSize - r, r, r);
+    if (corner != CornerBottomRight) squaredOff.addRect(squareSize - r, squareSize - r, r, r);
+    path = path.united(squaredOff);
+
+    QPixmap out(square.size());
+    out.fill(Qt::transparent);
+    QPainter painter(&out);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QBrush(square));
+    painter.drawPath(path);
+    return out;
+}
+
 QIcon boardSquareIcon(char piece, int row, int col, int squareSize,
                       int pieceIconSize, bool pieceVisible, bool legalHint,
-                      bool targetHighlight)
+                      bool targetHighlight, SquareCorner corner)
 {
-    const QString cacheKey = QStringLiteral("%1:%2:%3:%4:%5:%6:%7:%8:%9")
-        .arg(g_boardTexture)
-        .arg(QChar(piece))
-        .arg(row)
-        .arg(col)
-        .arg(squareSize)
-        .arg(pieceIconSize)
-        .arg(pieceVisible ? 1 : 0)
-        .arg(legalHint ? 1 : 0)
-        .arg(targetHighlight ? 1 : 0);
+    SquareIconKey cacheKey;
+    cacheKey.squareSize = static_cast<quint16>(qBound(0, squareSize, 0xffff));
+    cacheKey.pieceIconSize = static_cast<quint16>(qBound(0, pieceIconSize, 0xffff));
+    cacheKey.row = static_cast<qint8>(row);
+    cacheKey.col = static_cast<qint8>(col);
+    cacheKey.piece = piece;
+    cacheKey.flags = static_cast<quint8>(
+        (pieceVisible ? 1u : 0u) |
+        (legalHint ? 2u : 0u) |
+        (targetHighlight ? 4u : 0u) |
+        (static_cast<unsigned>(corner) << 3));
     const auto cached = s_squareIconCache.constFind(cacheKey);
     if (cached != s_squareIconCache.constEnd()) {
         return cached.value();
@@ -386,6 +549,7 @@ QIcon boardSquareIcon(char piece, int row, int col, int squareSize,
             painter.drawEllipse(QPointF(squareSize / 2.0, squareSize / 2.0), r, r);
         }
     }
+    pixmap = bluntSquareVertex(pixmap, corner, squareSize);
     QIcon icon(pixmap);
     s_squareIconCache.insert(cacheKey, icon);
     return icon;
@@ -395,18 +559,35 @@ QIcon boardSquareIcon(char piece, int row, int col, int squareSize,
 
 QIcon makeShatranjIcon()
 {
+    static const int kSizes[] = {16, 32, 48, 256};
     QIcon icon;
-    for (int size : {16, 32, 48, 64}) {
+    const QImage master(assetPath(QStringLiteral("assets/pc-client/about/app-icon.png")));
+    if (!master.isNull()) {
+        for (int size : kSizes) {
+            icon.addPixmap(QPixmap::fromImage(
+                master.scaled(size, size, Qt::IgnoreAspectRatio,
+                              Qt::SmoothTransformation)));
+        }
+        return icon;
+    }
+
+    for (int size : kSizes) {
         QPixmap pixmap(size, size);
         pixmap.fill(Qt::transparent);
         QPainter painter(&pixmap);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.setRenderHint(QPainter::TextAntialiasing, true);
-        QFont font("Segoe UI Symbol");
-        font.setPixelSize(static_cast<int>(size * 0.90));
-        painter.setFont(font);
-        painter.setPen(Qt::black);
-        painter.drawText(QRectF(0, -size * 0.04, size, size * 1.08), Qt::AlignCenter, QString(QChar(0x265E)));
+        const qreal inset = size >= 32 ? 0.5 : 0.0;
+        const qreal radius = size * 0.22;
+        const QPainterPath badge = roundedRectPath(
+            inset, inset, size - inset * 2.0, size - inset * 2.0, radius);
+        painter.fillPath(badge, QColor(QStringLiteral(SHZ_INK)));
+        painter.setPen(QPen(QColor(196, 165, 116), size >= 32 ? 1.5 : 1.0));
+        painter.drawPath(badge);
+        const qreal scale = size / 56.0;
+        painter.translate((size - 52.0 * scale) * 0.5, size * 0.06);
+        painter.scale(scale, scale);
+        drawKnight(painter, QBrush(QColor(236, 220, 186)),
+                   QPen(QColor(168, 136, 84), 1.4));
         icon.addPixmap(pixmap);
     }
     return icon;

@@ -132,11 +132,14 @@ int16_t spectrum_mqtt_parse_publish(const uint8_t *packet,
     remaining = (uint8_t)(b & 0x7fu);
     pos = 2u;
     if ((b & 0x80u) != 0u) {
-        if (len < 5u || (packet[2u] & 0x80u) != 0u) {
+        if (len < 5u || packet[2u] > 1u) {
             return -1;
         }
         remaining = (uint8_t)(remaining + ((uint8_t)(packet[2u] & 0x7fu) << 7));
         pos = 3u;
+    }
+    if (remaining > (uint8_t)(SPECTRUM_MQTT_PACKET_MAX - pos)) {
+        return -1;
     }
     end = (uint8_t)(pos + remaining);
     if (len < end) {
@@ -180,5 +183,8 @@ int16_t spectrum_mqtt_parse_publish(const uint8_t *packet,
     }
     mqtt_copy((uint8_t *)payload, packet + pos, payload_len);
     payload[payload_len] = '\0';
+    if (mqtt_strlen8(payload) != payload_len) {
+        return -1;
+    }
     return (int16_t)payload_len;
 }

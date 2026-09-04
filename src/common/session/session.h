@@ -73,6 +73,11 @@ extern "C" {
 #define SESSION_CHANGED_STARTED 3u
 #define SESSION_CHANGED_ENDED 4u
 
+#define SESSION_END_REASON_NONE 0u
+#define SESSION_END_REASON_LOCAL_BYE 1u
+#define SESSION_END_REASON_REMOTE_BYE 2u
+#define SESSION_END_REASON_TRANSPORT_LOST 3u
+
 #define SESSION_ROUTE_DEFAULT 0u
 #define SESSION_ROUTE_CONTROL 1u
 #define SESSION_ROUTE_PRESENCE 2u
@@ -112,6 +117,7 @@ extern "C" {
 #define SESSION_DELIVER_CONTROL_RESULT 5u
 #define SESSION_DELIVER_RESTORE 6u
 #define SESSION_DELIVER_TAKEBACK 7u
+#define SESSION_DELIVER_PLATFORM 8u
 
 #define SESSION_CHAT_REMOTE 1u
 #define SESSION_CHAT_LOCAL 2u
@@ -196,6 +202,7 @@ typedef struct SessionAction {
         } game;
         struct {
             uint8_t status;
+            uint8_t end_reason;
         } session;
         struct {
             uint16_t session_id;
@@ -207,8 +214,9 @@ typedef struct SessionAction {
     } data;
 } SessionAction;
 
-typedef union SessionWorkspace {
+typedef struct SessionWorkspace {
     char move[6];
+    char last_move[6];
     char chat[SESSION_CHAT_TEXT_MAX + 1u];
     uint8_t restore[SESSION_RESTORE_BYTES];
 } SessionWorkspace;

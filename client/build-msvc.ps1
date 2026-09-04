@@ -1,10 +1,10 @@
 # Build + package the Windows PC client. Always use this script; do not run
 # cmake by hand: an unquoted -DCMAKE_PREFIX_PATH=$var in PowerShell poisons the
-# CMake cache with a literal "$var" (this script self-heals by deleting
-# build-msvc\ on every run). Requires PowerShell FullLanguage mode; under a
+# CMake cache with a literal "$var". This script always supplies the real Qt
+# path and reuses the canonical MSVC tree. Requires PowerShell
+# FullLanguage mode; under a
 # Constrained Language Mode sandbox it fails with a misleading dot-source error.
-# Each step's output is written to build-msvc\*.log and the log tail is printed
-# on failure.
+# Native build tools keep their normal inherited input/output handles.
 [CmdletBinding()]
 param(
     [string]$QtDir = "C:\Qt\6.11.0\msvc2022_64",
@@ -13,18 +13,19 @@ param(
     [string]$Config = "Release",
     [string]$Generator = "Visual Studio 17 2022",
     [string]$Architecture = "x64",
-    [ValidateRange(1, 86400)][int]$DeployTimeoutSeconds = 120,
+    [switch]$CleanBuild,
     [ValidateRange(1, 86400)][int]$CleanTimeoutSeconds = 30
 )
 
 $ErrorActionPreference = "Stop"
 
 $ClientDir = $PSScriptRoot
+. (Join-Path $ClientDir "build-lib.ps1")
 $ProjectRoot = (Resolve-Path -LiteralPath (Join-Path $ClientDir "..")).Path
 if ([string]::IsNullOrWhiteSpace($BuildDir)) {
-    # Keep the generated tree OUTSIDE the Dropbox-synced repo: sync file locks
-    # make in-tree cmake configure hang before CompilerId and slow every build.
-    $BuildDir = Join-Path ([System.IO.Path]::GetTempPath()) "netchesszx-msvc-dist"
+    # In-tree, gitignored, and separate from the pc-build tree used by
+    # make client-test, so packaging and the development loop never contend.
+    $BuildDir = Join-Path $ProjectRoot "build\pc-dist"
 }
 $DistDir = Join-Path $ProjectRoot "release\shatranj-client"
 $PackagedExe = Join-Path $DistDir "shatranj-client.exe"
@@ -48,6 +49,26 @@ function Test-IsWithinRoot {
         return $true
     }
     return $pathNorm.StartsWith($rootNorm + '\', [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Assert-PackagedClientNotRunning {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $matching = @()
+    foreach ($process in Get-Process -Name "shatranj-client" -ErrorAction SilentlyContinue) {
+        try {
+            if ($process.Path -and (Test-IsWithinRoot -Path $process.Path -Root $Path)) {
+                $matching += $process
+            }
+        } catch {
+            # A process owned by another user is irrelevant unless its path can
+            # be proven to live inside this package directory.
+        }
+    }
+    if ($matching.Count -gt 0) {
+        $ids = ($matching.Id | Sort-Object) -join ", "
+        throw "Packaged Shatranj client is running from $Path (PID: $ids). Close it before rebuilding."
+    }
 }
 
 function Remove-GeneratedTree {
@@ -78,69 +99,6 @@ function Remove-GeneratedTree {
     } while ((Get-Date) -lt $deadline)
 
     throw "Unable to clean generated output after ${TimeoutSeconds}s: $resolvedPath. Close running Shatranj client or locked Qt DLLs and retry. Last error: $($lastError.Exception.Message)"
-}
-
-function Invoke-ProcessChecked {
-    param(
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][string[]]$Arguments,
-        [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
-        [Parameter(Mandatory = $true)][string]$Name,
-        [string]$LogPath = ""
-    )
-
-    $psi = [System.Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName = $FilePath
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    # Idle MSBuild worker nodes outlive the build and keep the redirected pipes
-    # (and object files) open; disable reuse so the output streams close on exit.
-    $psi.EnvironmentVariables["MSBUILDDISABLENODEREUSE"] = "1"
-    foreach ($arg in $Arguments) {
-        [void]$psi.ArgumentList.Add($arg)
-    }
-
-    Write-Host "[$Name] started (timeout ${TimeoutSeconds}s)..."
-    $process = [System.Diagnostics.Process]::Start($psi)
-    try {
-        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-        $stderrTask = $process.StandardError.ReadToEndAsync()
-        # Heartbeat: agent harnesses kill silent processes after ~120s, and the
-        # child output is captured to logs, so emit progress lines while waiting.
-        $elapsed = 0
-        $exited = $false
-        while (-not $exited -and $elapsed -lt $TimeoutSeconds) {
-            $exited = $process.WaitForExit(30000)
-            if (-not $exited) {
-                $elapsed += 30
-                Write-Host "[$Name] still running (${elapsed}s elapsed)..."
-            }
-        }
-        if (-not $exited) {
-            # Kill the whole tree: a plain Stop-Process orphans MSBuild/cl.exe
-            # children, which keep .obj/.pdb locked and break the next run.
-            & taskkill /PID $process.Id /T /F 2>$null | Out-Null
-            throw "$Name timed out after ${TimeoutSeconds}s. Close running Shatranj client or locked Qt DLLs and retry."
-        }
-        $output = ""
-        if ([System.Threading.Tasks.Task]::WaitAll(@($stdoutTask, $stderrTask), 15000)) {
-            $output = $stdoutTask.Result + $stderrTask.Result
-        } else {
-            $output = "(output unavailable: stream still held by a child process)"
-        }
-        if (-not [string]::IsNullOrWhiteSpace($LogPath)) {
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
-            Set-Content -LiteralPath $LogPath -Value $output
-        }
-        if ($process.ExitCode -ne 0) {
-            $tail = ($output -split "`r?`n" | Where-Object { $_ -ne "" } | Select-Object -Last 40) -join "`n"
-            throw "$Name failed with exit code $($process.ExitCode). Last output:`n$tail"
-        }
-        Write-Host "[$Name] done."
-    } finally {
-        $process.Dispose()
-    }
 }
 
 function Copy-SelectedChildren {
@@ -180,7 +138,8 @@ function Remove-UnlistedDeploymentFiles {
         "vccorlib140.dll", "vcruntime140.dll", "vcruntime140_1.dll",
         "vcruntime140_threads.dll"
     )
-    $keepDirs = @("assets", "imageformats", "platforms")
+    $keepRootFiles += @("LICENSE", "THIRD_PARTY_NOTICES.md")
+    $keepDirs = @("assets", "imageformats", "licenses", "platforms")
     foreach ($item in Get-ChildItem -LiteralPath $Path -Force) {
         if ($item.PSIsContainer) {
             if ($keepDirs -notcontains $item.Name) {
@@ -209,7 +168,10 @@ if (-not (Test-Path -LiteralPath $QtDir)) { throw "Qt directory not found: $QtDi
 if (-not (Test-Path -LiteralPath $WinDeployQtExe)) { throw "Qt deploy tool not found: $WinDeployQtExe" }
 $cmake = Resolve-Tool "cmake"
 
-Remove-GeneratedTree -Path $BuildDir -Root (Split-Path -Parent $BuildDir)
+if ($CleanBuild) {
+    Remove-GeneratedTree -Path $BuildDir -Root (Split-Path -Parent $BuildDir)
+}
+Assert-PackagedClientNotRunning -Path $DistDir
 Remove-GeneratedTree -Path $DistDir -Root $ProjectRoot
 Remove-GeneratedTree -Path (Join-Path $ProjectRoot "release\netchesszx-client") -Root $ProjectRoot
 Remove-GeneratedTree -Path (Join-Path $ProjectRoot "release\shatranj") -Root $ProjectRoot
@@ -227,8 +189,8 @@ if (-not [string]::IsNullOrWhiteSpace($Architecture)) {
     $configureArgs += @("-A", $Architecture)
 }
 
-Invoke-ProcessChecked -FilePath $cmake -Arguments $configureArgs -TimeoutSeconds 120 -Name "cmake configure" -LogPath (Join-Path $BuildDir "configure.log")
-Invoke-ProcessChecked -FilePath $cmake -Arguments @("--build", $BuildDir, "--config", $Config) -TimeoutSeconds 300 -Name "cmake build" -LogPath (Join-Path $BuildDir "build.log")
+Invoke-ProcessChecked -FilePath $cmake -Arguments $configureArgs -Name "cmake configure"
+Invoke-ProcessChecked -FilePath $cmake -Arguments @("--build", $BuildDir, "--config", $Config, "--parallel") -Name "cmake build"
 
 $exe = @(
     (Join-Path $BuildDir "$Config\shatranj-client.exe"),
@@ -242,9 +204,7 @@ $deployMode = if ($Config -eq "Debug") { "--debug" } else { "--release" }
 Invoke-ProcessChecked `
     -FilePath $WinDeployQtExe `
     -Arguments @($deployMode, "--compiler-runtime", "--no-translations", "--no-system-d3d-compiler", "--no-opengl-sw", $PackagedExe) `
-    -TimeoutSeconds $DeployTimeoutSeconds `
-    -Name "windeployqt" `
-    -LogPath (Join-Path $BuildDir "windeployqt.log")
+    -Name "windeployqt"
 
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 if (-not (Test-Path -LiteralPath $vswhere)) { throw "vswhere not found: $vswhere" }
@@ -272,8 +232,13 @@ Copy-Contents `
     -Source (Join-Path $ProjectRoot "assets\pc-client\about") `
     -Destination (Join-Path $DistDir "assets\pc-client\about")
 Copy-Contents `
-    -Source (Join-Path $ProjectRoot "assets\pc-client\pieces") `
-    -Destination (Join-Path $DistDir "assets\pc-client\pieces")
+    -Source (Join-Path $ProjectRoot "licenses") `
+    -Destination (Join-Path $DistDir "licenses")
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "LICENSE") -Destination $DistDir -Force
+Copy-Item -LiteralPath (Join-Path $ProjectRoot "THIRD_PARTY_NOTICES.md") -Destination $DistDir -Force
+Copy-Item `
+    -LiteralPath (Join-Path $ProjectRoot "assets\lichess\LICENSE.lichess-AGPL-3.0.txt") `
+    -Destination (Join-Path $DistDir "licenses") -Force
 
 Remove-UnlistedDeploymentFiles -Path $DistDir
 

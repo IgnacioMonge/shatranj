@@ -13,7 +13,8 @@
 
 /* Byte-wise field extraction: SDCC emits far less code than 16-bit shifts,
    and the MQTT_TX overlay is within bytes of its 2048 cap. */
-static uint8_t capture_msdos_time(uint16_t date, uint16_t time)
+static uint8_t msdos_time_valid(uint16_t date, uint16_t time,
+                                uint8_t apply)
 {
     uint8_t dh = (uint8_t)(date >> 8);
     uint8_t dl = (uint8_t)date;
@@ -23,7 +24,7 @@ static uint8_t capture_msdos_time(uint16_t date, uint16_t time)
     uint8_t minute = (uint8_t)(((th & 7u) << 3) | (tl >> 5));
     uint8_t sec2 = (uint8_t)(tl & 31u);
 
-    if (dh < 88u || dh >= 112u) { /* year 2044..2055 */
+    if (dh < 88u || dh >= 112u) { /* year 2024..2035 */
         return 0u;
     }
     if (month == 0u || month > 12u) {
@@ -41,10 +42,17 @@ static uint8_t capture_msdos_time(uint16_t date, uint16_t time)
     if (sec2 >= 30u) {
         return 0u;
     }
-    spectrum_net_runtime_set_clock((uint8_t)(th >> 3), minute,
-                                   (uint8_t)(sec2 << 1));
-    spectrum_net_runtime_set_fat_stamp(date, time);
+    if (apply) {
+        spectrum_net_runtime_set_clock((uint8_t)(th >> 3), minute,
+                                       (uint8_t)(sec2 << 1));
+        spectrum_net_runtime_set_fat_stamp(date, time);
+    }
     return 1u;
+}
+
+static uint8_t capture_msdos_time(uint16_t date, uint16_t time)
+{
+    return msdos_time_valid(date, time, 1u);
 }
 
 #endif

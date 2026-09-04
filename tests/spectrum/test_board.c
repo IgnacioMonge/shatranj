@@ -100,8 +100,13 @@ static void expect_undo_roundtrip(const char *name, const char *move)
     spectrum_board_snapshot_t before;
     spectrum_board_snapshot_t after;
     spectrum_board_undo_t undo;
+    int8_t rules_before[64];
+    uint8_t i;
 
     spectrum_board_snapshot_save(&before);
+    for (i = 0u; i < 64u; ++i) {
+        rules_before[i] = spectrum_board_test_rule_cell(i);
+    }
     if (!spectrum_board_apply_trusted_move_with_undo(move, &undo)) {
         printf("FAIL %s: apply failed for %s\n", name, move);
         ++failures;
@@ -112,6 +117,45 @@ static void expect_undo_roundtrip(const char *name, const char *move)
     if (memcmp(&before, &after, sizeof(before)) != 0) {
         printf("FAIL %s: undo mismatch for %s\n", name, move);
         ++failures;
+    }
+    for (i = 0u; i < 64u; ++i) {
+        if (spectrum_board_test_rule_cell(i) != rules_before[i]) {
+            printf("FAIL %s: rules undo mismatch at %u for %s\n",
+                   name, (unsigned)i, move);
+            ++failures;
+            break;
+        }
+    }
+}
+
+static void expect_trusted_rejected_unchanged(const char *name,
+                                              const char *move)
+{
+    spectrum_board_snapshot_t before;
+    spectrum_board_snapshot_t after;
+    spectrum_board_undo_t undo = {1u, 2u, 'x', 3u, 4};
+    const spectrum_board_undo_t undo_before = undo;
+    int8_t rules_before[64];
+    uint8_t i;
+
+    spectrum_board_snapshot_save(&before);
+    for (i = 0u; i < 64u; ++i) {
+        rules_before[i] = spectrum_board_test_rule_cell(i);
+    }
+    expect_false(name, spectrum_board_apply_trusted_move_with_undo(move, &undo));
+    spectrum_board_snapshot_save(&after);
+    if (memcmp(&before, &after, sizeof(before)) != 0 ||
+        memcmp(&undo, &undo_before, sizeof(undo)) != 0) {
+        printf("FAIL %s: rejected move mutated board/state/undo\n", name);
+        ++failures;
+    }
+    for (i = 0u; i < 64u; ++i) {
+        if (spectrum_board_test_rule_cell(i) != rules_before[i]) {
+            printf("FAIL %s: rejected move diverged rules cell %u\n",
+                   name, (unsigned)i);
+            ++failures;
+            break;
+        }
     }
 }
 
@@ -238,16 +282,24 @@ static void test_castling(void)
 
 static void test_trusted_castle_shape_guard(void)
 {
-    spectrum_board_reset();
-    expect_true("guard g2g3", spectrum_board_apply_move("g2g3"));
-    expect_true("guard a7a6", spectrum_board_apply_move("a7a6"));
-    expect_true("guard e2e4", spectrum_board_apply_move("e2e4"));
-    expect_true("guard a6a5", spectrum_board_apply_move("a6a5"));
-    expect_true("guard e1e2", spectrum_board_apply_move("e1e2"));
-    expect_true("guard a5a4", spectrum_board_apply_move("a5a4"));
-    expect_true("trusted non-home king move", spectrum_board_apply_trusted_move("e2g2"));
-    expect_cell("trusted h2 unchanged", 6u, 7u, 'P');
-    expect_cell("trusted f2 unchanged", 6u, 5u, 'P');
+    spectrum_board_undo_t undo;
+
+    set_test_board("....k..."
+                   "........"
+                   "........"
+                   "........"
+                   "........"
+                   "........"
+                   "........"
+                   "....K..R",
+                   TEST_WHITE,
+                   TEST_NO_EP);
+    expect_true("trusted cross-row king move",
+                spectrum_board_apply_trusted_move_with_undo("e1g2", &undo));
+    expect_cell("trusted cross-row rook intact", 7u, 7u, 'R');
+    expect_cell("trusted cross-row f1 untouched", 7u, 5u, '.');
+    spectrum_board_undo_restore(&undo);
+    expect_undo_roundtrip("undo cross-row king shape", "e1g2");
 }
 
 static void test_en_passant(void)
@@ -270,6 +322,29 @@ static void test_en_passant(void)
     expect_true("play h2h3 b", spectrum_board_apply_move("h2h3"));
     expect_true("play a6a5 b", spectrum_board_apply_move("a6a5"));
     expect_false("delayed ep illegal", spectrum_board_is_legal_move("e5d6"));
+}
+
+static void test_trusted_en_passant_shape_guard(void)
+{
+    spectrum_board_undo_t undo;
+
+    set_test_board(".......k"
+                   "........"
+                   "........"
+                   "...pP..."
+                   "........"
+                   "........"
+                   "........"
+                   "K.......",
+                   TEST_WHITE,
+                   TEST_SQ(2, 2));
+    expect_true("trusted diagonal with different ep",
+                spectrum_board_apply_trusted_move_with_undo("e5d6", &undo));
+    expect_cell("trusted diagonal lateral pawn intact", 3u, 3u, 'p');
+    expect_true("trusted diagonal rules pawn intact",
+                (uint8_t)(spectrum_board_test_rule_cell(27u) == -1));
+    spectrum_board_undo_restore(&undo);
+    expect_undo_roundtrip("undo diagonal with different ep", "e5d6");
 }
 
 static void test_normal_pawn_capture_after_double_push(void)
@@ -360,11 +435,6 @@ static void test_snapshot_restore(void)
 
 static void test_compact_undo(void)
 {
-    spectrum_board_snapshot_t before;
-    spectrum_board_snapshot_t after;
-    spectrum_board_undo_t undo = {1u, 2u, 'x', 3u, 4};
-    spectrum_board_undo_t undo_before = undo;
-
     spectrum_board_reset();
     expect_undo_roundtrip("undo quiet double push", "e2e4");
 
@@ -457,15 +527,11 @@ static void test_compact_undo(void)
     expect_undo_roundtrip("undo promote capture rook", "b7c8r");
     expect_undo_roundtrip("undo promote capture bishop", "b7c8b");
     expect_undo_roundtrip("undo promote capture knight", "b7c8n");
-    spectrum_board_snapshot_save(&before);
-    expect_false("undo missing promotion rejected",
-                 spectrum_board_apply_trusted_move_with_undo("b7c8", &undo));
-    spectrum_board_snapshot_save(&after);
-    if (memcmp(&before, &after, sizeof(before)) != 0 ||
-        memcmp(&undo, &undo_before, sizeof(undo)) != 0) {
-        printf("FAIL undo rejected promotion mutated state\n");
-        ++failures;
-    }
+    expect_undo_roundtrip("undo uppercase promotion", "b7c8Q");
+    expect_trusted_rejected_unchanged("missing promotion rejected", "b7c8");
+    expect_trusted_rejected_unchanged("invalid promotion rejected", "b7c8x");
+    expect_trusted_rejected_unchanged("trailing promotion rejected", "b7c8qx");
+    expect_trusted_rejected_unchanged("off-rank promotion rejected", "b7b6q");
 
     set_test_board(".......k"
                    "........"
@@ -735,6 +801,7 @@ int main(void)
     test_castling();
     test_trusted_castle_shape_guard();
     test_en_passant();
+    test_trusted_en_passant_shape_guard();
     test_normal_pawn_capture_after_double_push();
     test_promotion();
     test_snapshot_restore();

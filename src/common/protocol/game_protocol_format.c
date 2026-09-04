@@ -146,3 +146,35 @@ uint8_t netchess_proto_format_bye(char *out, uint8_t out_cap)
     return (uint8_t)(proto_init_out(out, out_cap, &p, &end) &&
                      proto_append(&p, end, "BYE"));
 }
+
+static const char plat_zx[] = "ZX";
+static const char plat_nxt[] = "NXT";
+static const char plat_mac[] = "MAC";
+static const char plat_lnx[] = "LNX";
+static const char plat_pc[] = "PC";
+static const char plat_spcx[] = "SPCX";
+
+const char *netchess_proto_mach_code(uint8_t plat) NETCHESSZX_FASTCALL
+{
+    switch (plat) {
+    case NETCHESS_PLAT_ZX: return plat_zx;
+    case NETCHESS_PLAT_NXT: return plat_nxt;
+    case NETCHESS_PLAT_MAC: return plat_mac;
+    case NETCHESS_PLAT_LNX: return plat_lnx;
+    case NETCHESS_PLAT_PC: return plat_pc;
+    case NETCHESS_PLAT_SPCX: return plat_spcx;
+    default: return 0;
+    }
+}
+
+uint8_t netchess_proto_format_mach(char *out, uint8_t out_cap, uint8_t plat)
+{
+    const char *code = netchess_proto_mach_code(plat);
+    char *p;
+    char *end;
+
+    return (uint8_t)(code != 0 &&
+                     proto_init_out(out, out_cap, &p, &end) &&
+                     proto_append(&p, end, NETCHESS_PROTO_MACH_PREFIX) &&
+                     proto_append(&p, end, code));
+}

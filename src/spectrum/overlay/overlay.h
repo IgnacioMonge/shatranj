@@ -28,6 +28,8 @@
 #define SPECTRUM_OVL_MQTT_TX_PUBLISH_SETUP 1u
 #define SPECTRUM_OVL_MQTT_TX_SYNC_TIME 2u
 #define SPECTRUM_OVL_MQTT_TX_PUBLISH_PRESENCE 3u
+#define SPECTRUM_OVL_MQTT_TX_CLOCK_RETRY_START 4u
+#define SPECTRUM_OVL_MQTT_TX_CLOCK_RETRY_POLL 5u
 #define SPECTRUM_OVL_DIRECT 5u
 #define SPECTRUM_OVL_DIRECT_LISTEN 0u
 #define SPECTRUM_OVL_DIRECT_CONNECT 1u
@@ -67,14 +69,28 @@
 #define SPECTRUM_OVL_FILEUI_PICK 1u
 #define SPECTRUM_OVL_CONTROL 14u
 #define SPECTRUM_OVL_CONTROL_CLASSIFY 0u
-
+#define SPECTRUM_OVL_CONFIG 15u
+#define SPECTRUM_OVL_CONFIG_LOAD 0u
+#define SPECTRUM_OVL_CONFIG_SAVE 1u
+#define SPECTRUM_OVL_CONFIG_DEFAULTS 2u
+#define SPECTRUM_OVL_TIME_CONFIG 16u
+#define SPECTRUM_OVL_TIME_CONFIG_UI 0u
+#define SPECTRUM_OVL_TIME_CONFIG_STEP 1u
+#define SPECTRUM_OVL_TIME_CONFIG_INIT 2u
+#define SPECTRUM_OVL_TIME_CONFIG_COMMIT 3u
 #define SPECTRUM_OVL_INVALID 0xffu
+#ifdef NETCHESSZX_NEXT_BANKING
+#define SPECTRUM_OVL_BLOCK_SIZE 8192u
+#else
 #define SPECTRUM_OVL_BLOCK_SIZE 2048u
+#endif
 
 /* Overlay exec enters under DI and returns through an unconditional EI.
    Callees may re-enable interrupts internally; call only from normal app flow,
    not from a caller-owned DI section. The public return value is L/uint8_t;
-   any 16-bit HL passthrough is an ASM-wrapper-local contract. */
+   any 16-bit HL passthrough is an ASM-wrapper-local contract. Banking-Next
+   overlay pages are persistent RAM: entries must initialize mutable local
+   state before reading it. */
 uint8_t spectrum_overlay_exec(uint8_t ovl_id, uint8_t entry_id);
 uint8_t spectrum_overlay_exec_cached(uint8_t ovl_id, uint8_t entry_id);
 uint8_t spectrum_assets_load(void);

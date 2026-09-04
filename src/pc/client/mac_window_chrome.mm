@@ -1,13 +1,17 @@
-#include "mac_window_chrome.h"
+#include "window_chrome.h"
 
 #include <QColor>
+#include <QGuiApplication>
 #include <QWidget>
 
 #import <Cocoa/Cocoa.h>
 
-void applyMacWindowChrome(QWidget *window, const QColor &background)
+void applyWindowChrome(QWidget *window, const QColor &background,
+                       const QColor &foreground)
 {
-    if (window == nullptr) {
+    Q_UNUSED(foreground);
+    if (window == nullptr ||
+        QGuiApplication::platformName() != QStringLiteral("cocoa")) {
         return;
     }
 

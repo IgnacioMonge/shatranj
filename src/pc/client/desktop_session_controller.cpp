@@ -6,10 +6,17 @@ DesktopSessionController::DesktopSessionController(QObject *parent)
     : QObject(parent)
 {
     for (uint8_t timerId = 0u; timerId < SESSION_TIMER_COUNT; ++timerId) {
-        auto *timer = new QTimer(this);
-        timer->setSingleShot(true);
-        timer->setTimerType(Qt::PreciseTimer);
-        timers_[timerId] = timer;
+        QTimer &timer = timers_[timerId];
+
+        timer.setSingleShot(true);
+        timer.setTimerType(Qt::PreciseTimer);
+        connect(&timer, &QTimer::timeout, this, [this, timerId]() {
+            if (!initialized_) {
+                return;
+            }
+            session_.enqueueTimeout(timerId);
+            pump();
+        });
     }
 }
 
@@ -23,7 +30,7 @@ bool DesktopSessionController::initializeDirect(uint8_t role, uint8_t hostColor)
     stopTimers();
     invalidateDeferredMqttActions();
     mode_ = Mode::Direct;
-    initialized_ = direct_.init(role, hostColor);
+    initialized_ = session_.initDirect(role, hostColor);
     return initialized_;
 }
 
@@ -34,15 +41,8 @@ bool DesktopSessionController::initializeMqtt(uint8_t role,
     stopTimers();
     invalidateDeferredMqttActions();
     mode_ = Mode::Mqtt;
-    initialized_ = mqtt_.init(role, hostColor, sessionId);
+    initialized_ = session_.initMqtt(role, hostColor, sessionId);
     return initialized_;
-}
-
-void DesktopSessionController::stop()
-{
-    stopTimers();
-    invalidateDeferredMqttActions();
-    initialized_ = false;
 }
 
 bool DesktopSessionController::linkUp(uint8_t linkId)
@@ -50,11 +50,7 @@ bool DesktopSessionController::linkUp(uint8_t linkId)
     if (!initialized_) {
         return false;
     }
-    if (mode_ == Mode::Mqtt) {
-        mqtt_.enqueueLinkUp(linkId);
-    } else {
-        direct_.enqueueLinkUp(linkId);
-    }
+    session_.enqueueLinkUp(linkId);
     return pump();
 }
 
@@ -65,10 +61,8 @@ bool DesktopSessionController::linkDown(uint8_t linkId)
     }
     if (mode_ == Mode::Mqtt) {
         invalidateDeferredMqttActions();
-        mqtt_.enqueueLinkDown(linkId);
-    } else {
-        direct_.enqueueLinkDown(linkId);
     }
+    session_.enqueueLinkDown(linkId);
     return pump();
 }
 
@@ -78,7 +72,7 @@ void DesktopSessionController::receiveDirect(uint8_t linkId,
     if (!initialized_ || mode_ != Mode::Direct) {
         return;
     }
-    direct_.enqueueRx(linkId, payload);
+    session_.enqueueDirectRx(linkId, payload);
 }
 
 bool DesktopSessionController::receiveMqtt(uint8_t linkId,
@@ -87,7 +81,7 @@ bool DesktopSessionController::receiveMqtt(uint8_t linkId,
                                            const QByteArray &payload)
 {
     if (!initialized_ || mode_ != Mode::Mqtt ||
-        !mqtt_.enqueueRx(linkId, topic, retained, payload)) {
+        !session_.enqueueMqttRx(linkId, topic, retained, payload)) {
         return false;
     }
     pump();
@@ -99,11 +93,7 @@ void DesktopSessionController::txResult(uint8_t txId, uint8_t result)
     if (!initialized_) {
         return;
     }
-    if (mode_ == Mode::Mqtt) {
-        mqtt_.enqueueTxResult(txId, result);
-    } else {
-        direct_.enqueueTxResult(txId, result);
-    }
+    session_.enqueueTxResult(txId, result);
     pump();
 }
 
@@ -115,11 +105,7 @@ bool DesktopSessionController::submitLocalRequest(uint8_t request,
     if (!initialized_) {
         return false;
     }
-    if (mode_ == Mode::Mqtt) {
-        mqtt_.enqueueLocalRequest(request, value, payload, phase);
-    } else {
-        direct_.enqueueLocalRequest(request, value, payload, phase);
-    }
+    session_.enqueueLocalRequest(request, value, payload, phase);
     return pump();
 }
 
@@ -129,11 +115,7 @@ void DesktopSessionController::submitUserDecision(uint8_t requestId,
     if (!initialized_) {
         return;
     }
-    if (mode_ == Mode::Mqtt) {
-        mqtt_.enqueueUserDecision(requestId, decision);
-    } else {
-        direct_.enqueueUserDecision(requestId, decision);
-    }
+    session_.enqueueUserDecision(requestId, decision);
     pump();
 }
 
@@ -145,52 +127,32 @@ void DesktopSessionController::submitGameResult(uint8_t deliveryId,
     if (!initialized_) {
         return;
     }
-    if (mode_ == Mode::Mqtt) {
-        mqtt_.enqueueGameResult(deliveryId, value, result, detail);
-    } else {
-        direct_.enqueueGameResult(deliveryId, value, result, detail);
-    }
+    session_.enqueueGameResult(deliveryId, value, result, detail);
     pump();
 }
 
 QByteArray DesktopSessionController::mqttTopicSuffixForRoute(uint8_t route) const
 {
-    return mqtt_.topicSuffixForRoute(route);
+    return session_.mqttTopicSuffixForRoute(route);
 }
 
 void DesktopSessionController::cancelTimer(uint8_t timerId)
 {
-    if (timerId >= SESSION_TIMER_COUNT || timers_[timerId] == nullptr) {
+    if (timerId >= SESSION_TIMER_COUNT) {
         return;
     }
-    ++timerGeneration_[timerId];
-    timers_[timerId]->stop();
-    QObject::disconnect(timers_[timerId], nullptr, this, nullptr);
+    timers_[timerId].stop();
 }
 
 void DesktopSessionController::setTimer(uint8_t timerId,
                                         uint16_t durationTicks)
 {
-    if (timerId >= SESSION_TIMER_COUNT || timers_[timerId] == nullptr) {
+    if (timerId >= SESSION_TIMER_COUNT) {
         return;
     }
     cancelTimer(timerId);
-    const quint32 generation = timerGeneration_[timerId];
-    connect(timers_[timerId], &QTimer::timeout, this,
-            [this, timerId, generation]() {
-        if (timerGeneration_[timerId] != generation || !initialized_) {
-            return;
-        }
-        ++timerGeneration_[timerId];
-        if (mode_ == Mode::Mqtt) {
-            mqtt_.enqueueTimeout(timerId);
-        } else {
-            direct_.enqueueTimeout(timerId);
-        }
-        pump();
-    });
-    timers_[timerId]->start(static_cast<int>(durationTicks) *
-                            SESSION_PROTOCOL_TICK_MS);
+    timers_[timerId].start(static_cast<int>(durationTicks) *
+                           SESSION_PROTOCOL_TICK_MS);
 }
 
 void DesktopSessionController::stopTimers()
@@ -244,7 +206,8 @@ void DesktopSessionController::dispatch(
         break;
     case SESSION_ACT_SESSION_CHANGED:
         if (callbacks_.sessionChanged) {
-            callbacks_.sessionChanged(action.data.session.status);
+            callbacks_.sessionChanged(action.data.session.status,
+                                      action.data.session.end_reason);
         }
         break;
     case SESSION_ACT_SIDE_CHANGED:
@@ -268,23 +231,16 @@ void DesktopSessionController::applyFollowups(
     for (qsizetype i = followups.size(); i > 0; --i) {
         const DesktopSessionFollowup &followup = followups.at(i - 1);
         if (followup.type == SESSION_EV_TX_RESULT) {
-            if (mode_ == Mode::Mqtt) {
-                mqtt_.enqueueTxResult(followup.id, followup.result);
-            } else {
-                direct_.enqueueTxResult(followup.id, followup.result);
-            }
-        } else if (mode_ == Mode::Mqtt) {
-            mqtt_.enqueueGameResult(followup.id, followup.value,
-                                    followup.result, followup.detail);
+            session_.enqueueTxResult(followup.id, followup.result);
         } else {
-            direct_.enqueueGameResult(followup.id, followup.value,
-                                      followup.result, followup.detail);
+            session_.enqueueGameResult(followup.id, followup.value,
+                                       followup.result, followup.detail);
         }
     }
 }
 
 bool DesktopSessionController::dispatchMqttBatch(
-    const MqttActionBatch &batch,
+    const DesktopActionBatch &batch,
     uint8_t *next,
     QVector<DesktopSessionFollowup> &followups,
     uint32_t generation)
@@ -293,7 +249,7 @@ bool DesktopSessionController::dispatchMqttBatch(
         if (generation != mqttDispatchGeneration_) {
             return false;
         }
-        const MqttOwnedAction &owned = batch.actions[*next];
+        const DesktopOwnedAction &owned = batch.actions[*next];
         const bool blocked =
             callbacks_.mqttTransportReady &&
             !callbacks_.mqttTransportReady() &&
@@ -313,7 +269,7 @@ bool DesktopSessionController::dispatchMqttBatch(
 
 void DesktopSessionController::clearDeferredMqttActions()
 {
-    deferredMqttBatch_ = MqttActionBatch{};
+    deferredMqttBatch_ = DesktopActionBatch{};
     deferredMqttFollowups_.clear();
     deferredMqttNext_ = 0u;
     mqttBatchDeferred_ = false;
@@ -350,8 +306,8 @@ bool DesktopSessionController::pump()
             }
         }
 
-        MqttActionBatch batch;
-        while (initialized_ && mqtt_.takeNextBatch(&batch)) {
+        DesktopActionBatch batch;
+        while (initialized_ && session_.takeNextBatch(&batch)) {
             produced = produced || batch.count != 0u;
             QVector<DesktopSessionFollowup> followups;
             uint8_t next = 0u;
@@ -369,8 +325,8 @@ bool DesktopSessionController::pump()
             applyFollowups(followups);
         }
     } else {
-        DirectActionBatch batch;
-        while (direct_.takeNextBatch(&batch)) {
+        DesktopActionBatch batch;
+        while (session_.takeNextBatch(&batch)) {
             produced = produced || batch.count != 0u;
             QVector<DesktopSessionFollowup> followups;
             for (uint8_t i = 0u; i < batch.count; ++i) {

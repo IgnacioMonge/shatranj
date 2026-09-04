@@ -1,0 +1,34 @@
+{
+  "resource": "Shatranj",
+  "stem": "SHATRANJ",
+  "version": {
+    "source": "../../VERSION"
+  },
+  "minimum_firmware": "0.9-6fc153a3",
+  "screen": {
+    "source": "../../assets/spectrum/installer.scr",
+    "placement": "bottom",
+    "row_offset": 0,
+    "palette": "white-on-black"
+  },
+  "launch": {
+    "tap": "SHATRANJ.tap"
+  },
+  "files": [
+    {
+      "source": "../../release/Spectranext/SHATRANJ.tap",
+      "name": "SHATRANJ.tap",
+      "role": "TAPE"
+    },
+    {
+      "source": "../../release/Spectranext/SHATRANJ.OVL",
+      "name": "SHATRANJ.OVL",
+      "role": "OVLY"
+    },
+    {
+      "source": "../../release/Spectranext/SHATRANJ.DAT",
+      "name": "SHATRANJ.DAT",
+      "role": "DATA"
+    }
+  ]
+}

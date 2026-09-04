@@ -6,8 +6,13 @@
   },
   "overlays": {
     "about": {
+      "allowed_caps": [
+        "storage"
+      ],
       "allowed_symbols": [
-        "ovl_close_overlay_file"
+        "ovl_close_overlay_file",
+        "ovl_read_chunked",
+        "spxn_xfs_fseek"
       ]
     },
     "board": {
@@ -17,9 +22,24 @@
         "runtime"
       ]
     },
+    "config": {
+      "allowed_caps": [
+        "config",
+        "libc",
+        "runtime",
+        "session",
+        "storage",
+        "text"
+      ],
+      "allowed_symbols": [
+        "spectrum_net_background_drain",
+        "setup_config_record"
+      ]
+    },
     "control": {
       "allowed_caps": [
-        "runtime"
+        "runtime",
+        "text"
       ],
       "allowed_symbols": [
         "NETCHESS_PROTO_ACK_PREFIX",
@@ -46,6 +66,7 @@
         "libc",
         "net",
         "runtime",
+        "spectranext_net",
         "text",
         "uart"
       ]
@@ -54,7 +75,9 @@
       "allowed_caps": [
         "libc",
         "render",
-        "runtime"
+        "runtime",
+        "storage",
+        "text"
       ],
       "allowed_symbols": [
         "spectrum_fileui_count",
@@ -62,7 +85,7 @@
         "spectrum_net_background_drain"
       ]
     },
-    "gui_log": {
+      "gui_log": {
       "allowed_caps": [
         "gui",
         "gui_state",
@@ -70,9 +93,14 @@
         "render",
         "runtime",
         "text",
-        "time"
-      ]
-    },
+          "time",
+            "uart"
+        ],
+        "allowed_symbols": [
+          "netchesszx_asm_move_parse_coords",
+          "netchesszx_move_parse_coords"
+        ]
+      },
     "status": {
       "allowed_caps": [
         "config",
@@ -101,6 +129,10 @@
         "runtime"
       ],
       "allowed_symbols": [
+        "edit_max",
+        "last_ip",
+        "netchesszx_direct_host",
+        "netchesszx_mqtt_code",
         "local_input_len",
         "local_input_cursor",
         "local_input_mode",
@@ -120,6 +152,13 @@
         "runtime",
         "text",
         "time"
+      ],
+      "allowed_symbols": [
+        "edit_max",
+        "setup_action_focus",
+        "setup_config_dirty",
+        "setup_time_focus",
+        "setup_timezone_text"
       ]
     },
     "menu_logic": {
@@ -143,6 +182,7 @@
         "render",
         "runtime",
         "session",
+        "spectranext_net",
         "text",
         "time"
       ],
@@ -188,11 +228,46 @@
         "runtime"
       ]
     },
+    "time_config": {
+      "allowed_caps": [
+        "config",
+        "gui",
+        "gui_state",
+        "libc",
+        "runtime",
+        "session",
+        "text"
+      ],
+      "allowed_symbols": [
+        "edit_buf",
+        "edit_max",
+        "setup_action_focus",
+        "setup_config_dirty",
+        "setup_edit_row",
+        "setup_room_editing",
+        "setup_time_focus",
+        "setup_timezone_text",
+        "setup_timezone_value"
+      ]
+    },
+    "time": {
+      "allowed_caps": [
+        "config",
+        "net",
+        "overlay",
+        "runtime",
+        "spectranext_net",
+        "spectranext_time",
+        "text"
+      ]
+    },
     "saveload": {
       "allowed_caps": [
         "libc",
         "net",
-        "runtime"
+        "runtime",
+        "storage",
+        "text"
       ]
     },
     "setup": {
@@ -201,7 +276,16 @@
         "gui_state",
         "libc",
         "runtime",
+        "session",
         "text"
+      ],
+      "allowed_symbols": [
+        "edit_buf",
+        "edit_max",
+        "spectrum_gui_edit_bind",
+        "spectrum_gui_edit_hide",
+        "spectrum_gui_edit_key",
+        "netchess_mqtt_session_parse_u16_token"
       ]
     }
   }

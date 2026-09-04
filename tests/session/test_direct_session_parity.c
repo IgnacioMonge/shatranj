@@ -2,6 +2,26 @@
 
 #include "direct_parity.h"
 
+#ifdef NETCHESSZX_SPECTRANEXT
+/* The host parity fixture includes the real Next overlay without the SDK
+   headers. These declarations keep the test seam source-compatible with the
+   target socket API; the fixture provides inert implementations below. */
+#define SPXN_OK 0
+#define SPXN_POLLCON 1
+#define SPXN_POLLHUP 2
+#define SPXN_POLLIN 4
+#define SPXN_POLLNVAL 128
+int16_t spxn_poll(void);
+int16_t spxn_recv(void *buffer, uint16_t maximum);
+int16_t spxn_accept(void);
+int16_t spxn_listen(uint16_t port);
+int16_t spxn_resolve(const char *host, uint8_t *ip4be);
+int16_t spxn_connect(const uint8_t *ip4be, uint16_t port);
+void spxn_close(void);
+int16_t spxn_send_all(const void *buffer, uint16_t length,
+                     uint16_t zero_budget);
+#endif
+
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
@@ -22,11 +42,18 @@ typedef char direct_parity_nack_sync_capacity_check[
 #include <string.h>
 
 netchesszx_session_ping_t *netchesszx_host_session_ping;
+static uint8_t host_chat_ping_reset_expected;
+static uint8_t host_chat_ping_reset_forbidden;
+static uint8_t host_chat_ping_reset_violation;
 
 void netchesszx_host_session_observe_ping_reset(
     netchesszx_session_ping_t *ping)
 {
     (void)ping;
+    if (host_chat_ping_reset_forbidden) {
+        host_chat_ping_reset_violation = 1u;
+    }
+    host_chat_ping_reset_expected = 0u;
 }
 
 static char host_payload[SPECTRUM_LINK_PAYLOAD_MAX];
@@ -57,13 +84,17 @@ static uint8_t host_takeback_result_seen;
 static uint8_t host_resign_control_pending;
 static uint8_t host_local_resign_pending;
 static uint8_t host_connected_state;
-static uint8_t host_pieces_visible;
+uint8_t spectrum_gui_board_pieces_visible;
+#define host_pieces_visible spectrum_gui_board_pieces_visible
 static uint8_t host_board_flipped;
 static uint8_t host_side_panels_visible;
 static uint8_t host_about_visible;
 static uint8_t host_fileui_visible;
 static uint8_t host_menu_key_calls;
 static uint8_t host_menu_visible;
+static uint8_t host_status_phase;
+static uint8_t host_status_phase_calls;
+static uint8_t host_redraw_square_calls;
 static const uint8_t *host_restore_file_payload;
 static uint8_t host_restore_apply_pending;
 static uint8_t host_restore_marker_seen;
@@ -74,8 +105,9 @@ static uint8_t host_restore_control_pending;
 #ifdef NETCHESSZX_NEXT_BANKING
 static uint8_t host_next_sprites_reset_seen;
 #endif
-#ifdef NETCHESSZX_NEXT
-uint8_t net_uart_direct_idle_ticks = 75u;
+#if defined(NETCHESSZX_NEXT) || defined(NETCHESSZX_SPECTRANEXT)
+uint8_t net_uart_direct_idle_ticks =
+    NETCHESSZX_SESSION_DIRECT_3S_POLLS_AT(NETCHESSZX_SESSION_FRAME_HZ);
 #endif
 
 /* Real DIRECT overlay state and UART seam.  Candidate transcripts enter the
@@ -91,6 +123,9 @@ uint8_t line_pos;
 uint8_t direct_rx_count;
 uint8_t direct_rx_head;
 uint8_t direct_rx_payload_len;
+#ifdef NETCHESSZX_SPECTRANEXT
+uint8_t direct_rx_discard;
+#endif
 uint16_t direct_ipd_remaining;
 uint8_t direct_ipd_accept;
 uint8_t direct_ipd_link;
@@ -126,6 +161,101 @@ static uint8_t host_uart_capture(const uint8_t *data, size_t length)
     host_uart_tx[host_uart_tx_len] = '\0';
     return 1u;
 }
+#ifdef NETCHESSZX_SPECTRANEXT
+static uint16_t host_spxn_ipd_remaining;
+static uint8_t host_spxn_ipd_link;
+static char host_spxn_header[24];
+static uint8_t host_spxn_header_len;
+
+int16_t spxn_poll(void)
+{
+    return 0;
+}
+
+int16_t spxn_recv(void *buffer, uint16_t maximum)
+{
+    (void)buffer;
+    (void)maximum;
+    return 0;
+}
+
+int16_t spxn_accept(void)
+{
+    return SPXN_OK;
+}
+
+int16_t spxn_listen(uint16_t port)
+{
+    (void)port;
+    return SPXN_OK;
+}
+
+int16_t spxn_resolve(const char *host, uint8_t *ip4be)
+{
+    (void)host;
+    memset(ip4be, 0, 4u);
+    return SPXN_OK;
+}
+
+int16_t spxn_connect(const uint8_t *ip4be, uint16_t port)
+{
+    (void)ip4be;
+    (void)port;
+    return SPXN_OK;
+}
+
+void spxn_close(void) {}
+
+int16_t spxn_send_all(const void *buffer, uint16_t length,
+                     uint16_t zero_budget)
+{
+    (void)zero_budget;
+    return host_uart_capture((const uint8_t *)buffer, length)
+               ? SPXN_OK : -1;
+}
+
+/* The Next socket has no ESP-AT +IPD framing. This small test-only shim keeps
+   the existing intruder/link-down fixture inputs usable for both overlays. */
+static uint8_t direct_feed_uart_byte_ovl(uint8_t c)
+{
+    if (host_spxn_ipd_remaining != 0u) {
+        --host_spxn_ipd_remaining;
+        return 0u;
+    }
+    if (c == ':') {
+        unsigned link;
+        unsigned length;
+
+        host_spxn_header[host_spxn_header_len] = '\0';
+        if (sscanf(host_spxn_header, "+IPD,%u,%u", &link, &length) != 2 ||
+            link > 4u || length == 0u) {
+            host_spxn_header_len = 0u;
+            return 0u;
+        }
+        host_spxn_ipd_link = (uint8_t)link;
+        host_spxn_ipd_remaining = (uint16_t)length;
+        host_spxn_header_len = 0u;
+        direct_intruder_link = host_spxn_ipd_link;
+        return 0u;
+    }
+    if (c == '\n') {
+        host_spxn_header[host_spxn_header_len] = '\0';
+        if (host_spxn_header_len >= 8u &&
+            host_spxn_header[1] == ',' &&
+            strncmp(host_spxn_header + 2u, "CLOSED", 6u) == 0) {
+            direct_link_closed = (uint8_t)(host_spxn_header[0] ==
+                                           (char)('0' + active_link));
+        }
+        host_spxn_header_len = 0u;
+        return 0u;
+    }
+    if (c != '\r' && host_spxn_header_len + 1u <
+                         (uint8_t)sizeof(host_spxn_header)) {
+        host_spxn_header[host_spxn_header_len++] = (char)c;
+    }
+    return 0u;
+}
+#endif
 uint8_t spectrum_uart_send_string(const char *text)
 {
     return host_uart_capture((const uint8_t *)text, strlen(text));
@@ -147,6 +277,7 @@ uint8_t spectrum_net_at_cmd(const char *command, uint16_t frames)
     return 1u;
 }
 uint8_t spectrum_net_ensure_command_mode(void) { return 1u; }
+void mqtt_abort_stream_mode(void) {}
 
 static void check(uint8_t condition, const char *message)
 {
@@ -169,7 +300,26 @@ static void check_restore_host_color_guard(void)
     meta.host_color = NETCHESSZX_SAVE_HOST_BLACK;
     check(!restore_host_color_ok(&meta),
           "cross-color DIRECT restore rejected");
+
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_BLACK);
+    meta.host_color = NETCHESSZX_SAVE_HOST_BLACK;
+    check(restore_host_color_ok(&meta),
+          "matching guest restore host color accepted");
+    meta.host_color = NETCHESSZX_SAVE_HOST_WHITE;
+    check(!restore_host_color_ok(&meta),
+          "cross-color guest restore rejected");
 }
+
+#ifdef NETCHESSZX_NEXT
+static void check_direct_recovery_budget_rearmed(void)
+{
+    direct_recovery_state = 0u;
+    check(direct_prepare_link_ovl() && direct_recovery_state == 1u,
+          "Next DIRECT entry rearms one hard-reset attempt");
+}
+#endif
 
 #ifdef NETCHESSZX_NEXT_BANKING
 static uint8_t host_next_find_slot(const uint8_t *slots, uint8_t square)
@@ -393,8 +543,30 @@ static void host_transport_feed(const uint8_t *bytes, size_t length)
     }
 }
 
+/* The target overlays spend one frame on an empty SpectraNext socket poll;
+   the ESP/UART path spends two. Keep the host transcript clock aligned with
+   the real overlay selected by the test define. */
+static void host_empty_transport_poll(void)
+{
+    spectrum_frame_wait();
+#ifndef NETCHESSZX_SPECTRANEXT
+    spectrum_frame_wait();
+#endif
+}
+
+static uint16_t host_timeout_frames(uint16_t frames_at_50_hz)
+{
+    if (frames_at_50_hz == 126u) {
+        return (uint16_t)(NETCHESSZX_SESSION_DIRECT_REPLY_POLLS *
+                          NETCHESSZX_SESSION_DIRECT_EMPTY_POLL_FRAMES);
+    }
+    return (uint16_t)((frames_at_50_hz * NETCHESSZX_SESSION_FRAME_HZ +
+                       49u) / 50u);
+}
+
 static uint8_t host_transport_reject_intruder(const DirectParityStep *step)
 {
+#ifndef NETCHESSZX_SPECTRANEXT
     static const uint8_t validated_replies[] = ">\r\nSEND OK\r\nOK\r\n";
     static const uint8_t handshake_replies[] = "OK\r\n";
     static const uint8_t active_close_replies[] = ">\r\n1,CLOSED\r\nOK\r\n";
@@ -404,14 +576,36 @@ static uint8_t host_transport_reject_intruder(const DirectParityStep *step)
     uint8_t ctx[3] = { 0u, 0u, (uint8_t)sizeof(payload) };
     int header_length;
     int expected_length;
-    uint8_t active_closed;
     uint8_t read_result;
+#endif
+    uint8_t active_closed;
 
     if (step == 0 || step->payload == 0 || step->length == 0u ||
         step->link_id == host_link_id || step->link_id > 4u ||
         direct_ipd_remaining != 0u || direct_intruder_link != 0xffu) {
         return 0u;
     }
+#ifdef NETCHESSZX_SPECTRANEXT
+    /* Next has one real socket and therefore no ESP-AT candidate-link
+       framing. Preserve the target-neutral observation contract in this
+       host-only fixture without pretending the overlay has extra links. */
+    active_closed = (uint8_t)(host_fail_length == 4u &&
+        host_fail_payload != 0 && memcmp(host_fail_payload, "BUSY", 4u) == 0);
+    if (host_fail_length != 0u && !active_closed) {
+        return 0u;
+    }
+    if (active_closed) {
+        host_fail_payload = 0;
+        host_fail_length = 0u;
+    }
+    if (direct_peer_valid &&
+        !host_trace_push(DIRECT_PARITY_OBS_SEND, step->link_id,
+                         0u, 0u, "BUSY")) {
+        return 0u;
+    }
+    return host_trace_push(DIRECT_PARITY_OBS_CLOSE, step->link_id,
+                           0u, 0u, 0);
+#else
     header_length = snprintf(header, sizeof(header), "+IPD,%u,%u:",
                              (unsigned)step->link_id,
                              (unsigned)(step->length + 1u));
@@ -472,6 +666,7 @@ static uint8_t host_transport_reject_intruder(const DirectParityStep *step)
     }
     return host_trace_push(DIRECT_PARITY_OBS_CLOSE, step->link_id,
                            0u, 0u, 0);
+#endif
 }
 
 static uint8_t host_transport_link_down(uint8_t link_id)
@@ -520,10 +715,15 @@ int16_t spectrum_net_read_payload(char *payload, uint8_t payload_cap)
 {
     const DirectParityStep *step;
 
+    if (host_chat_ping_reset_expected) {
+        host_failed = 1u;
+        return -2;
+    }
+    host_chat_ping_reset_forbidden = 0u;
+
 read_next_step:
     if (host_local_confirm_pending) {
-        spectrum_frame_wait();
-        spectrum_frame_wait();
+        host_empty_transport_poll();
         return SPECTRUM_LINK_READ_TIMEOUT;
     }
     if (host_scenario == 0 || host_step_pos >= host_scenario->step_count) {
@@ -538,8 +738,7 @@ read_next_step:
         step->type == DIRECT_PARITY_IN_TX_RESULT ||
         step->type == DIRECT_PARITY_IN_TX_GUARD_TIMEOUT ||
         step->type == DIRECT_PARITY_IN_DECISION) {
-        spectrum_frame_wait();
-        spectrum_frame_wait();
+        host_empty_transport_poll();
         return SPECTRUM_LINK_READ_TIMEOUT;
     }
     /* A failed send that reaches another transport poll did not trigger
@@ -577,19 +776,20 @@ read_next_step:
         host_restore_domain_pending = 1u;
     }
     if (step->type == DIRECT_PARITY_IN_TIMEOUT) {
+        uint16_t frames = host_timeout_frames(step->value);
+
         --host_step_pos;
         if (!host_timeout_active) {
-            if (step->value == 0u || (step->value & 1u) != 0u) {
+            if (frames == 0u ||
+                (frames % NETCHESSZX_SESSION_DIRECT_EMPTY_POLL_FRAMES) != 0u) {
                 host_failed = 1u;
                 return -2;
             }
-            host_timeout_deadline = (uint16_t)(host_now_ticks + step->value);
+            host_timeout_deadline = (uint16_t)(host_now_ticks + frames);
             host_timeout_active = 1u;
         }
-        /* direct_read_payload_ovl() waits WAIT_POLL=2 PAL frames before
-           returning one transport timeout. Keep one 20 ms protocol clock. */
-        spectrum_frame_wait();
-        spectrum_frame_wait();
+        /* Match the selected overlay's empty-read cadence. */
+        host_empty_transport_poll();
         if (host_now_ticks == host_timeout_deadline) {
             host_timeout_active = 0u;
             ++host_step_pos;
@@ -609,6 +809,11 @@ read_next_step:
 uint8_t spectrum_net_send_text(const char *text)
 {
     uint8_t traced;
+
+    /* Advisory MACH is outside session-phase parity observations. */
+    if (strncmp(text, "MACH ", 5) == 0) {
+        return 1u;
+    }
 
     if (strcmp(text, "RESET") == 0 && host_local_resign_pending) {
         host_local_resign_pending = 0u;
@@ -651,6 +856,7 @@ uint8_t spectrum_net_send_text(const char *text)
 
 void spectrum_net_direct_peer_mark_valid(void) { direct_peer_valid = 1u; }
 void spectrum_net_background_drain(void) {}
+void spectrum_net_background_drain_clock(void) {}
 /* DIRECT fixture: transcript RX is live/non-retained and has no unframed
    activity outside explicit steps. */
 uint8_t spectrum_net_payload_flags(void) { return 0u; }
@@ -691,8 +897,12 @@ uint8_t spectrum_net_sync_time(void)
     host_failed = 1u;
     return 0u;
 }
-uint8_t spectrum_net_preflight_run(void)
+void spectrum_net_clock_retry_start(void) {}
+void spectrum_net_clock_retry_cancel(void) {}
+void spectrum_net_runtime_wait_frame(void) {}
+uint8_t spectrum_net_preflight_run(uint8_t quiet) NETCHESSZX_FASTCALL
 {
+    (void)quiet;
     host_failed = 1u;
     return 0u;
 }
@@ -780,6 +990,13 @@ process_next_step:
                 local_input_len = step->length;
                 local_input_cursor = step->length;
                 local_input_mode = 1u;
+                if (step->request == DIRECT_PARITY_REQUEST_CHAT) {
+                    if (host_fail_length != 0u) {
+                        host_chat_ping_reset_forbidden = 1u;
+                    } else {
+                        host_chat_ping_reset_expected = 1u;
+                    }
+                }
                 return 13u;
             }
             if (step->request == DIRECT_PARITY_REQUEST_DRAW &&
@@ -1150,8 +1367,25 @@ static void check_input_editor_driver(void)
 void netchesszx_input_edit_key_overlay(uint8_t key) { (void)key; }
 void netchesszx_input_edit_history_add_overlay(const char *text) { (void)text; }
 
-void spectrum_gui_status_phase(uint8_t phase) { (void)phase; }
+void spectrum_gui_status_phase(uint8_t phase)
+{
+    uint8_t platform = SPECTRUM_STATUS_UNPACK_PLATFORM(phase);
+    uint8_t old_platform = SPECTRUM_STATUS_UNPACK_PLATFORM(host_status_phase);
+
+    host_status_phase = phase;
+    ++host_status_phase_calls;
+    /* Compact MACH is a status event; normalize only the post-ready,
+       known-platform observation to the common typed action. */
+    if (host_trace != 0 && netchesszx_session_peer_ready_state &&
+        platform != NETCHESS_PLAT_UNKNOWN && platform != old_platform) {
+        (void)host_trace_push(DIRECT_PARITY_OBS_GAME,
+                              DIRECT_PARITY_LINK_NONE,
+                              DIRECT_PARITY_GAME_PLATFORM,
+                              platform, 0);
+    }
+}
 void spectrum_gui_set_status_error(const char *text) { (void)text; }
+void spectrum_gui_shift_clock(int8_t hour_delta) { (void)hour_delta; }
 void spectrum_gui_game_timer_start(void)
 {
     if (host_restore_apply_pending) {
@@ -1206,6 +1440,14 @@ void spectrum_gui_game_timer_stop(void)
     }
     host_started_seen = 0u;
 }
+void spectrum_gui_game_timer_save(uint8_t *timers)
+{
+    memset(timers, 0, 6u);
+}
+void spectrum_gui_game_timer_restore(const uint8_t *timers)
+{
+    (void)timers;
+}
 void spectrum_gui_move_timer_reset(void) {}
 void spectrum_gui_set_turn_label(uint8_t mode) { (void)mode; }
 void spectrum_gui_set_connected(uint8_t connected)
@@ -1215,6 +1457,7 @@ void spectrum_gui_set_connected(uint8_t connected)
                               0u, 0u, 0);
     }
     if (connected == 0u) {
+        host_chat_ping_reset_forbidden = 0u;
         if (confirm_action != CONFIRM_NONE || restore_rx_mask != 0u) {
             host_failed = 1u;
         }
@@ -1333,8 +1576,18 @@ void spectrum_gui_set_board_pieces_visible(uint8_t visible)
 void spectrum_gui_hide_board_pieces(void) { host_pieces_visible = 0u; }
 void spectrum_gui_draw_board(void) {}
 void spectrum_gui_redraw_board_view(void) {}
-void spectrum_gui_restore_board_area(void) {}
-void spectrum_gui_animate_board_pieces(void) { host_pieces_visible = 1u; }
+void spectrum_gui_restore_board_area(void) { host_about_visible = 0u; }
+void spectrum_gui_restore_game_center(void)
+{
+    host_about_visible = 0u;
+    host_side_panels_visible = 1u;
+}
+static uint8_t host_animate_calls;
+void spectrum_gui_animate_board_pieces(void)
+{
+    host_pieces_visible = 1u;
+    ++host_animate_calls;
+}
 void spectrum_gui_draw_status(void) {}
 void spectrum_gui_restore_side_panels(void) { host_side_panels_visible = 1u; }
 uint8_t spectrum_gui_side_panels_visible(void)
@@ -1369,6 +1622,7 @@ void spectrum_gui_add_move(const char *ply, const char *move)
         }
     }
 }
+void spectrum_gui_prepare_move_row(void) {}
 void spectrum_gui_remove_last_move(uint16_t ply)
 {
     if (ply == 0u || game_ply != ply - 1u) {
@@ -1390,6 +1644,8 @@ void spectrum_gui_add_chat(char who, const char *text)
             (strcmp(text, NETCHESS_PROTO_DRAW) != 0 &&
              strcmp(text, NETCHESS_PROTO_RESIGN) != 0 &&
              strcmp(text, NETCHESS_PROTO_TAKEBACK) != 0 &&
+             strcmp(text, NETCHESSZX_UI_EVENT_DRAW_AGREED) != 0 &&
+             strcmp(text, NETCHESSZX_UI_EVENT_RESIGNATION_LOST) != 0 &&
              strcmp(text, NETCHESSZX_UI_EVENT_OPPONENT_RESIGN) != 0)) {
             host_failed = 1u;
         }
@@ -1445,6 +1701,7 @@ void spectrum_gui_redraw_square(uint8_t row, uint8_t col)
 {
     (void)row;
     (void)col;
+    ++host_redraw_square_calls;
 }
 void spectrum_gui_mark_cursor(uint8_t row, uint8_t col, uint8_t selected)
 {
@@ -1604,6 +1861,9 @@ uint8_t direct_spectrum_run(const DirectParityScenario *scenario,
     host_now_ticks = 0u;
     host_timeout_deadline = 0u;
     host_timeout_active = 0u;
+    host_chat_ping_reset_expected = 0u;
+    host_chat_ping_reset_forbidden = 0u;
+    host_chat_ping_reset_violation = 0u;
     host_fail_payload = 0;
     host_fail_length = 0u;
     host_failed_send_pending = 0u;
@@ -1618,7 +1878,12 @@ uint8_t direct_spectrum_run(const DirectParityScenario *scenario,
     host_resign_control_pending = 0u;
     host_local_resign_pending = 0u;
     host_connected_state = 0xffu;
-    host_pieces_visible = 0xffu;
+    host_status_phase = 0u;
+    host_status_phase_calls = 0u;
+    status_phase_current = SPECTRUM_STATUS_PACK(STATUS_PHASE_CONNECTED,
+                                                NETCHESS_PLAT_UNKNOWN);
+    /* Production enters the link loop with the setup piece preview visible. */
+    host_pieces_visible = 1u;
     host_board_flipped = 0u;
     host_side_panels_visible = 0u;
     host_about_visible = 0u;
@@ -1663,6 +1928,8 @@ uint8_t direct_spectrum_run(const DirectParityScenario *scenario,
         host_transport_begin_link(host_link_id);
     }
     if (host_failed || host_timeout_active || host_fail_length != 0u ||
+        host_chat_ping_reset_expected || host_chat_ping_reset_forbidden ||
+        host_chat_ping_reset_violation ||
         host_failed_send_pending ||
         host_control_draw_pending || host_control_reset_pending ||
         host_local_confirm_pending || host_local_draw_pending ||
@@ -1811,6 +2078,43 @@ static void check_mqtt_peer_loss_blocks_taboption(void)
           "MQTT peer loss discards finished board and history");
 }
 
+static void check_mqtt_peer_identity_reset(void)
+{
+    char payload[] = "";
+
+    game_status_active = 1u;
+    game_over = 0u;
+    local_turn = 0u;
+    start_pending = 0u;
+    confirm_action = CONFIRM_NONE;
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_MQTT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    status_phase_current = SPECTRUM_STATUS_PACK(STATUS_PHASE_CONNECTED,
+                                                NETCHESS_PLAT_MAC);
+    host_status_phase_calls = 0u;
+
+    check(session_presence_handle_event(NETCHESSZX_SESSION_EVENT_MQTT_PEER_OFFLINE,
+                                        payload, 0u) == SESSION_DISPATCH_HANDLED,
+          "MQTT peer replacement/offline handled");
+    check(host_status_phase_calls != 0u &&
+              SPECTRUM_STATUS_UNPACK_PHASE(host_status_phase) ==
+                  STATUS_PHASE_CONNECTED &&
+              SPECTRUM_STATUS_UNPACK_PLATFORM(host_status_phase) ==
+                  NETCHESS_PLAT_UNKNOWN,
+          "MQTT peer reset renders unknown platform");
+
+    netchesszx_session_peer_mark_ready();
+    check(session_presence_handle_event(NETCHESSZX_SESSION_EVENT_MACH_PC,
+                                        payload, 0u) == SESSION_DISPATCH_HANDLED &&
+              SPECTRUM_STATUS_UNPACK_PHASE(host_status_phase) ==
+                  STATUS_PHASE_CONNECTED &&
+              SPECTRUM_STATUS_UNPACK_PLATFORM(host_status_phase) ==
+                  NETCHESS_PLAT_PC,
+          "MACH PC updates ready replacement peer platform");
+}
+
 static void check_direct_guest_disconnect_forgets_side(void)
 {
     netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
@@ -1850,6 +2154,73 @@ static void check_cursor_reselects_own_piece(void)
     netchesszx_movement_hints = saved_hints;
     selected_row = NO_SQUARE;
     selected_col = NO_SQUARE;
+}
+
+static void check_turn_grant_clears_stale_cursor(void)
+{
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    spectrum_board_reset();
+    game_status_active = 1u;
+    local_turn = 0u;
+    selected_row = 7u;
+    selected_col = 6u;
+    cursor_row = 7u;
+    cursor_col = 6u;
+    host_redraw_square_calls = 0u;
+
+    turn_set_notice(1u, 0u);
+    check(host_redraw_square_calls != 0u && selected_row == NO_SQUARE,
+          "turn grant clears stale board cursor before repositioning");
+
+    game_status_active = 0u;
+    local_turn = 0u;
+    netchesszx_session_peer_clear();
+}
+
+static void check_setup_preview_skips_first_start_redraw(void)
+{
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    spectrum_board_reset();
+    game_status_active = 0u;
+    game_over = 0u;
+    start_pending = 0u;
+    resign_pending = 0u;
+    pending_local_clear();
+    host_pieces_visible = 1u;
+    host_animate_calls = 0u;
+
+    game_start_state();
+    check(host_animate_calls == 0u && host_pieces_visible,
+          "first start keeps setup pieces without redraw");
+
+    host_animate_calls = 0u;
+    game_over = 1u;
+    game_start_state();
+    check(host_animate_calls == 1u && host_pieces_visible,
+          "rematch still animates pieces onto the board");
+
+    game_status_active = 0u;
+    game_over = 0u;
+    host_pieces_visible = 1u;
+    host_board_flipped = 0u;
+    host_animate_calls = 0u;
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    game_start_state();
+    check(host_animate_calls == 1u && host_pieces_visible && host_board_flipped,
+          "guest start animates when setup preview faces the other way");
+
+    game_status_active = 0u;
+    game_over = 0u;
+    local_turn = 0u;
+    netchesszx_session_peer_clear();
 }
 
 static void check_local_move_ply_overflow(void)
@@ -1915,68 +2286,145 @@ static void check_chat_editor_during_pending_control(void)
     game_over = 0u;
 }
 
+static void check_non_chat_input_liveness_status(void)
+{
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    host_menu_visible = 0u;
+    confirm_action = CONFIRM_NONE;
+    pending_local_ply = 0u;
+    takeback_pending_ply = 0u;
+    restore_rx_mask = 0u;
+    game_over = 0u;
+    game_status_active = 1u;
+
+    local_input_mode = 1u;
+    check(process_local_key('x') == 1u,
+          "typing without submit has normal key status");
+
+    local_input[0] = '\0';
+    local_input_len = 0u;
+    local_input_cursor = 0u;
+    check(process_local_key(13u) == 1u && !local_input_mode,
+          "empty submit has normal key status");
+
+    check(process_local_key(13u) == 1u && local_input_mode,
+          "opening editor has normal key status");
+    check(process_local_key(KEY_CANCEL) == 1u && !local_input_mode,
+          "closing editor has normal key status");
+
+    memcpy(local_input, "/draw", 6u);
+    local_input_len = 5u;
+    local_input_cursor = 5u;
+    local_input_mode = 1u;
+    check(process_local_key(13u) == 1u &&
+              confirm_action == CONFIRM_DRAW_SEND,
+          "local command has normal key status");
+    confirm_action = CONFIRM_NONE;
+    edit_stop_clear();
+    game_status_active = 0u;
+    netchesszx_session_peer_clear();
+}
+
+static void check_about_dismisses_before_confirmation(void)
+{
+    host_about_visible = 1u;
+    confirm_action = CONFIRM_TAKEBACK_ACCEPT;
+    takeback_pending_ply = 2u;
+
+    check(process_local_key('x') == 1u && !host_about_visible,
+          "About dismisses before hidden confirmation input");
+    check(confirm_action == CONFIRM_TAKEBACK_ACCEPT && takeback_pending_ply == 2u,
+          "About dismissal preserves pending confirmation");
+
+    confirm_action = CONFIRM_NONE;
+    takeback_pending_ply = 0u;
+}
+
+static void check_restore_transfer_blocks_file_and_editor(void)
+{
+    char partial[NETCHESSZX_SAVE_WIRE_CHUNK_SIZE];
+
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    host_failed = 0u;
+    host_fileui_visible = 0u;
+    host_menu_visible = 0u;
+    confirm_action = CONFIRM_NONE;
+    local_input_mode = 0u;
+    game_over = 0u;
+    game_status_active = 1u;
+    restore_rx_mask = RESTORE_TX_PENDING;
+
+    check(process_local_key(13u),
+          "restore TX consumes editor key");
+    check(!local_input_mode,
+          "restore TX blocks editor workspace reuse");
+    check(process_local_key(SPECTRUM_GUI_KEY_MENU_FILE),
+          "restore TX consumes FILE key");
+    check(!host_failed && !host_fileui_visible,
+          "restore TX blocks FILE workspace replacement");
+
+    memset(restore_b64_pending, 'R', sizeof(restore_b64_pending));
+    memcpy(partial, restore_b64_pending, sizeof(partial));
+    restore_rx_mask = (uint8_t)(RESTORE_RX_RECEIVE | 1u);
+
+    check(process_local_key(13u),
+          "restore transfer consumes editor key");
+    check(!local_input_mode,
+          "restore transfer blocks editor workspace reuse");
+    check(process_local_key(SPECTRUM_GUI_KEY_MENU_FILE),
+          "restore transfer consumes FILE key");
+    check(!host_failed && !host_fileui_visible,
+          "restore transfer blocks FILE workspace replacement");
+
+    host_fileui_visible = 1u;
+    check(process_local_key(KEY_DOWN),
+          "restore transfer outranks visible FILE browser");
+    check(!host_failed,
+          "restore transfer blocks FILE browser actions");
+
+    host_fileui_visible = 0u;
+    host_board_flipped = 0u;
+    selected_row = NO_SQUARE;
+    selected_col = NO_SQUARE;
+    cursor_row = 4u;
+    cursor_col = 4u;
+    local_turn = 1u;
+    pending_local_ply = 0u;
+    check(process_local_key(KEY_DOWN),
+          "restore receive consumes cursor key");
+    check(pending_local_ply == 0u && cursor_row == 4u && cursor_col == 4u &&
+              memcmp(partial, restore_b64_pending, sizeof(partial)) == 0,
+          "restore receive preserves partial chunk and sends no move");
+
+    restore_rx_mask = RESTORE_RX_APPLIED;
+    check(process_local_key(KEY_DOWN),
+          "applied restore cache permits cursor key");
+    check(cursor_row == 5u,
+          "applied restore cache does not freeze interaction");
+
+    host_fileui_visible = 0u;
+    restore_rx_mask = 0u;
+    game_status_active = 0u;
+    netchesszx_session_peer_clear();
+}
+
 int main(int argc, char **argv)
 {
-    static const DirectParityScenario *const scenarios[] = {
-        &direct_parity_host_smoke,
-        &direct_parity_guest_smoke,
-        &direct_parity_guest_hello_conflict,
-        &direct_parity_link_zero,
-        &direct_parity_intruder_active,
-        &direct_parity_intruder_handshake,
-        &direct_parity_intruder_teardown,
-        &direct_parity_bye_local_handshake,
-        &direct_parity_bye_local_send_fail,
-        &direct_parity_bye_local_restore_prompt,
-        &direct_parity_bye_remote_active,
-        &direct_parity_duplicate_hello,
-        &direct_parity_start_host,
-        &direct_parity_start_guest,
-        &direct_parity_move_local_ack,
-        &direct_parity_move_local_stale_results,
-        &direct_parity_move_remote_duplicate,
-        &direct_parity_move_ply_sync,
-        &direct_parity_takeback_local_ack,
-        &direct_parity_takeback_remote_accept,
-        &direct_parity_takeback_reject_retry,
-        &direct_parity_takeback_move_inflight,
-        &direct_parity_takeback_latch_next_move,
-        &direct_parity_restore_local_active,
-        &direct_parity_restore_remote_fresh,
-        &direct_parity_restore_cancel_early,
-        &direct_parity_restore_cancel_late,
-        &direct_parity_restore_remote_rn,
-        &direct_parity_restore_reject_retry,
-        &direct_parity_restore_crossed_rq,
-        &direct_parity_restore_reack_send_fail,
-        &direct_parity_intruder_restore_receive,
-        &direct_parity_restore_partial_reconnect,
-        &direct_parity_draw_rematch_guest,
-        &direct_parity_reset_after_reset,
-        &direct_parity_reset_crossed_active,
-        &direct_parity_move_pending_controls_busy,
-        &direct_parity_takeback_pending_controls_busy,
-        &direct_parity_draw_crossed,
-        &direct_parity_resign_remote_duplicate,
-        &direct_parity_resign_crossed,
-        &direct_parity_cancel_local_reset,
-        &direct_parity_cancel_remote_draw,
-        &direct_parity_liveness_ack,
-        &direct_parity_liveness_pending_window,
-        &direct_parity_liveness_guest_loss,
-        &direct_parity_liveness_host_loss,
-        &direct_parity_liveness_prompt_loss,
-        &direct_parity_ping_send_fail,
-        &direct_parity_ack_ping_send_fail,
-        &direct_parity_ack_ping_send_timeout,
-        &direct_parity_ack_ping_stale_tx_result
-    };
     DirectParityTrace reference;
     DirectParityTrace spectrum;
     uint8_t i;
     uint8_t ran = 0u;
 
     check_restore_host_color_guard();
+#ifdef NETCHESSZX_NEXT
+    check_direct_recovery_budget_rearmed();
+#endif
     check_restore_codec_contract();
 #ifdef NETCHESSZX_NEXT_BANKING
     check_next_restore_sprite_allocator_contract();
@@ -1985,13 +2433,18 @@ int main(int argc, char **argv)
     check_text_helper_contract();
     check_input_editor_driver();
     check_cursor_reselects_own_piece();
+    check_turn_grant_clears_stale_cursor();
+    check_setup_preview_skips_first_start_redraw();
     check_local_move_ply_overflow();
     check_chat_editor_during_pending_control();
+    check_non_chat_input_liveness_status();
+    check_about_dismisses_before_confirmation();
+    check_restore_transfer_blocks_file_and_editor();
     check_mqtt_peer_loss_blocks_taboption();
+    check_mqtt_peer_identity_reset();
     check_direct_guest_disconnect_forgets_side();
-    for (i = 0u; i < (uint8_t)(sizeof(scenarios) / sizeof(scenarios[0]));
-         ++i) {
-        const DirectParityScenario *scenario = scenarios[i];
+    for (i = 0u; i < direct_parity_scenario_count; ++i) {
+        const DirectParityScenario *scenario = &direct_parity_scenarios[i];
 
         if (argc == 2 && strcmp(argv[1], scenario->id) != 0) {
             continue;

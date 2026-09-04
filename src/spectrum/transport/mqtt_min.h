@@ -18,8 +18,13 @@
    piece_sprites_16x16 + 384 = 0x64ac. The MQTT stream and packet scratch sit
    between that end and the overlay slot at 0x6800. check_lowmem_layout.py
    verifies this against the .map on every tap build. */
+#ifdef NETCHESSZX_NEXT_BANKING
+#define SPECTRUM_MQTT_RUNTIME_ASSETS_END 0x39acu
+#define SPECTRUM_MQTT_SCRATCH_BASE 0x3a8bu
+#else
 #define SPECTRUM_MQTT_RUNTIME_ASSETS_END 0x64acu
 #define SPECTRUM_MQTT_SCRATCH_BASE 0x658bu
+#endif
 #define SPECTRUM_MQTT_PACKET_SCRATCH ((uint8_t *)SPECTRUM_MQTT_SCRATCH_BASE)
 
 #define SPECTRUM_MQTT_CONNACK 2u

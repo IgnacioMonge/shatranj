@@ -69,6 +69,14 @@ int main()
 
     const QDateTime when(QDate(2026, 7, 22), QTime(9, 5));
     const QString base = SaveGameStore::slotBaseName(1, when);
+    check(SaveGameStore::slotBaseName(
+              1, QDateTime(QDate(2019, 12, 31), QTime(23, 59))) ==
+              QStringLiteral("01000000"),
+          "pre-2020 RTC uses deterministic fallback slot name");
+    check(SaveGameStore::slotBaseName(
+              1, QDateTime(QDate(2052, 1, 1), QTime(0, 0))) ==
+              QStringLiteral("01000000"),
+          "post-2051 RTC uses deterministic fallback slot name");
     check(base == QStringLiteral("0167M905"), "slot base name");
 
     const QString path = SaveGameStore::slotFilePath(temporary.path(), base);
@@ -87,6 +95,26 @@ int main()
     check(entries.size() == SaveGameStore::kSlotCount && entries[0].used &&
               entries[0].baseName == base,
           "scan slot");
+
+    check(SaveGameStore::remove(path) && !QFile::exists(path),
+          "remove dated slot save");
+    const QString zeroStampPath = temporary.filePath(
+        QStringLiteral("01000000.STJ"));
+    QFile zeroStamp(zeroStampPath);
+    check(zeroStamp.open(QIODevice::WriteOnly), "write zero stamp save");
+    zeroStamp.close();
+    QFile partialZeroStamp(temporary.filePath(
+        QStringLiteral("02010000.STJ")));
+    check(partialZeroStamp.open(QIODevice::WriteOnly),
+          "write partial zero stamp save");
+    partialZeroStamp.close();
+    entries = SaveGameStore::scanSlots(temporary.path());
+    check(entries[0].used &&
+              entries[0].baseName == QStringLiteral("01000000") &&
+              entries[0].when ==
+                  QDateTime(QDate(2020, 1, 1), QTime(0, 0)),
+          "scan exact zero stamp");
+    check(!entries[1].used, "reject partial zero stamp");
 
     QFile corrupt(temporary.filePath(QStringLiteral("corrupt.stj")));
     check(corrupt.open(QIODevice::WriteOnly) && corrupt.write("bad") == 3,
@@ -137,7 +165,8 @@ int main()
     check(!SaveGameStore::read(invalidSemantic.fileName(), &actual),
           "reject semantically invalid save");
 
-    check(SaveGameStore::remove(path) && !QFile::exists(path), "remove save");
+    check(SaveGameStore::remove(zeroStampPath) && !QFile::exists(zeroStampPath),
+          "remove zero stamp save");
 
     if (failures != 0) {
         return 1;

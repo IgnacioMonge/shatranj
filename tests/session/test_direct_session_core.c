@@ -73,6 +73,19 @@ static SessionAction *find_action(Fixture *f, uint8_t type)
     return 0;
 }
 
+static SessionAction *find_ended_action(Fixture *f)
+{
+    uint8_t i;
+
+    for (i = 0u; i < f->count; ++i) {
+        if (f->actions[i].type == SESSION_ACT_SESSION_CHANGED &&
+            f->actions[i].data.session.status == SESSION_CHANGED_ENDED) {
+            return &f->actions[i];
+        }
+    }
+    return 0;
+}
+
 static SessionAction *find_control_result(Fixture *f)
 {
     uint8_t i;
@@ -442,6 +455,11 @@ static void test_moves_and_tx_guard(void)
     action = find_action(&local, SESSION_ACT_SESSION_CHANGED);
     check(action != 0 && action->data.session.status == SESSION_CHANGED_ENDED,
           "missing tx result ends session");
+    action = find_ended_action(&local);
+    check(action != 0 &&
+              action->data.session.end_reason ==
+                  SESSION_END_REASON_TRANSPORT_LOST,
+          "missing tx result marks transport loss");
 
     make_active(&local, SESSION_ROLE_GUEST, SESSION_COLOR_BLACK);
     rx(&local, 1u, "PING");
@@ -566,6 +584,11 @@ static void test_retry_and_failure_paths(void)
     action = find_action(&f, SESSION_ACT_SESSION_CHANGED);
     check(action != 0 && action->data.session.status == SESSION_CHANGED_ENDED,
           "liveness miss limit ends");
+    action = find_ended_action(&f);
+    check(action != 0 &&
+              action->data.session.end_reason ==
+                  SESSION_END_REASON_TRANSPORT_LOST,
+          "liveness miss limit marks transport loss");
 
     make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
     local_request(&f, SESSION_REQUEST_MOVE, 0u, "e2e4");
@@ -740,6 +763,11 @@ static void test_restore(void)
               action->data.game.kind == SESSION_DELIVER_REMOTE_MOVE &&
               action->data.game.value == 8u,
           "move after guest restore uses restored ply");
+
+    make_active(&guest, SESSION_ROLE_GUEST, SESSION_COLOR_BLACK);
+    local_request_phase(&guest, SESSION_REQUEST_RESTORE, 7u, restore,
+                        SESSION_PHASE_ACTIVE);
+    expect_send(&guest, "RQ", 1u, "guest restore request");
 }
 
 static void test_duplicate_hello_and_reconnect(void)
@@ -1450,6 +1478,13 @@ static void test_game_results_and_takeback(void)
                 "move rejection preserves domain reason");
     tx_result(&f, SESSION_TX_OK);
     check(f.state.current_ply == 0u, "rejected move does not advance ply");
+    rx(&f, 1u, "MOVE 1 e2e4");
+    expect_send(&f, "NACK 1 REJECT", 1u,
+                "exact rejected move replays rejection");
+    tx_result(&f, SESSION_TX_OK);
+    rx(&f, 1u, "MOVE 1 d2d4");
+    check(find_action(&f, SESSION_ACT_DELIVER_GAME) != 0,
+          "corrected move at rejected ply is validated afresh");
 
     make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
     local_request(&f, SESSION_REQUEST_MOVE, 0u, "e2e4");
@@ -1748,6 +1783,7 @@ static void test_restore_cancel(void)
 static void test_bye_during_handshake_and_control(void)
 {
     Fixture f;
+    SessionAction *action;
 
     fixture_init(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
     link_up(&f, 1u);
@@ -1758,6 +1794,10 @@ static void test_bye_during_handshake_and_control(void)
     check(find_action(&f, SESSION_ACT_LINK_CLOSE) != 0 &&
               find_action(&f, SESSION_ACT_SESSION_CHANGED) != 0,
           "handshake bye closes and ends");
+    action = find_ended_action(&f);
+    check(action != 0 &&
+              action->data.session.end_reason == SESSION_END_REASON_LOCAL_BYE,
+          "handshake local bye marks local end");
 
     make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
     local_request(&f, SESSION_REQUEST_MOVE, 0u, "e2e4");
@@ -1768,6 +1808,10 @@ static void test_bye_during_handshake_and_control(void)
     check(find_action(&f, SESSION_ACT_LINK_CLOSE) != 0 &&
               find_action(&f, SESSION_ACT_SESSION_CHANGED) != 0,
           "pending-control bye closes and ends");
+    action = find_ended_action(&f);
+    check(action != 0 &&
+              action->data.session.end_reason == SESSION_END_REASON_LOCAL_BYE,
+          "pending-control local bye marks local end");
 }
 
 static void test_local_handoff_actions(void)
@@ -1885,6 +1929,10 @@ static void test_link_zero_busy_bye_and_order(void)
     check(find_action(&f, SESSION_ACT_LINK_CLOSE) != 0 &&
               find_action(&f, SESSION_ACT_SESSION_CHANGED) != 0,
           "remote bye closes and ends");
+    action = find_ended_action(&f);
+    check(action != 0 &&
+              action->data.session.end_reason == SESSION_END_REASON_REMOTE_BYE,
+          "remote bye marks remote end");
 
     make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
     local_request(&f, SESSION_REQUEST_BYE, 0u, 0);
@@ -1893,6 +1941,10 @@ static void test_link_zero_busy_bye_and_order(void)
     check(find_action(&f, SESSION_ACT_LINK_CLOSE) != 0 &&
               find_action(&f, SESSION_ACT_SESSION_CHANGED) != 0,
           "local bye ends after tx result");
+    action = find_ended_action(&f);
+    check(action != 0 &&
+              action->data.session.end_reason == SESSION_END_REASON_LOCAL_BYE,
+          "local bye marks local end");
 
     make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
     rx(&f, 1u, "MOVE 1 e2e4");
@@ -1922,6 +1974,11 @@ static void test_link_zero_busy_bye_and_order(void)
     event.type = SESSION_EV_LINK_DOWN;
     event.data.link.link_id = 0u;
     check(run(&f, &event) != 0u, "raw link zero down ends session");
+    action = find_ended_action(&f);
+    check(action != 0 &&
+              action->data.session.end_reason ==
+                  SESSION_END_REASON_TRANSPORT_LOST,
+          "raw link zero down marks transport loss");
 
     make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
     link_up(&f, 2u);
@@ -1992,9 +2049,13 @@ static void test_restore_reuse_and_duplicate(void)
 
     make_active(&host, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
     rx(&host, 1u, "RQ");
-    expect_send(&host, "RN", 1u, "host rejects restore request");
-    check(find_action(&host, SESSION_ACT_REQUEST_DECISION) == 0,
-          "host restore request has no prompt");
+    check(find_action(&host, SESSION_ACT_REQUEST_DECISION) != 0 &&
+              find_action(&host, SESSION_ACT_REQUEST_DECISION)
+                      ->data.decision.control == SESSION_REQUEST_RESTORE,
+          "restore asks host");
+    user_decision(&host, SESSION_DECISION_REJECT);
+    expect_send(&host, "RN", 1u, "host refuses restore request");
+    tx_result(&host, SESSION_TX_OK);
 
     make_active(&guest, SESSION_ROLE_GUEST, SESSION_COLOR_BLACK);
     rx(&guest, 1u, "RQ");
@@ -2023,6 +2084,18 @@ static void test_restore_reuse_and_duplicate(void)
           "duplicate chunk before result not redelivered");
     game_result_phase(&guest, SESSION_GAME_ACCEPTED, 0u,
                       SESSION_PHASE_ACTIVE);
+    tx_result(&guest, SESSION_TX_OK);
+
+    local_request(&guest, SESSION_REQUEST_CHAT, 0u, "still here");
+    expect_send(&guest, "CHAT still here", 1u,
+                "chat is allowed after applied restore");
+    tx_result(&guest, SESSION_TX_OK);
+    memcpy(chunk, "RS00 ", 5u);
+    memcpy(chunk + 5u, first, 30u);
+    chunk[35] = '\0';
+    rx(&guest, 1u, chunk);
+    expect_send(&guest, "RA", 1u,
+                "applied restore cache survives local chat");
     tx_result(&guest, SESSION_TX_OK);
 
     memcpy(chunk, "RS01 ", 5u);

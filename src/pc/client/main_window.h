@@ -10,20 +10,6 @@
 
 #include <memory>
 
-#ifdef NETCHESSZX_PC_MQTT_TX_FAILURE_TEST
-#include <QAbstractSocket>
-#include <QCoreApplication>
-#include <QElapsedTimer>
-#include <QEventLoop>
-#include <QHostAddress>
-#include <QSettings>
-#include <QTcpServer>
-#include <QVector>
-
-#include "common/session/session.h"
-#include "desktop_transport_codec.h"
-#endif
-
 class MainWindowImpl;
 
 QByteArray mqttClientIdFor(bool host, quint64 nonce);
@@ -45,7 +31,8 @@ public:
     void setWindowIcon(const QIcon &icon);
     void showNormal();
 
-#ifdef NETCHESSZX_PC_MQTT_TX_FAILURE_TEST
+    // Integration-test seam. The shared UI target provides these methods so
+    // the production executable and the MQTT lifecycle test reuse one build.
     QTcpSocket *testSocket() const;
     bool testPrepareMqttGuestSession();
     bool testPrepareMqttHostSession();
@@ -53,8 +40,12 @@ public:
     bool testPrepareMqttGuestBootstrap();
     void testFeedMqtt(const QByteArray &suffix, const QByteArray &payload,
                       bool retained);
+    bool testBeginMqttRestore();
+    bool testRestoreUiIdle() const;
     void testSetMqttWriteFailure(bool enabled);
     bool testSessionReady() const;
+    QString testStatusContextText() const;
+    bool testStatusBarAligned();
     bool testDisconnectButtonAvailable() const;
     QByteArray testMqttClientId(bool host) const;
     void testHandleMqttPacket(const QByteArray &packet);
@@ -70,7 +61,8 @@ public:
     bool testReplaceDirectClientBeforeDisconnect();
     bool testResignRestartUiProjection();
     bool testRestoredMoveProjection();
-#endif
+    bool testSessionEndPresentation();
+    bool testCancelPendingPieceFlash();
 
 private:
     std::unique_ptr<MainWindowImpl> impl_;

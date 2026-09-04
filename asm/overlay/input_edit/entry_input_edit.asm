@@ -5,20 +5,23 @@ PUBLIC _input_edit_begin_empty_ovl_entry
 PUBLIC _input_edit_stop_clear_ovl_entry
 PUBLIC _input_edit_key_ovl_entry
 PUBLIC _input_edit_history_add_ovl_entry
+PUBLIC _input_edit_setup_line_ovl_entry
 
 EXTERN _input_edit_render_ovl
 EXTERN _input_edit_begin_empty_ovl
 EXTERN _input_edit_stop_clear_ovl
 EXTERN _input_edit_key_ovl
 EXTERN _input_edit_history_add_ovl
+EXTERN _input_edit_setup_line_ovl
 
-    DEFB 6
+    DEFB 7
     DW _input_edit_render_ovl_entry
     DW _input_edit_begin_empty_ovl_entry
     DW _input_edit_stop_clear_ovl_entry
     DW _input_edit_key_ovl_entry
     DW _input_edit_history_add_ovl_entry
     DW input_edit_parse_move_ovl_entry
+    DW _input_edit_setup_line_ovl_entry
 
 DEFC _input_edit_render_ovl_entry = _input_edit_render_ovl
 
@@ -29,6 +32,8 @@ DEFC _input_edit_stop_clear_ovl_entry = _input_edit_stop_clear_ovl
 DEFC _input_edit_key_ovl_entry = _input_edit_key_ovl
 
 DEFC _input_edit_history_add_ovl_entry = _input_edit_history_add_ovl
+
+DEFC _input_edit_setup_line_ovl_entry = _input_edit_setup_line_ovl
 
 input_edit_parse_move_ovl_entry:
     ld l, (de)

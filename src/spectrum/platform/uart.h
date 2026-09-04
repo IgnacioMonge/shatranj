@@ -13,6 +13,7 @@
 
 void spectrum_uart_init(void);
 #ifdef NETCHESSZX_NEXT
+void spectrum_uart_set_baud_230400(void);
 void spectrum_uart_hard_reset(void);
 #endif
 void spectrum_uart_flush(uint16_t frames) NETCHESSZX_FASTCALL;

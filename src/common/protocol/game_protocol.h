@@ -11,10 +11,8 @@
 #endif
 #endif
 
-#define NETCHESS_PROTO_MOVE "MOVE"
-#define NETCHESS_PROTO_CHAT "CHAT"
-#define NETCHESS_PROTO_ACK "ACK"
-#define NETCHESS_PROTO_NACK "NACK"
+#include "common/protocol/platform_protocol.h"
+
 #define NETCHESS_PROTO_TAKEBACK "TAKEBACK"
 #define NETCHESS_PROTO_RESTORE_RQ "RQ"
 #define NETCHESS_PROTO_RESTORE_RY "RY"

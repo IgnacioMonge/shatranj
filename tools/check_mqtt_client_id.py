@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard the broker-only MQTT ClientId contract on PC and Spectrum."""
+"""Guard the broker-only MQTT ClientId and CONNECT policy on PC/Spectrum."""
 
 from __future__ import annotations
 
@@ -43,12 +43,17 @@ def main() -> None:
     fixed = equ(asm, "mqtt_client_id_fixed")
     if fixed + room_max > 23:
         fail("Spectrum ClientId exceeds the portable 23-byte limit")
-    remaining = equ(asm, "mqtt_remaining_base")
-    packet = equ(asm, "mqtt_packet_base")
-    if remaining != fixed + 40 or packet != remaining + 2:
-        fail("Spectrum CONNECT lengths do not match the ClientId layout")
-    if 'DEFB 0, 4, "MQTT", 4, $06' not in asm:
-        fail("Spectrum retry identity requires CONNECT Clean Session")
+    if 'DEFB 0, 4, "MQTT", 4, $02' not in asm:
+        fail("Spectrum guest CONNECT must be clean and omit Will")
+    for token in (
+        "ld a, $26",
+        "ld (mqtt_packet_ovl + 9), a",
+        "jr nz, mqtt_conn_finish",
+        "call _spectrum_append_u16",
+        "ld (mqtt_packet_ovl + 1), a",
+    ):
+        if token not in asm:
+            fail(f"Spectrum role-specific CONNECT misses {token}")
 
     try:
         client_body = asm.split("mqtt_client_id_begin:", 1)[1].split(

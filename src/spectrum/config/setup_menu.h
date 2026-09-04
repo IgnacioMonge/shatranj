@@ -16,16 +16,22 @@
 #define NETCHESSZX_SETUP_FLAG_PAINT 0x02u
 #define NETCHESSZX_SETUP_FLAG_EDIT 0x04u
 #define NETCHESSZX_SETUP_FLAG_SUPPRESS 0x08u
+#define NETCHESSZX_SETUP_FLAG_TIME_UI 0x10u
+#define NETCHESSZX_SETUP_FLAG_ACTION_UI 0x20u
 
-#define NETCHESSZX_SETUP_ACTION_NONE 0u
 #define NETCHESSZX_SETUP_ACTION_BOARD 1u
 #define NETCHESSZX_SETUP_ACTION_SET 2u
 #define NETCHESSZX_SETUP_ACTION_START 3u
+#define NETCHESSZX_SETUP_ACTION_SAVE 4u
+#define NETCHESSZX_SETUP_ACTION_TIMEZONE 5u
 
 #define NETCHESSZX_SETUP_NOTICE_NONE 0u
 #define NETCHESSZX_SETUP_NOTICE_SELECT 1u
 #define NETCHESSZX_SETUP_NOTICE_PENDING 2u
 #define NETCHESSZX_SETUP_NOTICE_BAD_IP 3u
+#define NETCHESSZX_SETUP_NOTICE_BAD_ROOM 4u
+#define NETCHESSZX_SETUP_NOTICE_BAD_PORT 5u
+#define NETCHESSZX_SETUP_NOTICE_BAD_TIMEZONE 6u
 
 #define netchesszx_setup_overlay_context \
     ((volatile uint8_t *)NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_ADDR)
@@ -33,11 +39,12 @@
 void netchesszx_setup_render_edit_line(uint8_t row) __z88dk_fastcall;
 uint16_t netchesszx_setup_compute_visible(uint16_t defined_mask) __z88dk_fastcall;
 void netchesszx_setup_paint_attrs(void);
-void netchesszx_setup_render_rows(uint8_t values,
-                                  uint16_t visible_mask,
-                                  uint16_t dirty_mask);
 void netchesszx_setup_render_overlay(uint16_t force_dirty,
                                     uint16_t render_mode);
 uint8_t netchesszx_setup_step_overlay(uint8_t key) __z88dk_fastcall;
+uint8_t netchesszx_setup_dispatch_overlay(uint8_t key) __z88dk_fastcall;
+void netchesszx_setup_time_ui(void);
+void netchesszx_setup_time_init(uint8_t flags) __z88dk_fastcall;
+uint8_t netchesszx_setup_time_commit(void);
 
 #endif

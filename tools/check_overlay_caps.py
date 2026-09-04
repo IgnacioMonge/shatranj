@@ -12,16 +12,23 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from gen_overlay_defs import OPTIONAL_SYMBOLS, REQUIRED_SYMBOLS  # noqa: E402
+from gen_overlay_defs import (  # noqa: E402
+    OPTIONAL_SYMBOLS,
+    PORT_OPTIONAL_SYMBOLS,
+    REQUIRED_SYMBOLS,
+)
 
 
 DEFAULT_POLICY = Path("docs/overlay_capabilities.json")
 
-ASM_KNOWN = set(REQUIRED_SYMBOLS) | set(OPTIONAL_SYMBOLS)
+ASM_KNOWN = (
+    set(REQUIRED_SYMBOLS) | set(OPTIONAL_SYMBOLS) | set(PORT_OPTIONAL_SYMBOLS)
+)
 C_KNOWN = {name[1:] if name.startswith("_") else name for name in ASM_KNOWN}
 
 LOCAL_OVERLAY_NAMES = {
     "board_apply_ovl": "board",
+    "config_ovl": "config",
     "control_ovl": "control",
     "direct_ovl": "direct",
     "fileui_ovl": "fileui",
@@ -35,6 +42,7 @@ LOCAL_OVERLAY_NAMES = {
     "saveload_ovl": "saveload",
     "setup_ovl": "setup",
     "status_ovl": "status",
+    "time_ovl": "time",
 }
 
 ASM_EXTERN_RE = re.compile(r"^\s*EXTERN\s+([A-Za-z_][A-Za-z0-9_@.]*)")
@@ -82,6 +90,12 @@ def classify(symbol: str) -> str:
         return "libc"
     if name.startswith("spectrum_uart_"):
         return "uart"
+    if name.startswith("spxtime_") or name.startswith("spxudp_"):
+        return "spectranext_time"
+    if name.startswith("spxn_"):
+        return "spectranext_net"
+    if name.startswith("esx_") or name.startswith("spxf_"):
+        return "storage"
     if name.startswith("spectrum_net_") or name in {
         "last_ip",
         "net_wait_frame",
@@ -145,6 +159,14 @@ def classify(symbol: str) -> str:
         "setup_room_editing",
         "setup_edit_row",
         "setup_port_text",
+        "setup_timezone_text",
+        "setup_timezone_value",
+        "setup_config_dirty",
+        "setup_game_focus",
+        "setup_time_focus",
+        "setup_action_focus",
+        "setup_edit_was_dirty",
+        "setup_edit_backup",
     }:
         return "gui_state"
     if name.startswith("netchesszx_session_"):
@@ -164,6 +186,7 @@ def overlay_for_path(path: Path) -> str | None:
         if group in {
             "board",
             "about",
+            "config",
             "control",
             "direct",
             "fileui",
@@ -175,6 +198,8 @@ def overlay_for_path(path: Path) -> str | None:
             "mqtt_connect",
             "mqtt_tx",
             "setup",
+            "time",
+            "time_config",
             "status",
             "rules",
             "restore",

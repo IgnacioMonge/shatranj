@@ -1,12 +1,18 @@
 #include "common/savegame/savegame_wire.h"
 
-static int save_piece_ok(char piece)
+static const char save_piece_table[] = NETCHESSZX_SAVE_PIECE_TABLE;
+
+static int save_piece_nibble(char piece)
 {
-    return piece == '.' ||
-           piece == 'P' || piece == 'N' || piece == 'B' ||
-           piece == 'R' || piece == 'Q' || piece == 'K' ||
-           piece == 'p' || piece == 'n' || piece == 'b' ||
-           piece == 'r' || piece == 'q' || piece == 'k';
+    uint8_t nibble;
+
+    for (nibble = 0u; nibble < NETCHESSZX_SAVE_PIECE_COUNT; ++nibble) {
+        if (nibble != NETCHESSZX_SAVE_PIECE_RESERVED &&
+            save_piece_table[nibble] == piece) {
+            return nibble;
+        }
+    }
+    return -1;
 }
 
 static int save_timer_ok(uint8_t hour, uint8_t minute, uint8_t second)
@@ -14,46 +20,14 @@ static int save_timer_ok(uint8_t hour, uint8_t minute, uint8_t second)
     return hour <= 99u && minute < 60u && second < 60u;
 }
 
-static int save_piece_to_nibble(char piece, uint8_t *out)
-{
-    switch (piece) {
-    case '.': *out = 0x0u; return NETCHESSZX_SAVE_OK;
-    case 'P': *out = 0x1u; return NETCHESSZX_SAVE_OK;
-    case 'N': *out = 0x2u; return NETCHESSZX_SAVE_OK;
-    case 'B': *out = 0x3u; return NETCHESSZX_SAVE_OK;
-    case 'R': *out = 0x4u; return NETCHESSZX_SAVE_OK;
-    case 'Q': *out = 0x5u; return NETCHESSZX_SAVE_OK;
-    case 'K': *out = 0x6u; return NETCHESSZX_SAVE_OK;
-    case 'p': *out = 0x8u; return NETCHESSZX_SAVE_OK;
-    case 'n': *out = 0x9u; return NETCHESSZX_SAVE_OK;
-    case 'b': *out = 0xau; return NETCHESSZX_SAVE_OK;
-    case 'r': *out = 0xbu; return NETCHESSZX_SAVE_OK;
-    case 'q': *out = 0xcu; return NETCHESSZX_SAVE_OK;
-    case 'k': *out = 0xdu; return NETCHESSZX_SAVE_OK;
-    default: break;
-    }
-    return NETCHESSZX_SAVE_ERR_BOARD;
-}
-
 static int save_nibble_to_piece(uint8_t nibble, char *out)
 {
-    switch (nibble) {
-    case 0x0u: *out = '.'; return NETCHESSZX_SAVE_OK;
-    case 0x1u: *out = 'P'; return NETCHESSZX_SAVE_OK;
-    case 0x2u: *out = 'N'; return NETCHESSZX_SAVE_OK;
-    case 0x3u: *out = 'B'; return NETCHESSZX_SAVE_OK;
-    case 0x4u: *out = 'R'; return NETCHESSZX_SAVE_OK;
-    case 0x5u: *out = 'Q'; return NETCHESSZX_SAVE_OK;
-    case 0x6u: *out = 'K'; return NETCHESSZX_SAVE_OK;
-    case 0x8u: *out = 'p'; return NETCHESSZX_SAVE_OK;
-    case 0x9u: *out = 'n'; return NETCHESSZX_SAVE_OK;
-    case 0xau: *out = 'b'; return NETCHESSZX_SAVE_OK;
-    case 0xbu: *out = 'r'; return NETCHESSZX_SAVE_OK;
-    case 0xcu: *out = 'q'; return NETCHESSZX_SAVE_OK;
-    case 0xdu: *out = 'k'; return NETCHESSZX_SAVE_OK;
-    default: break;
+    if (nibble >= NETCHESSZX_SAVE_PIECE_COUNT ||
+        nibble == NETCHESSZX_SAVE_PIECE_RESERVED) {
+        return NETCHESSZX_SAVE_ERR_BOARD;
     }
-    return NETCHESSZX_SAVE_ERR_BOARD;
+    *out = save_piece_table[nibble];
+    return NETCHESSZX_SAVE_OK;
 }
 
 static uint8_t save_crc8(const uint8_t *data, uint8_t len)
@@ -142,7 +116,7 @@ int netchesszx_save_state_validate(const netchesszx_save_state_t *state)
     }
     for (i = 0u; i < 64u; ++i) {
         piece = state->cells[i];
-        if (!save_piece_ok(piece) ||
+        if (save_piece_nibble(piece) < 0 ||
             ((i < 8u || i >= 56u) && (piece == 'P' || piece == 'p'))) {
             return NETCHESSZX_SAVE_ERR_BOARD;
         }
@@ -166,8 +140,8 @@ int netchesszx_save_wire_pack(uint8_t *wire,
                               const netchesszx_save_state_t *state)
 {
     uint8_t i;
-    uint8_t hi;
-    uint8_t lo;
+    int hi;
+    int lo;
     int rc;
 
     if (wire == 0) {
@@ -181,13 +155,13 @@ int netchesszx_save_wire_pack(uint8_t *wire,
         return rc;
     }
     for (i = 0u; i < 32u; ++i) {
-        rc = save_piece_to_nibble(state->cells[(uint8_t)(i * 2u)], &hi);
-        if (rc != NETCHESSZX_SAVE_OK) {
-            return rc;
+        hi = save_piece_nibble(state->cells[(uint8_t)(i * 2u)]);
+        if (hi < 0) {
+            return NETCHESSZX_SAVE_ERR_BOARD;
         }
-        rc = save_piece_to_nibble(state->cells[(uint8_t)(i * 2u + 1u)], &lo);
-        if (rc != NETCHESSZX_SAVE_OK) {
-            return rc;
+        lo = save_piece_nibble(state->cells[(uint8_t)(i * 2u + 1u)]);
+        if (lo < 0) {
+            return NETCHESSZX_SAVE_ERR_BOARD;
         }
         wire[i] = (uint8_t)((hi << 4) | lo);
     }

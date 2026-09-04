@@ -9,8 +9,12 @@ using the nearest palette indexes, so the output stays a plain .nxi.
 from __future__ import annotations
 
 import argparse
-import re
 from pathlib import Path
+
+if __package__:
+    from .asm_data import parse_defb_block
+else:
+    from asm_data import parse_defb_block
 
 PAL_BYTES = 512
 WIDTH = 256
@@ -24,26 +28,6 @@ TEXT_LINES = [
 TEXT_Y = [140, 148, 156, 164]
 SCALE = 1
 SHADOW_RGB = (0, 0, 0)
-
-
-def parse_defb_block(text: str, label: str, end_label: str) -> bytes:
-    start = re.search(rf"(?m)^{re.escape(label)}:\s*$", text)
-    if not start:
-        raise SystemExit(f"label not found: {label}")
-    end = re.search(rf"(?m)^{re.escape(end_label)}:\s*$", text[start.end() :])
-    if not end:
-        raise SystemExit(f"end label not found: {end_label}")
-    block = text[start.end() : start.end() + end.start()]
-    data = bytearray()
-    for raw in block.splitlines():
-        line = raw.split(";", 1)[0].strip()
-        if not line.upper().startswith("DEFB"):
-            continue
-        for token in line[4:].split(","):
-            token = token.strip()
-            if token:
-                data.append(int(token, 0) & 0xFF)
-    return bytes(data)
 
 
 def decode_palette(pal: bytes) -> list[tuple[int, int, int]]:

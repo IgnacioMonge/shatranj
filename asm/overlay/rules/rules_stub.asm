@@ -448,40 +448,48 @@ rules_pseudo_dst_ok:
 rules_pawn:
     ld a, (r_side)
     or a
-    jp nz, rules_pawn_black
-rules_pawn_white:
+    ; b = start rank, c = forward rank delta, d = board offset,
+    ; e = opposing pawn. Keep DE live across rules_get_active probes.
+    ld bc, 0x06ff
+    ld de, 0xf8ff
+    jr z, rules_pawn_side_ok
+    ld bc, 0x0101
+    ld de, 0x0801
+rules_pawn_side_ok:
     ld a, (r_df)
     or a
-    jr nz, rules_pawn_white_capture
+    jr nz, rules_pawn_capture
     ld a, (r_dr)
-    cp 255
-    jr nz, rules_pawn_white_double
+    cp c
+    jr nz, rules_pawn_double
     ld a, (r_dst)
     or a
 rules_return_z:
     jp z, rules_ret1
     jp rules_ret0
-rules_pawn_white_double:
+rules_pawn_double:
     ld a, (r_fr)
-    cp 6
+    cp b
     jp nz, rules_ret0
-    ld a, (r_dr)
-    cp 254
+    ld a, c
+    add a, a
+    ld hl, r_dr
+    cp (hl)
     jp nz, rules_ret0
     ld a, (r_dst)
     or a
     jp nz, rules_ret0
     ld a, (r_from)
-    sub 8
+    add a, d
     call rules_get_active
     or a
     jp rules_return_z
-rules_pawn_white_capture:
+rules_pawn_capture:
     ld a, (r_adf)
     cp 1
     jp nz, rules_ret0
     ld a, (r_dr)
-    cp 255
+    cp c
     jp nz, rules_ret0
     ld a, (r_dst)
     or a
@@ -490,53 +498,13 @@ rules_pawn_white_capture:
     ld hl, r_ep
     cp (hl)
     jp nz, rules_ret0
-    add a, 8
-    call rules_get_active
-    cp RULE_BP
-    jp rules_return_z
-
-rules_pawn_black:
-    ld a, (r_df)
-    or a
-    jr nz, rules_pawn_black_capture
-    ld a, (r_dr)
-    cp 1
-    jr nz, rules_pawn_black_double
-    ld a, (r_dst)
-    or a
-    jp rules_return_z
-rules_pawn_black_double:
-    ld a, (r_fr)
-    cp 1
-    jp nz, rules_ret0
-    ld a, (r_dr)
-    cp 2
-    jp nz, rules_ret0
-    ld a, (r_dst)
-    or a
-    jp nz, rules_ret0
-    ld a, (r_from)
-    add a, 8
-    call rules_get_active
-    or a
-    jp rules_return_z
-rules_pawn_black_capture:
-    ld a, (r_adf)
-    cp 1
-    jp nz, rules_ret0
-    ld a, (r_dr)
-    cp 1
-    jp nz, rules_ret0
-    ld a, (r_dst)
-    or a
-    jp nz, rules_ret1
+    ld a, d
+    neg
+    ld d, a
     ld a, (r_to)
-    ld hl, r_ep
-    cp (hl)
-    jp nz, rules_ret0
-    sub 8
+    add a, d
     call rules_get_active
-    cp RULE_WP
+    cp e
     jp rules_return_z
 
 rules_knight:
@@ -853,47 +821,41 @@ rules_make_ep_clear:
 rules_make_castle:
     ld a, (r_moving)
     cp RULE_WK
-    jr nz, rules_make_castle_black
-    ld a, (r_from)
-    cp 60
-    ret nz
-    ld a, (r_to)
-    cp 62
-    jr z, rules_make_wk
-    cp 58
-    ret nz
-    ld a, RULE_WR
-    ld (r_tmp + 59), a
-    xor a
-    ld (r_tmp + 56), a
-    ret
-rules_make_wk:
-    ld a, RULE_WR
-    ld (r_tmp + 61), a
-    xor a
-    ld (r_tmp + 63), a
-    ret
-rules_make_castle_black:
+    ld bc, 0x3804
+    jr z, rules_make_castle_side_ok
     cp RULE_BK
     ret nz
+    ld bc, 0x00fc
+rules_make_castle_side_ok:
     ld a, (r_from)
+    sub b
     cp 4
     ret nz
     ld a, (r_to)
+    sub b
     cp 6
-    jr z, rules_make_bk
+    jr z, rules_make_castle_king_side
     cp 2
     ret nz
-    ld a, RULE_BR
-    ld (r_tmp + 3), a
-    xor a
-    ld (r_tmp + 0), a
-    ret
-rules_make_bk:
-    ld a, RULE_BR
-    ld (r_tmp + 5), a
-    xor a
-    ld (r_tmp + 7), a
+    ld d, 0
+    ld e, 3
+    jr rules_make_castle_move_rook
+rules_make_castle_king_side:
+    ld d, 7
+    ld e, 5
+rules_make_castle_move_rook:
+    ; r_tmp + 63 remains on the same page as r_tmp.
+    ld h, r_tmp >> 8
+    ld a, r_tmp & 0xff
+    add a, b
+    add a, e
+    ld l, a
+    ld (hl), c
+    ld a, r_tmp & 0xff
+    add a, b
+    add a, d
+    ld l, a
+    ld (hl), RULE_EMPTY
     ret
 
 rules_find_king:
@@ -1161,7 +1123,11 @@ r_ar:           DEFB 0
 r_af:           DEFB 0
 r_scan_piece:   DEFB 0
 ; Must equal the linked _overlay_scratch_base; check_lowmem_layout.py proves it.
+IFDEF NETCHESSZX_NEXT_BANKING
+r_tmp           EQU 0x3C2B
+ELSE
 r_tmp           EQU 0x672B
+ENDIF
 rules_tmp_size  EQU 64
 
 r_hint_ink:

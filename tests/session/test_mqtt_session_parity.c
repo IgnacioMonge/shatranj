@@ -3,8 +3,12 @@
 #include "common/session/session.h"
 #include "common/chess/rules_compact.h"
 #include "mqtt_session_transcripts.h"
+#include "spectrum/lowram_map.h"
 #include "spectrum/transport/mqtt_min.h"
 #include "spectrum/transport/net.h"
+
+typedef char mqtt_spectrum_chat_capacity_check[
+    (SPECTRUM_NET_PAYLOAD_MAX - 1u) == (5u + SESSION_CHAT_TEXT_MAX) ? 1 : -1];
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
@@ -21,7 +25,7 @@
 static uint8_t host_mqtt_packet[SPECTRUM_MQTT_PACKET_MAX];
 uint16_t mqtt_next_id = 1u;
 uint8_t mqtt_stream_len;
-char last_ip[16];
+char last_ip[NETCHESSZX_LOWRAM_LAST_IP_SIZE];
 char line_buf[SPECTRUM_NET_LINE_MAX];
 const char mqtt_will_topic_prefix[] = "netchesszx/v1/";
 static const char *host_mqtt_context_text;
@@ -111,6 +115,7 @@ static const char *host_active_rx_payload(void);
 static uint8_t host_local_bye_pending;
 static uint8_t host_local_bye_closed;
 static uint8_t host_handshake_bye_pending;
+static uint8_t host_bye_transport_stopped;
 static uint8_t host_control_draw_pending;
 static uint8_t host_control_reset_pending;
 static uint8_t host_takeback_delivery;
@@ -135,6 +140,9 @@ static uint8_t host_control_wait_seen;
 static uint8_t terminal_pending;
 static uint8_t host_link_down_active;
 static uint8_t host_link_down_timer;
+static uint8_t host_status_phase;
+static uint8_t host_connected_state;
+static uint8_t host_mqtt_start_calls;
 static int failures;
 
 static void host_finish_step(void);
@@ -145,6 +153,18 @@ static void host_consume_link_down_tail(void);
 static int instrument_failures;
 static uint8_t reference_failed_transcripts;
 static uint8_t spectrum_failed_transcripts;
+static uint8_t capture_runtime_time;
+static uint8_t runtime_clock_ready;
+static uint8_t runtime_clock_hour;
+static uint8_t runtime_clock_minute;
+static uint8_t runtime_clock_second;
+static uint16_t runtime_fat_date;
+static uint16_t runtime_fat_time;
+static uint8_t clock_retry_test_active;
+static uint8_t clock_retry_line_ready;
+static char clock_retry_line[SPECTRUM_NET_LINE_MAX];
+static char clock_retry_command[64];
+static uint8_t clock_retry_crlf_count;
 
 void netchesszx_host_session_observe_ping_reset(
     netchesszx_session_ping_t *ping)
@@ -487,7 +507,10 @@ uint8_t mqtt_send_raw_packet(const uint8_t *packet, uint8_t len)
     }
     if (host_rx_seen && netchesszx_mqtt_session_id != 0u &&
         (!host_side_seen ||
-         host_side_session != netchesszx_mqtt_session_id)) {
+         host_side_session != netchesszx_mqtt_session_id ||
+         host_side_color != (netchesszx_local_is_white()
+                                 ? SESSION_COLOR_WHITE
+                                 : SESSION_COLOR_BLACK))) {
         host_rx_handoff_arms_liveness = 1u;
     }
     if (host_consume_compact_deadline_ping(payload, retained)) {
@@ -604,30 +627,49 @@ void net_wait_frame(void) {}
 uint8_t read_line(uint16_t frames)
 {
     (void)frames;
-    return 0u;
+    if (!clock_retry_test_active || !clock_retry_line_ready) {
+        return 0u;
+    }
+    strcpy(line_buf, clock_retry_line);
+    clock_retry_line_ready = 0u;
+    return 1u;
 }
 
 void spectrum_net_runtime_set_clock(uint8_t hour, uint8_t minute, uint8_t second)
 {
-    (void)hour;
-    (void)minute;
-    (void)second;
-    instrument_fail("unexpected runtime clock write");
+    if (!capture_runtime_time) {
+        instrument_fail("unexpected runtime clock write");
+        return;
+    }
+    runtime_clock_ready = 1u;
+    runtime_clock_hour = hour;
+    runtime_clock_minute = minute;
+    runtime_clock_second = second;
 }
 void spectrum_net_runtime_set_fat_stamp(uint16_t date, uint16_t time)
 {
-    (void)date;
-    (void)time;
-    instrument_fail("unexpected runtime FAT stamp write");
+    if (!capture_runtime_time) {
+        instrument_fail("unexpected runtime FAT stamp write");
+        return;
+    }
+    runtime_fat_date = date;
+    runtime_fat_time = time;
 }
 uint8_t spectrum_uart_send_string(const char *text)
 {
-    (void)text;
+    if (clock_retry_test_active) {
+        strcpy(clock_retry_command, text);
+        return 1u;
+    }
     instrument_fail("unexpected UART string write");
     return 0u;
 }
 uint8_t spectrum_uart_send_crlf(void)
 {
+    if (clock_retry_test_active) {
+        ++clock_retry_crlf_count;
+        return 1u;
+    }
     instrument_fail("unexpected UART CRLF write");
     return 0u;
 }
@@ -661,7 +703,14 @@ uint8_t mqtt_enter_stream_mode(void)
     instrument_fail("unexpected stream-mode entry");
     return 0u;
 }
-void mqtt_abort_stream_mode(void) { instrument_fail("unexpected stream-mode abort"); }
+void mqtt_abort_stream_mode(void)
+{
+    if (host_local_bye_pending || host_handshake_bye_pending) {
+        host_bye_transport_stopped = 1u;
+    } else if (!host_explicit_tx_failed) {
+        instrument_fail("unexpected stream-mode abort");
+    }
+}
 uint16_t mqtt_connect_packet_ovl(void)
 {
     instrument_fail("unexpected CONNECT packet build");
@@ -679,9 +728,11 @@ static uint8_t observation_matches(const ActualObservation *got,
     if (expected->type == MQTT_OBSERVE_SEND && !route_matches &&
         got->route == SESSION_ROUTE_CONTROL) {
         if (strcmp(payload, "ACK GAME START") == 0 ||
+            strncmp(payload, "NACK GAME START", 15u) == 0 ||
             strncmp(payload, "GAME START", 10u) == 0) {
             wire_route = SESSION_ROUTE_CONTROL;
-        } else if (strncmp(payload, "ACK ", 4u) == 0) {
+        } else if (strncmp(payload, "ACK ", 4u) == 0 ||
+                   strncmp(payload, "NACK ", 5u) == 0) {
             wire_route = SESSION_ROUTE_ACK;
         } else {
             wire_route = SESSION_ROUTE_GAME;
@@ -690,25 +741,16 @@ static uint8_t observation_matches(const ActualObservation *got,
     }
 
     if (expected->type == MQTT_OBSERVE_SEND &&
-        (expected->detail == MQTT_OBSERVE_DETAIL_NACK_COMPAT ||
-         expected->detail == MQTT_OBSERVE_DETAIL_NACK_ROUTE_COMPAT)) {
-        if (expected->detail == MQTT_OBSERVE_DETAIL_NACK_COMPAT) {
-            payload_matches = (uint8_t)(
-                strncmp(got->payload, payload, payload_length) == 0 &&
-                (got->payload[payload_length] == '\0' ||
-                 got->payload[payload_length] == ' '));
-        }
-        route_matches = (uint8_t)(route_matches ||
-            ((expected->route == SESSION_ROUTE_ACK ||
-              expected->route == SESSION_ROUTE_CONTROL) &&
-             got->route == SESSION_ROUTE_GAME &&
-             strncmp(payload, "NACK ", 5u) == 0));
+        expected->detail == MQTT_OBSERVE_DETAIL_NACK_COMPAT) {
+        payload_matches = (uint8_t)(
+            strncmp(got->payload, payload, payload_length) == 0 &&
+            (got->payload[payload_length] == '\0' ||
+             got->payload[payload_length] == ' '));
     }
 
     return (uint8_t)(got->type == expected->type &&
                       got->code == expected->code &&
                        (expected->detail == MQTT_OBSERVE_DETAIL_NACK_COMPAT ||
-                        expected->detail == MQTT_OBSERVE_DETAIL_NACK_ROUTE_COMPAT ||
                         got->detail == expected->detail) &&
                      got->value == expected->value &&
                      route_matches &&
@@ -1357,6 +1399,19 @@ static void host_finish_step(void)
     if (!observations_match(actual, actual_count, step)) {
         printf("FAIL: %s / %s: normalized observations (%u raw)\n",
                host_transcript->name, step->label, (unsigned)actual_count);
+        if (strcmp(host_transcript->name, "mqtt-mach-pre-ready") == 0 ||
+            strcmp(host_transcript->name,
+                   "mqtt-move-remote-rejected-duplicate") == 0) {
+            uint8_t i;
+            for (i = 0u; i < actual_count; ++i) {
+                printf("  actual %u: type=%u code=%u detail=%u value=%u route=%u retained=%u link=%u payload=%s\n",
+                       (unsigned)i, (unsigned)actual[i].type,
+                       (unsigned)actual[i].code, (unsigned)actual[i].detail,
+                       (unsigned)actual[i].value, (unsigned)actual[i].route,
+                       (unsigned)actual[i].retained,
+                       (unsigned)actual[i].link_id, actual[i].payload);
+            }
+        }
         ++failures;
     }
     host_step_active = 0u;
@@ -1483,6 +1538,7 @@ static void reset_fixture(const MqttTranscript *transcript)
     host_local_bye_pending = 0u;
     host_local_bye_closed = 0u;
     host_handshake_bye_pending = 0u;
+    host_bye_transport_stopped = 0u;
     host_control_draw_pending = 0u;
     host_control_reset_pending = 0u;
     host_takeback_delivery = 0u;
@@ -1505,6 +1561,9 @@ static void reset_fixture(const MqttTranscript *transcript)
     terminal_pending = 0u;
     host_link_down_active = 0u;
     host_link_down_timer = 0u;
+    host_status_phase = 0u;
+    status_phase_current = SPECTRUM_STATUS_PACK(STATUS_PHASE_CONNECTED,
+                                                NETCHESS_PLAT_UNKNOWN);
     netchesszx_host_session_ping = 0;
     confirm_action = CONFIRM_NONE;
     setup_restart_requested = 0u;
@@ -1636,6 +1695,12 @@ uint8_t spectrum_net_mqtt_activate_side(void)
     return mqtt_activate_side_ovl();
 }
 
+uint8_t spectrum_net_mqtt_start(void)
+{
+    ++host_mqtt_start_calls;
+    return 1u;
+}
+
 uint8_t spectrum_net_mqtt_probe_seat(void)
 {
     return mqtt_probe_seat_ovl();
@@ -1678,6 +1743,7 @@ uint8_t spectrum_net_send_ping(void)
 
 void spectrum_gui_set_connected(uint8_t connected)
 {
+    host_connected_state = connected;
     if (connected == 0u) {
         if (host_link_down_active) {
             emit_timer_cancel(host_link_down_timer);
@@ -1686,11 +1752,16 @@ void spectrum_gui_set_connected(uint8_t connected)
             }
             terminal_pending = 0u;
         } else if (host_local_bye_pending || host_handshake_bye_pending) {
-            emit_observation(MQTT_OBSERVE_LINK_CLOSE, 0u, 0u, 0u,
-                             0u, 0u, current_link, 0);
+            if (host_bye_transport_stopped) {
+                emit_observation(MQTT_OBSERVE_LINK_CLOSE, 0u, 0u, 0u,
+                                 0u, 0u, current_link, 0);
+            } else {
+                instrument_fail("MQTT UI disconnect without transport stop");
+            }
             host_local_bye_closed = host_local_bye_pending;
             host_local_bye_pending = 0u;
             host_handshake_bye_pending = 0u;
+            host_bye_transport_stopped = 0u;
             terminal_pending = 0u;
         } else {
             terminal_pending = 1u;
@@ -1780,13 +1851,18 @@ void spectrum_gui_notify(const char *text, uint8_t is_error)
                          0u, 0u, 0u, 0);
     } else if (strcmp(text, "Load cancelled") == 0 &&
                host_restore_control_pending) {
+        const char *payload = host_active_rx_payload();
+
         host_restore_control_pending = 0u;
         host_restore_domain_pending = 0u;
         emit_observation(MQTT_OBSERVE_GAME,
                          SESSION_DELIVER_CONTROL_RESULT,
-                         SESSION_CONTROL_REJECTED,
+                         payload != 0 && payload[0] == 'H'
+                             ? SESSION_CONTROL_CANCELLED
+                             : SESSION_CONTROL_REJECTED,
                           SESSION_REQUEST_RESTORE,
-                          0u, 0u, 0u, "RN");
+                          0u, 0u, 0u,
+                          payload != 0 && payload[0] == 'H' ? 0 : "RN");
     } else if (strcmp(text, "RESET cancelled: no response") == 0 ||
                strcmp(text, "DRAW cancelled: no response") == 0) {
         uint8_t control = text[0] == 'R' ? SESSION_REQUEST_RESET
@@ -1891,7 +1967,17 @@ void spectrum_gui_notify_msg(uint16_t packed)
     }
 }
 void spectrum_gui_set_status_error(const char *text) { (void)text; }
-void spectrum_gui_status_phase(uint8_t phase) { (void)phase; }
+void spectrum_gui_status_phase(uint8_t phase)
+{
+    uint8_t platform = SPECTRUM_STATUS_UNPACK_PLATFORM(phase);
+    uint8_t old_platform = SPECTRUM_STATUS_UNPACK_PLATFORM(host_status_phase);
+
+    host_status_phase = phase;
+    if (platform != NETCHESS_PLAT_UNKNOWN && platform != old_platform) {
+        emit_observation(MQTT_OBSERVE_GAME, SESSION_DELIVER_PLATFORM,
+                         0u, platform, 0u, 0u, 0u, 0);
+    }
+}
 void spectrum_gui_set_board_view(uint8_t local_black) { (void)local_black; }
 void spectrum_gui_redraw_board_view(void) {}
 void spectrum_gui_hide_board_pieces(void) {}
@@ -1935,6 +2021,14 @@ void spectrum_gui_game_timer_stop(void)
     }
     host_started_seen = 0u;
 }
+void spectrum_gui_game_timer_save(uint8_t *timers)
+{
+    memset(timers, 0, 6u);
+}
+void spectrum_gui_game_timer_restore(const uint8_t *timers)
+{
+    (void)timers;
+}
 void spectrum_gui_set_turn_label(uint8_t mode) { (void)mode; }
 void spectrum_gui_clear_cursor_coords(void) {}
 void spectrum_gui_redraw_square(uint8_t row, uint8_t col)
@@ -1945,6 +2039,7 @@ void spectrum_gui_redraw_square(uint8_t row, uint8_t col)
 uint8_t spectrum_gui_about_visible(void) { return 0u; }
 void spectrum_render_about_off(void) {}
 void spectrum_gui_restore_board_area(void) {}
+void spectrum_gui_restore_game_center(void) {}
 void spectrum_gui_tick(void) {}
 static uint8_t host_submit_local_text(const char *text)
 {
@@ -2129,6 +2224,7 @@ void netchesszx_input_edit_stop_clear_overlay(void)
     local_input_mode = 0u;
 }
 void spectrum_net_background_drain(void) {}
+void spectrum_net_background_drain_clock(void) {}
 uint8_t spectrum_net_payload_flags(void) { return host_payload_flags; }
 int16_t spectrum_net_read_payload(char *payload, uint8_t payload_cap)
 {
@@ -2145,6 +2241,14 @@ int16_t spectrum_net_read_payload(char *payload, uint8_t payload_cap)
     if (host_step_active &&
         host_transcript->steps[host_active_step].event.type ==
             MQTT_TRANSCRIPT_TIMEOUT) {
+        if (host_is_compact_peer_dead_step() &&
+            !netchesszx_session_peer_ready_state &&
+            host_connected_state == 1u) {
+            /* Product intentionally remains in broker-backed peer wait. End
+               only this finite transcript after that stable state is seen. */
+            host_forced_stop = 1u;
+            return -2;
+        }
         if (CONTROL_IS_WAIT(control_pending) && !host_control_wait_seen) {
             host_control_wait_seen = 1u;
             host_finish_step();
@@ -2156,7 +2260,8 @@ int16_t spectrum_net_read_payload(char *payload, uint8_t payload_cap)
             netchesszx_host_session_ping->idle_ticks = 0u;
         }
         ++host_timeout_ticks;
-        if (host_timeout_ticks > 512u) {
+        if (host_timeout_ticks >
+            (uint16_t)(CONTROL_CANCEL_POLLS + PENDING_RETRY_POLLS)) {
             printf("FAIL: %s / %s: product did not reach timeout boundary\n",
                    host_transcript->name,
                    host_transcript->steps[host_active_step].label);
@@ -2209,7 +2314,8 @@ int16_t spectrum_net_read_payload(char *payload, uint8_t payload_cap)
         if (event->code == SESSION_TIMER_LIVENESS &&
             netchesszx_host_session_ping != 0) {
             host_liveness_armed = 0u;
-            netchesszx_host_session_ping->idle_ticks = 119u;
+            netchesszx_host_session_ping->idle_ticks =
+                (uint8_t)(NETCHESSZX_SESSION_MQTT_4_8S_POLLS - 1u);
             if (netchesszx_session_is_host() &&
                 netchesszx_host_session_ping->misses != 0u) {
                 netchesszx_host_session_ping->misses = 4u;
@@ -2292,7 +2398,10 @@ int16_t spectrum_net_read_payload(char *payload, uint8_t payload_cap)
 }
 void spectrum_net_direct_peer_mark_valid(void) {}
 uint8_t spectrum_net_sync_time(void) { return 1u; }
-uint8_t spectrum_net_preflight_run(void) { return 1u; }
+void spectrum_net_clock_retry_start(void) {}
+void spectrum_net_clock_retry_cancel(void) {}
+void spectrum_net_runtime_wait_frame(void) {}
+uint8_t spectrum_net_preflight_run(uint8_t quiet) NETCHESSZX_FASTCALL { (void)quiet; return 1u; }
 const char *spectrum_net_last_ip(void) { return ""; }
 uint8_t spectrum_net_runtime_clock_ready(void) { return 1u; }
 uint8_t netchesszx_asm_mqtt_strlen8(const char *text)
@@ -2353,7 +2462,12 @@ void spectrum_gui_remove_last_move(uint16_t ply)
                      host_takeback_delivery, ply, 0u, 0u, 0u, 0);
 }
 uint8_t spectrum_gui_is_board_flipped(void) { return 0u; }
-void spectrum_gui_set_board_pieces_visible(uint8_t visible) { (void)visible; }
+uint8_t spectrum_gui_board_pieces_visible;
+void spectrum_gui_set_board_pieces_visible(uint8_t visible)
+{
+    spectrum_gui_board_pieces_visible = visible;
+}
+void spectrum_gui_shift_clock(int8_t hour_delta) { (void)hour_delta; }
 void spectrum_gui_game_timer_start(void)
 {
     const char *payload = host_active_rx_payload();
@@ -2396,6 +2510,7 @@ void spectrum_gui_add_move(const char *ply, const char *move)
     (void)ply;
     (void)move;
 }
+void spectrum_gui_prepare_move_row(void) {}
 void spectrum_gui_apply_move(const char *move)
 {
     uint8_t local = (uint8_t)(pending_local_ply != 0u);
@@ -2420,6 +2535,8 @@ void spectrum_gui_add_chat(char who, const char *text)
             (strcmp(text, NETCHESS_PROTO_DRAW) != 0 &&
              strcmp(text, NETCHESS_PROTO_RESIGN) != 0 &&
              strcmp(text, NETCHESS_PROTO_TAKEBACK) != 0 &&
+             strcmp(text, NETCHESSZX_UI_EVENT_DRAW_AGREED) != 0 &&
+             strcmp(text, NETCHESSZX_UI_EVENT_RESIGNATION_LOST) != 0 &&
              strcmp(text, NETCHESSZX_UI_EVENT_OPPONENT_RESIGN) != 0)) {
             instrument_fail("invalid presentation-only control event");
         }
@@ -2542,25 +2659,216 @@ static void run_shared_transcript(const MqttTranscript *transcript)
     mqtt_spectrum_run(transcript);
 }
 
-static void check_mqtt_sntp_year_suffix(void)
+static void reset_mqtt_sntp_capture(void)
 {
-    static const char bad_first[] = "Fri Jun  5 12:34:56 20K9";
-    static const char bad_second[] = "Fri Jun  5 12:34:56 201:";
+    runtime_clock_ready = 0u;
+    runtime_clock_hour = 0u;
+    runtime_clock_minute = 0u;
+    runtime_clock_second = 0u;
+    runtime_fat_date = 0u;
+    runtime_fat_time = 0u;
+}
 
-    mqtt_set_fat_stamp_ovl(bad_first, bad_first + 11u, 12u, 34u);
-    mqtt_set_fat_stamp_ovl(bad_second, bad_second + 11u, 12u, 34u);
+static void expect_mqtt_sntp(uint8_t condition, const char *label)
+{
+    if (!condition) {
+        printf("FAIL: MQTT SNTP %s\n", label);
+        ++failures;
+    }
+}
+
+static uint8_t capture_mqtt_sntp(const char *line)
+{
+    strcpy(line_buf, line);
+    return mqtt_capture_time_ovl();
+}
+
+static void check_mqtt_sntp(void)
+{
+    capture_runtime_time = 1u;
+
+    reset_mqtt_sntp_capture();
+    expect_mqtt_sntp(capture_mqtt_sntp(
+                         "+CIPSNTPTIME:Fri Jun  5 12:34:56 2026"),
+                     "captures time");
+    expect_mqtt_sntp(runtime_clock_ready && runtime_clock_hour == 12u &&
+                         runtime_clock_minute == 34u &&
+                         runtime_clock_second == 56u,
+                     "time fields");
+    expect_mqtt_sntp(
+        runtime_fat_date == (uint16_t)(((uint16_t)46u << 9) |
+                                       ((uint16_t)6u << 5) | 5u),
+        "FAT date");
+    expect_mqtt_sntp(
+        runtime_fat_time ==
+            (uint16_t)(((uint16_t)12u << 11) | ((uint16_t)34u << 5)),
+        "FAT time");
+
+    reset_mqtt_sntp_capture();
+    expect_mqtt_sntp(!capture_mqtt_sntp(
+                         "+CIPSNTPTIME:Thu Jan  1 00:00:01 1970") &&
+                         !runtime_clock_ready,
+                     "ignores 1970 default");
+
+    reset_mqtt_sntp_capture();
+    expect_mqtt_sntp(!capture_mqtt_sntp(
+                         "+CIPSNTPTIME:Fri Jun  5 29:01:02 2026") &&
+                         !runtime_clock_ready,
+                     "rejects invalid hour");
+
+    reset_mqtt_sntp_capture();
+    expect_mqtt_sntp(capture_mqtt_sntp(
+                         "+CIPSNTPTIME:Fri Jun  5 12:34:56 20K9") &&
+                         runtime_clock_ready && runtime_fat_date == 0u &&
+                         runtime_fat_time == 0u,
+                     "rejects non-digit first year suffix");
+
+    reset_mqtt_sntp_capture();
+    expect_mqtt_sntp(capture_mqtt_sntp(
+                         "+CIPSNTPTIME:Fri Jun  5 12:34:56 201:") &&
+                         runtime_clock_ready && runtime_fat_date == 0u &&
+                         runtime_fat_time == 0u,
+                     "rejects non-digit second year suffix");
+
+    capture_runtime_time = 0u;
+}
+
+static void check_mqtt_sntp_retry_is_incremental(void)
+{
+    uint8_t i;
+
+    memset(spectrum_net_payload_scratch(), 0, SPECTRUM_LINK_PAYLOAD_MAX);
+    reset_mqtt_sntp_capture();
+    netchesszx_timezone = 2;
+    capture_runtime_time = 1u;
+    clock_retry_test_active = 1u;
+    clock_retry_line_ready = 0u;
+    clock_retry_crlf_count = 0u;
+
+    expect_mqtt_sntp(mqtt_tx_clock_retry_start_ovl() == 1u &&
+                         strcmp(clock_retry_command,
+                                "AT+CIPSNTPCFG=1,2") == 0 &&
+                         clock_retry_crlf_count == 1u && !runtime_clock_ready,
+                     "retry starts without inventing a clock");
+
+    strcpy(clock_retry_line, "OK");
+    clock_retry_line_ready = 1u;
+    expect_mqtt_sntp(mqtt_tx_clock_retry_poll_ovl() == 1u,
+                     "retry accepts config response in one poll");
+    for (i = 0u; i < 100u; ++i) {
+        expect_mqtt_sntp(mqtt_tx_clock_retry_poll_ovl() == 1u,
+                         "retry settle wait remains incremental");
+    }
+    expect_mqtt_sntp(strcmp(clock_retry_command, "AT+CIPSNTPTIME?") == 0 &&
+                         clock_retry_crlf_count == 2u,
+                     "retry queries time after its frame countdown");
+
+    strcpy(clock_retry_line, "+CIPSNTPTIME:Fri Jun  5 12:34:56 2026");
+    clock_retry_line_ready = 1u;
+    expect_mqtt_sntp(mqtt_tx_clock_retry_poll_ovl() == 0u &&
+                         runtime_clock_ready && runtime_clock_hour == 12u &&
+                         runtime_clock_minute == 34u &&
+                         runtime_clock_second == 56u,
+                     "retry completes from one non-blocking line poll");
+
+    clock_retry_test_active = 0u;
+    capture_runtime_time = 0u;
+}
+
+static void check_guest_peer_loss_waits_without_restart(void)
+{
+    char payload[] = "";
+
+    host_connected_state = 2u;
+    /* The outer loop has already started the broker; peer loss must return
+       to the wait state without starting that transport again. */
+    host_mqtt_start_calls = 1u;
+    game_status_active = 1u;
+    game_over = 0u;
+    start_pending = 0u;
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
+                                 NETCHESSZX_TRANSPORT_MQTT,
+                                 NETCHESSZX_COLOR_BLACK);
+    netchesszx_mqtt_session_id = 77u;
+    netchesszx_session_peer_mark_ready();
+    expect_mqtt_sntp(
+        session_presence_handle_event(NETCHESSZX_SESSION_EVENT_BYE,
+                                       payload, 0u) == SESSION_DISPATCH_HANDLED,
+        "guest MQTT peer loss is handled");
+    expect_mqtt_sntp(
+        !netchesszx_session_peer_ready_state && !game_status_active &&
+            host_connected_state == 1u,
+        "guest MQTT peer loss returns to wait with broker active");
+    expect_mqtt_sntp(host_mqtt_start_calls == 1u,
+                     "guest MQTT peer loss does not restart the broker link");
+}
+
+static void check_mqtt_retry_period(void)
+{
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
+                                 NETCHESSZX_TRANSPORT_MQTT,
+                                 NETCHESSZX_COLOR_WHITE);
+    if (PENDING_RETRY_POLLS != NETCHESSZX_SESSION_MQTT_REPLY_POLLS) {
+        printf("FAIL: MQTT application retry does not use reply period\n");
+        ++failures;
+    }
+}
+
+static void check_restore_ra_color_guard(void)
+{
+    netchesszx_save_meta_t meta = {0};
+    spectrum_board_snapshot_t encoded;
+    spectrum_board_snapshot_t before;
+    char ra[] = "RA";
+
+    spectrum_board_reset();
+    spectrum_board_snapshot_save(&encoded);
+    meta.host_color = NETCHESSZX_SAVE_HOST_WHITE;
+    if (!spectrum_restore_build_b64(&encoded, &meta,
+                                    restore_b64_pending) ||
+        !spectrum_board_apply_trusted_move("e2e4")) {
+        printf("FAIL: build restore color-guard fixture\n");
+        ++failures;
+        return;
+    }
+    spectrum_board_snapshot_save(&before);
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
+                                 NETCHESSZX_TRANSPORT_MQTT,
+                                 NETCHESSZX_COLOR_BLACK);
+    netchesszx_mqtt_session_id = 77u;
+    netchesszx_host_color_ready = 1u;
+    game_ply = 9u;
+    game_status_active = 1u;
+    game_over = 0u;
+    restore_rx_mask = RESTORE_TX_AWAIT_ACK;
+    host_restore_control_pending = 0u;
+    host_step_active = 0u;
+    actual_count = 0u;
+    (void)restore_handle_event(NETCHESSZX_SESSION_EVENT_RESTORE_RA, ra);
+    if (restore_rx_mask != 0u || game_ply != 9u ||
+        game_status_active != 1u || game_over != 0u ||
+        memcmp(before.cells, spectrum_board_cells(), sizeof(before.cells)) != 0 ||
+        netchesszx_host_color != NETCHESSZX_COLOR_BLACK ||
+        netchesszx_local_color != NETCHESSZX_COLOR_WHITE) {
+        printf("FAIL: cross-color RA mutated Spectrum restore state\n");
+        ++failures;
+    }
 }
 
 int main(void)
 {
     uint8_t i;
 
-    check_mqtt_sntp_year_suffix();
+    check_mqtt_sntp();
+    check_mqtt_sntp_retry_is_incremental();
     check_id_mapping();
     check_mqtt_wire_builders();
+    check_guest_peer_loss_waits_without_restart();
+    check_mqtt_retry_period();
     for (i = 0u; i < mqtt_session_transcript_count; ++i) {
         run_shared_transcript(&mqtt_session_transcripts[i]);
     }
+    check_restore_ra_color_guard();
     if (instrument_failures != 0) {
         printf("mqtt Spectrum parity INSTRUMENT: %d failures, %u transcripts\n",
                instrument_failures, mqtt_session_transcript_count);

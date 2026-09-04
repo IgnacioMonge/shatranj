@@ -5,13 +5,13 @@ SECTION code_user
 ; No-graphical Next overlay/assets loader. Same PUBLIC ABI as the esxDOS
 ; loader (asm/esxdos/overlay_loader.asm) but reads overlays, the DAT asset
 ; block and piece sets from a ZX0-compressed .nex bundle.
-; At boot the 14 raw 8K pages are expanded from banks 8-10 into free banks
-; 16-22; normal copies then page those raw banks through MMU slot 1.
+; At boot 30 raw 8K pages are expanded into banks 16-30. The immutable
+; 0x7000..0x7fff resident window is then copied into the upper half of each of
+; the seventeen 4K overlay pages; slot 3 selects them directly thereafter.
 ;
 ; Screen is asm/spectrum/screen.asm with NETCHESSZX_NEXT_GFX: board squares,
 ; pieces and move markers are Next hardware sprites. Cold sprite/palette setup
-; and About rendering execute from raw bundle page 39; this resident half owns
-; the guarded slot-0 trampoline and bundle copies.
+; and About rendering execute from the permanent slot-1 extension page.
 ; _spectrum_render_about displays the separate full-screen Layer 2 image;
 ; the ZX ULA About payload and renderer are omitted from this target.
 
@@ -29,28 +29,41 @@ PUBLIC _spectrum_overlay_context
 PUBLIC ovl_close_overlay_file
 PUBLIC nextreg_read
 PUBLIC nextreg_write
+PUBLIC next_extension_restore
+PUBLIC asset_load_size
+PUBLIC asset_set_index
+PUBLIC next_copy_bundle
+
+EXTERN _spectrum_uart_background_pump
+EXTERN next_graphics_bank_init
+EXTERN next_graphics_bank_set
+EXTERN next_graphics_bank_about
 
 _spectrum_overlay_context EQU 0x5FE0
-_overlay_code_slot EQU 0x6800
-_overlay_scratch_base EQU 0x672B
+_overlay_code_slot EQU 0x6000
+_overlay_scratch_base EQU 0x3C2B
 ovl_invalid_id EQU 0xff
 INCLUDE "overlay_atlas_table.asm"
-INCLUDE "asm/next/graphics_bank_layout.asm"
+INCLUDE "asm/next/extension_bank_layout.asm"
 
 asset_load_size       EQU 1196
 about_board_size      EQU 0
 
-; Next MMU banking. Compressed NEX banks 8-10 map as pages 16-21. The raw
-; seven-bank bundle is rebuilt into banks 16-22 (pages 32-45).
+; Next MMU banking. Compressed NEX banks 8-11 map as pages 16-23. The raw
+; fifteen-bank bundle is rebuilt into banks 16-30 (pages 32-61).
 next_mmu_slot0        EQU 0x50
 next_mmu_slot1        EQU 0x51
 next_mmu_slot2        EQU 0x52
+next_mmu_slot3        EQU 0x53
 next_compressed_page_base EQU 16
 next_bundle_page_base EQU 32
+next_overlay_page_base EQU 44
+next_overlay_page_count EQU 17
 next_bundle_raw_bank_base EQU 16
-next_bundle_page_count EQU 14
+next_bundle_page_count EQU 30
 next_bundle_header_size EQU 8 + (next_bundle_page_count * 2)
-next_bundle_window    EQU 0x2000
+next_bundle_window    EQU 0x0000
+next_boot_scratch_page EQU 11
 
 SECTION bss_user
 
@@ -63,6 +76,7 @@ ovl_load_size:          DEFS 2
 next_saved_mmu1:        DEFS 1
 next_saved_mmu0:        DEFS 1
 next_saved_mmu2:        DEFS 1
+next_saved_mmu3:        DEFS 1
 next_copy_page:         DEFS 1
 next_expand_left:       DEFS 1
 
@@ -100,8 +114,8 @@ _spectrum_assets_load:
     ld hl, next_bundle_dat_offset
     ld de, asset_load_addr
     ld bc, asset_load_size
-    call next_copy_bundle
-    ld hl, next_graphics_bank_init_entry
+    call next_copy_bundle_ei
+    ld hl, next_graphics_bank_init
     call next_graphics_bank_call
     pop iy
     pop ix
@@ -122,7 +136,7 @@ _netchesszx_piece_set_load:
     xor a
 npsl_index_ok:
     ld (asset_set_index), a
-    ld hl, next_graphics_bank_set_entry
+    ld hl, next_graphics_bank_set
     jp next_graphics_bank_call
 
 _spectrum_assets_fatal:
@@ -158,13 +172,15 @@ assets_fatal_halt:
     jr assets_fatal_halt
 
 ; Show the About screen: full-screen Layer 2 image from expanded VRAM. The
-; palette is staged through the overlay slot and written as 9-bit pairs; the
+; palette is staged in the permanent slot-1 page and written as 9-bit pairs; the
 ; pixels are displayed in place from the bundle banks (no copy).
 _spectrum_render_about:
-    xor a
-    ld (ovl_cache_ready), a
-    ld hl, next_graphics_bank_about_entry
-    jp next_graphics_bank_call
+    ld hl, next_graphics_bank_about
+    call next_graphics_bank_call
+    ld bc, layer2_port
+    ld a, 2
+    out (c), a
+    ret
 
 ; Hide the About Layer 2 screen (called when the board UI is restored).
 _spectrum_render_about_off:
@@ -200,10 +216,9 @@ ovl_load:
     call ovl_select_atlas_entry
     jp c, ovl_load_fail
 
-    ld de, _overlay_code_slot
-    ld bc, (ovl_load_size)
-    call next_copy_bundle
-    jp c, ovl_load_fail
+    ld a, (ovl_id)
+    add a, next_overlay_page_base
+    call next_map_slot3
 
     ld a, (ovl_id)
     ld (_spectrum_overlay_loaded_id), a
@@ -260,6 +275,9 @@ ovl_call_loaded:
     ret
 
 ovl_return:
+    ; RST 8/DivMMC may have owned slots 0+1 while the overlay ran. Restore the
+    ; extension atomically before returning to a possible slot-1 caller.
+    DEFB 0xed, 0x91, next_mmu_slot1, next_extension_page
     ei
     ret
 
@@ -287,27 +305,18 @@ ovl_select_atlas_entry:
     ld e, (hl)
     inc hl
     ld d, (hl)
-    inc hl
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
-    ld h, b
-    ld l, c
-    or a
-    sbc hl, de
-    ld (ovl_load_size), hl
-    ld a, h
-    or l
+    ld (ovl_load_size), de
+    ld a, d
+    or e
     jr z, ovl_select_bad
-    ld a, h
-    cp 8
+    ld a, d
+    cp 16
     jr c, ovl_select_size_ok
     jr nz, ovl_select_bad
-    ld a, l
+    ld a, e
     or a
     jr nz, ovl_select_bad
 ovl_select_size_ok:
-    ex de, hl
     xor a
     ret
 ovl_select_bad:
@@ -319,31 +328,25 @@ ovl_select_bad:
 ovl_close_overlay_file:
     ret
 
-; ---- Next cold graphics bank ----
+; ---- Next cold graphics services ----
 
-; HL = one of the fixed entry addresses in graphics_bank_layout.asm. Slot 0
-; replaces ROM, so IM1 must remain disabled until the original page is back.
-; The cold module is constrained to resident helpers that never remap slot 0.
+; Graphics setup uses slot 0 as a temporary bundle window and must not be
+; interrupted. Its code is resident, so no executable slot is displaced.
 next_graphics_bank_call:
-    ld a, i
-    push af
     di
-    ld a, next_mmu_slot0
-    call nextreg_read
-    push af
-    ld a, next_graphics_bank_page
-    call next_map_slot0
     ld de, next_graphics_bank_return
     push de
     jp (hl)
 
 next_graphics_bank_return:
-    pop af
-    call next_map_slot0
-    pop af
-    jp po, next_graphics_bank_keep_di
     ei
-next_graphics_bank_keep_di:
+    ret
+
+; Z80N NEXTREG n,n is atomic and preserves registers, flags and IFF. Resident
+; screen stubs call this after any firmware/Layer-2 activity before jumping to
+; the slot-1 extension.
+next_extension_restore:
+    DEFB 0xed, 0x91, next_mmu_slot1, next_extension_page
     ret
 
 nextreg_write:
@@ -354,24 +357,32 @@ nextreg_write:
     out (c), a
     ret
 
-; ---- Bundle copy primitive (MMU slot 1 paging) ----
+; ---- Bundle copy primitive (MMU slot 0 paging) ----
 ; Input: HL = bundle source offset, DE = Z80 destination, BC = byte count.
-; Output: CF clear always (copy cannot fail); preserves IFF (restores DI/EI).
+; Output: CF clear always (copy cannot fail). The local EI entry is for normal
+; loader flow; next_copy_bundle is the DI-preserving cold graphics-bank entry.
+next_copy_bundle_ei:
+    ld a, b
+    or c
+    ret z
+    scf
+    jr next_copy_begin
+
 next_copy_bundle:
     ld a, b
     or c
     ret z
-
-    ld a, i
+    or a
+next_copy_begin:
     push af
     di
 
     push bc
     push de
     push hl
-    ld a, next_mmu_slot1
+    ld a, next_mmu_slot0
     call nextreg_read
-    ld (next_saved_mmu1), a
+    ld (next_saved_mmu0), a
     pop hl
     pop de
     pop bc
@@ -393,6 +404,9 @@ next_copy_bundle:
 next_copy_loop:
     ldi
     jp po, next_copy_done
+    ld a, c
+    and 0x1f
+    call z, next_copy_pump
     ld a, h
     cp (next_bundle_window / 256) + 0x20
     jr nz, next_copy_loop
@@ -407,23 +421,39 @@ next_copy_done:
     push bc
     push de
     push hl
-    ld a, (next_saved_mmu1)
-    call next_map_slot1
+    ld a, (next_saved_mmu0)
+    call next_map_slot0
     pop hl
     pop de
     pop bc
     pop af
-    jp po, next_copy_keep_di
+    jr nc, next_copy_keep_di
     ei
 next_copy_keep_di:
     xor a
+    ret
+
+; Keep polling UART starvation below 32 copied bytes. The resident pump and
+; its full call closure do not use ROM while slot 0 is the bundle window.
+next_copy_pump:
+    push bc
+    push de
+    push hl
+    push ix
+    push iy
+    call _spectrum_uart_background_pump
+    pop iy
+    pop ix
+    pop hl
+    pop de
+    pop bc
     ret
 
 next_map_copy_page:
     push bc
     push de
     push hl
-    call next_map_slot1
+    call next_map_slot0
     pop hl
     pop de
     pop bc
@@ -443,14 +473,15 @@ nextreg_read:
 
 ; ---- Boot expansion of the compressed NEX bundle ----
 ; Directory in compressed bank 8:
-;   0..3 "NXZ0", 4 version=1, 5 page shift=13, 6 page count=14,
-;   7 raw 16K bank base=16, then fourteen little-endian stream offsets.
+;   0..3 "NXZ0", 4 version=1, 5 page shift=13, 6 page count=30,
+;   7 raw 16K bank base=16, then 30 little-endian stream offsets.
 ; Each classic ZX0 stream expands to exactly 8K and never crosses a compressed
-; 16K bank. Source occupies MMU slots 0+1; destination uses slot 2. Resident
-; code starts in slot 3 at 0x7000 and the stack is high, so neither is paged.
+; 16K bank. Source occupies MMU slots 0+1; destination uses slot 2. The
+; directory is staged in the lower half of the original slot-3 page. Its upper
+; half still contains the 0x7000..0x7fff resident mirror, so boot code remains
+; executable while that page is selected.
+; This boot-only routine owns its DI/EI window.
 next_expand_bundle:
-    ld a, i
-    push af
     di
 
     ld a, next_mmu_slot0
@@ -462,15 +493,20 @@ next_expand_bundle:
     ld a, next_mmu_slot2
     call nextreg_read
     ld (next_saved_mmu2), a
+    ld a, next_mmu_slot3
+    call nextreg_read
+    ld (next_saved_mmu3), a
+    ld a, next_boot_scratch_page
+    call next_map_slot3
 
     ld a, next_compressed_page_base
     call next_map_compressed_bank
     ld hl, 0
-    ld de, next_sprite_stage
+    ld de, 0x6000
     ld bc, next_bundle_header_size
     ldir
 
-    ld hl, next_sprite_stage
+    ld hl, 0x6000
     ld a, (hl)
     cp 0x4e
     jr nz, next_expand_bad
@@ -503,7 +539,7 @@ next_expand_bundle:
     cp next_bundle_raw_bank_base
     jr nz, next_expand_bad
 
-    ld ix, next_sprite_stage + 8
+    ld ix, 0x6000 + 8
     ld a, next_bundle_page_base
     ld (next_copy_page), a
     ld a, next_bundle_page_count
@@ -542,6 +578,7 @@ next_expand_loop:
     dec a
     ld (next_expand_left), a
     jr nz, next_expand_loop
+    call next_install_overlay_mirrors
     jr next_expand_restore
 
 next_expand_bad:
@@ -550,18 +587,49 @@ next_expand_bad:
 next_expand_restore:
     ld a, (next_saved_mmu2)
     call next_map_slot2
+    ld a, (next_expand_left)
+    or a
+    jr nz, next_expand_restore_slot1
+    ld a, next_extension_page
+    jr next_expand_map_slot1
+next_expand_restore_slot1:
     ld a, (next_saved_mmu1)
+next_expand_map_slot1:
     call next_map_slot1
+    ld a, (next_saved_mmu3)
+    call next_map_slot3
     ld a, (next_saved_mmu0)
     call next_map_slot0
-    pop af
-    jp po, next_expand_keep_di
     ei
-next_expand_keep_di:
     ld a, (next_expand_left)
     or a
     ret z
     scf
+    ret
+
+; Reuse the first compressed page after expansion as a 4K staging page. The
+; source mirror remains mapped in slot 3 until every runtime overlay page has
+; received its copy. This runs once at boot under DI.
+next_install_overlay_mirrors:
+    ld a, next_compressed_page_base
+    call next_map_slot2
+    ld hl, 0x7000
+    ld de, 0x4000
+    ld bc, 0x1000
+    ldir
+
+    ld a, next_overlay_page_base
+    ld b, next_overlay_page_count
+next_install_overlay_mirrors_loop:
+    push bc
+    call next_map_slot3
+    inc a
+    ld hl, 0x4000
+    ld de, 0x7000
+    ld bc, 0x1000
+    ldir
+    pop bc
+    djnz next_install_overlay_mirrors_loop
     ret
 
 ; A = first MMU page of a compressed 16K bank. Maps both source slots.
@@ -580,6 +648,11 @@ next_map_slot0:
 next_map_slot2:
     ld e, a
     ld a, next_mmu_slot2
+    jp nextreg_write
+
+next_map_slot3:
+    ld e, a
+    ld a, next_mmu_slot3
     jp nextreg_write
 
 ; Classic ZX0 standard decoder by Einar Saukas (69 bytes). HL=source,

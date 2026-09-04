@@ -2,6 +2,28 @@ SECTION code_user
 
 PUBLIC _spectrum_append_text
 PUBLIC _spectrum_append_u16
+PUBLIC _spectrum_streq
+
+; uint8_t spectrum_streq(const char *a, const char *b) __z88dk_callee
+; SDCC/IY stack: [return][a][b]; leave only return for RET.
+_spectrum_streq:
+    pop af
+    pop de
+    pop hl
+    push af
+streq_loop:
+    ld a, (de)
+    cp (hl)
+    jr nz, streq_no
+    inc de
+    inc hl
+    or a
+    jr nz, streq_loop
+    ld l, 1
+    ret
+streq_no:
+    ld l, 0
+    ret
 
 ; char *spectrum_append_text(char *dst, const char *src) __z88dk_callee
 ; SDCC/IY stack: [return][dst][src]; leave only return for RET.

@@ -3,11 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#ifdef NETCHESSZX_NEXT
+#if defined(NETCHESSZX_NEXT) || defined(NETCHESSZX_SPECTRANEXT)
 uint8_t net_uart_direct_idle_ticks;
 #endif
 
-static uint8_t test_direct_idle_ticks = 75u;
+static uint8_t test_direct_idle_ticks;
 #define TEST_DIRECT_PING_WAIT_WINDOWS 3u
 
 static void check(int condition, const char *message)
@@ -124,6 +124,49 @@ static void test_next_refresh_rate_mapping(void)
           "NextReg 0x05 bit 2 selects 60 Hz");
 }
 
+static void test_session_poll_timing(void)
+{
+#ifdef NETCHESSZX_SPECTRANEXT
+    check(NETCHESSZX_SESSION_DIRECT_3S_POLLS_AT(50u) == 150u,
+          "SpectraNext Direct 50 Hz 3-second polls");
+    check(NETCHESSZX_SESSION_DIRECT_3S_POLLS_AT(60u) == 180u,
+          "SpectraNext Direct 60 Hz 3-second polls");
+    check(NETCHESSZX_SESSION_DIRECT_REPLY_POLLS_AT(50u) == 125u,
+          "SpectraNext Direct 50 Hz reply polls");
+    check(NETCHESSZX_SESSION_DIRECT_REPLY_POLLS_AT(60u) == 150u,
+          "SpectraNext Direct 60 Hz reply polls");
+    check(NETCHESSZX_SESSION_DIRECT_GRACE_POLLS_AT(50u) == 15000u,
+          "SpectraNext Direct 50 Hz grace polls");
+    check(NETCHESSZX_SESSION_DIRECT_GRACE_POLLS_AT(60u) == 18000u,
+          "SpectraNext Direct 60 Hz grace polls");
+#else
+    check(NETCHESSZX_SESSION_DIRECT_3S_POLLS_AT(50u) == 75u,
+          "Direct 50 Hz 3-second polls");
+    check(NETCHESSZX_SESSION_DIRECT_3S_POLLS_AT(60u) == 90u,
+          "Direct 60 Hz 3-second polls");
+    check(NETCHESSZX_SESSION_DIRECT_REPLY_POLLS_AT(50u) == 63u,
+          "Direct 50 Hz reply polls");
+    check(NETCHESSZX_SESSION_DIRECT_REPLY_POLLS_AT(60u) == 75u,
+          "Direct 60 Hz reply polls");
+    check(NETCHESSZX_SESSION_DIRECT_GRACE_POLLS_AT(50u) == 7500u,
+          "Direct 50 Hz grace polls");
+    check(NETCHESSZX_SESSION_DIRECT_GRACE_POLLS_AT(60u) == 9000u,
+          "Direct 60 Hz grace polls");
+#endif
+    check(NETCHESSZX_SESSION_MQTT_REPLY_POLLS_AT(50u) == 63u,
+          "MQTT 50 Hz reply polls");
+    check(NETCHESSZX_SESSION_MQTT_REPLY_POLLS_AT(60u) == 75u,
+          "MQTT 60 Hz reply polls");
+    check(NETCHESSZX_SESSION_MQTT_4_8S_POLLS_AT(50u) == 120u,
+          "MQTT 50 Hz 4.8-second polls");
+    check(NETCHESSZX_SESSION_MQTT_4_8S_POLLS_AT(60u) == 144u,
+          "MQTT 60 Hz 4.8-second polls");
+    check(NETCHESSZX_SESSION_MQTT_GRACE_POLLS_AT(50u) == 7500u,
+          "MQTT 50 Hz grace polls");
+    check(NETCHESSZX_SESSION_MQTT_GRACE_POLLS_AT(60u) == 9000u,
+          "MQTT 60 Hz grace polls");
+}
+
 static void run_direct_tests(void)
 {
     test_direct_ping_ack();
@@ -135,17 +178,25 @@ static void run_direct_tests(void)
 int main(void)
 {
     test_next_refresh_rate_mapping();
-    test_direct_idle_ticks = 75u;
-#ifdef NETCHESSZX_NEXT
-    net_uart_direct_idle_ticks = test_direct_idle_ticks;
-#endif
-    run_direct_tests();
-    test_mqtt_loss_after_misses(120u);
-#ifdef NETCHESSZX_NEXT
-    test_direct_idle_ticks = 90u;
+    test_session_poll_timing();
+#if defined(NETCHESSZX_NEXT) || defined(NETCHESSZX_SPECTRANEXT)
+    test_direct_idle_ticks =
+        (uint8_t)NETCHESSZX_SESSION_DIRECT_3S_POLLS_AT(50u);
     net_uart_direct_idle_ticks = test_direct_idle_ticks;
     run_direct_tests();
-    test_mqtt_loss_after_misses(144u);
+    test_mqtt_loss_after_misses(
+        (uint8_t)NETCHESSZX_SESSION_MQTT_4_8S_POLLS_AT(50u));
+    test_direct_idle_ticks =
+        (uint8_t)NETCHESSZX_SESSION_DIRECT_3S_POLLS_AT(60u);
+    net_uart_direct_idle_ticks = test_direct_idle_ticks;
+    run_direct_tests();
+    test_mqtt_loss_after_misses(
+        (uint8_t)NETCHESSZX_SESSION_MQTT_4_8S_POLLS_AT(60u));
+#else
+    test_direct_idle_ticks = (uint8_t)NETCHESSZX_SESSION_DIRECT_3S_POLLS;
+    run_direct_tests();
+    test_mqtt_loss_after_misses(
+        (uint8_t)NETCHESSZX_SESSION_MQTT_4_8S_POLLS);
 #endif
     puts("session ping tests ok");
     return 0;

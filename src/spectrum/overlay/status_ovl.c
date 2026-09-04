@@ -47,20 +47,17 @@ static char *status_append_direct_port(char *p, char *end)
     return p;
 }
 
-static char *status_append_direct_host(char *p, char *end)
+static char *status_append_endpoint(char *p, char *end)
 {
-    p = status_append(p, "DIRECT HOST ", end);
-    p = status_append(p, spectrum_esp_at_last_ip()[0] != '\0'
-                         ? spectrum_esp_at_last_ip()
-                         : "-",
-                      end);
-    return status_append_direct_port(p, end);
-}
+    const char *host;
 
-static char *status_append_direct_peer(char *p, char *end)
-{
-    p = status_append(p, "DIRECT PEER ", end);
-    p = status_append(p, netchesszx_direct_host, end);
+    if (netchesszx_transport_is_mqtt()) {
+        return status_append_mqtt_room(p, end);
+    }
+    p = status_append(p, "DIRECT ", end);
+    host = netchesszx_session_is_host() ? spectrum_esp_at_last_ip() :
+                                         netchesszx_direct_host;
+    p = status_append(p, host[0] != '\0' ? host : "-", end);
     return status_append_direct_port(p, end);
 }
 
@@ -71,69 +68,48 @@ static char *status_append_role(char *p, char *end)
                          end);
 }
 
-static char *status_append_direct_play_ip(char *p, char *end)
+static const char *status_platform_code(uint8_t platform)
 {
-    if (netchesszx_session_is_host()) {
-        if (spectrum_esp_at_last_ip()[0] != '\0') {
-            return status_append(p, spectrum_esp_at_last_ip(), end);
-        }
-        return status_append(p, "-", end);
+    switch (platform) {
+    case NETCHESS_PLAT_ZX: return "ZX";
+    case NETCHESS_PLAT_NXT: return "NXT";
+    case NETCHESS_PLAT_MAC: return "MAC";
+    case NETCHESS_PLAT_LNX: return "LNX";
+    case NETCHESS_PLAT_PC: return "PC";
+    case NETCHESS_PLAT_SPCX: return "SPCX";
+    default: return "?";
     }
-    if (netchesszx_direct_host[0] != '\0') {
-        return status_append(p, netchesszx_direct_host, end);
-    }
-    return status_append(p, "-", end);
 }
 
-static void status_build_phase(uint8_t phase)
+static void status_build_phase(uint8_t status)
 {
     char *p = status_line_ovl;
     char *end = status_line_ovl + SPECTRUM_OVL_STATUS_LINE_TEXT_SIZE;
+    uint8_t phase = SPECTRUM_STATUS_UNPACK_PHASE(status);
+    uint8_t platform = SPECTRUM_STATUS_UNPACK_PLATFORM(status);
 
     status_line_ovl[0] = '\0';
     if (phase == STATUS_PHASE_CONNECTION_SETUP) {
         (void)status_append(p, "CONNECTION SETUP", end);
     } else if (phase == STATUS_PHASE_GAME_SETUP) {
         (void)status_append(p, "GAME SETUP", end);
-    } else if (phase == STATUS_PHASE_CONNECTING) {
-        if (netchesszx_transport_is_mqtt()) {
-            (void)status_append_mqtt_room(p, end);
-        } else if (netchesszx_session_is_host()) {
-            (void)status_append_direct_host(p, end);
-        } else {
-            (void)status_append_direct_peer(p, end);
-        }
-    } else if (phase == STATUS_PHASE_CONNECTED) {
-        if (netchesszx_transport_is_mqtt()) {
-            p = status_append_mqtt_room(p, end);
-            (void)status_append(p, netchesszx_session_peer_ready() ?
-                                       " READY" : " WAIT",
-                                end);
-        } else if (netchesszx_session_is_host()) {
-            if (netchesszx_session_peer_ready()) {
-                (void)status_append(p, "DIRECT HOST - PEER LINKED", end);
+    } else if (phase >= STATUS_PHASE_CONNECTING && phase <= STATUS_PHASE_GAME) {
+        p = status_append_endpoint(p, end);
+        p = status_append_char(p, ' ', end);
+        p = status_append_role(p, end);
+        if (phase == STATUS_PHASE_CONNECTING) {
+            if (!netchesszx_transport_is_mqtt() &&
+                netchesszx_session_is_host()) {
+                (void)status_append(p, " - LISTENING", end);
             } else {
-                (void)status_append_direct_host(p, end);
+                (void)status_append(p, " - CONNECTING", end);
             }
+        } else if (phase == STATUS_PHASE_CONNECTED &&
+                   !netchesszx_session_peer_ready()) {
+            (void)status_append(p, " - WAITING", end);
         } else {
-            (void)status_append_direct_peer(p, end);
-        }
-    } else if (phase == STATUS_PHASE_GAME) {
-        p = status_append(p, "PLAYING IN ", end);
-        if (netchesszx_transport_is_mqtt()) {
-            p = status_append(p, netchesszx_mqtt_host, end);
-            p = status_append(p, " ROOM ", end);
-            if (netchesszx_mqtt_code[0] != '\0') {
-                p = status_append(p, netchesszx_mqtt_code, end);
-            } else {
-                p = status_append(p, "-", end);
-            }
-            p = status_append_char(p, ' ', end);
-            (void)status_append_role(p, end);
-        } else {
-            p = status_append_direct_play_ip(p, end);
-            p = status_append_char(p, ' ', end);
-            (void)status_append_role(p, end);
+            p = status_append(p, " VS ", end);
+            (void)status_append(p, status_platform_code(platform), end);
         }
     }
 }

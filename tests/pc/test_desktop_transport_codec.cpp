@@ -35,6 +35,30 @@ bool testDirectFraming()
     const QByteArray oversized(SESSION_PAYLOAD_MAX + 1, 'x');
     const auto overflow = codec.feedDirect(8u, oversized, deliver);
     ok = check(overflow.overflow, "oversized direct line rejected") && ok;
+
+    QByteArray burst;
+    QVector<QByteArray> burstLines;
+    QVector<QByteArray> expected;
+    for (int i = 0; i < 256; ++i) {
+        const QByteArray line = QByteArray("CHAT ") + QByteArray::number(i);
+
+        expected.append(line);
+        burst.append(line);
+        burst.append('\n');
+    }
+    const auto burstResult = codec.feedDirect(
+        9u, burst + QByteArray("PART"),
+        [&burstLines](const QByteArray &line) { burstLines.append(line); });
+    ok = check(burstResult.delivered && !burstResult.overflow &&
+                   burstLines == expected,
+               "coalesced direct burst preserves every frame") && ok;
+    const auto tailResult = codec.feedDirect(
+        9u, QByteArray("IAL\n"),
+        [&burstLines](const QByteArray &line) { burstLines.append(line); });
+    expected.append(QByteArray("PARTIAL"));
+    ok = check(tailResult.delivered && !tailResult.overflow &&
+                   burstLines == expected,
+               "direct burst preserves its fragmented tail") && ok;
     return ok;
 }
 
@@ -80,9 +104,34 @@ bool testMqttFramingAndDecode()
                    packet.packetId == 43u,
                "UNSUBACK metadata") && ok;
 
+    DesktopTransportCodec burstCodec;
+    QByteArray burst;
+    QVector<QByteArray> expectedPackets;
+    for (uint16_t packetId = 1u; packetId <= 256u; ++packetId) {
+        const QByteArray puback =
+            DesktopTransportCodec::encodeMqttPuback(packetId);
+
+        expectedPackets.append(puback);
+        burst.append(puback);
+    }
+    const QByteArray partial =
+        DesktopTransportCodec::encodeMqttPuback(257u);
+    packets = burstCodec.feedMqtt(burst + partial.left(1), &malformed);
+    ok = check(packets == expectedPackets && !malformed,
+               "coalesced MQTT burst preserves every packet") && ok;
+    packets = burstCodec.feedMqtt(partial.mid(1), &malformed);
+    ok = check(packets == QVector<QByteArray>({partial}) && !malformed,
+               "MQTT burst preserves its fragmented tail") && ok;
+
     const QByteArray malformedLength = QByteArray::fromHex("3080808080");
     packets = codec.feedMqtt(malformedLength, &malformed);
-    ok = check(packets.isEmpty() && malformed, "malformed remaining length rejected") && ok;
+    ok = check(packets.isEmpty() && malformed,
+               "malformed remaining length rejected") && ok;
+
+    DesktopTransportCodec mixedCodec;
+    packets = mixedCodec.feedMqtt(encoded + malformedLength, &malformed);
+    ok = check(packets == QVector<QByteArray>({encoded}) && malformed,
+               "valid MQTT packets survive a later malformed length") && ok;
     return ok;
 }
 

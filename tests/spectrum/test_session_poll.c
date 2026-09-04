@@ -7,6 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef NETCHESSZX_SPECTRANEXT
+uint8_t net_uart_direct_idle_ticks =
+    NETCHESSZX_SESSION_DIRECT_3S_POLLS_AT(NETCHESSZX_SESSION_FRAME_HZ);
+#endif
+
 static int16_t stub_read_result;
 static const char *stub_payload;
 static uint8_t stub_payload_flags;
@@ -59,6 +64,11 @@ void spectrum_net_background_drain(void)
     ++stub_background_drain_count;
 }
 
+void spectrum_net_background_drain_clock(void)
+{
+    ++stub_background_drain_count;
+}
+
 uint8_t spectrum_net_link_activity(void)
 {
     uint8_t activity = stub_link_activity;
@@ -99,7 +109,7 @@ static void require_u8(const char *label, uint8_t got, uint8_t want)
     }
 }
 
-static void test_payload_event(void)
+static void test_move_event_defers_liveness(void)
 {
     char payload[SPECTRUM_LINK_PAYLOAD_MAX];
     netchesszx_session_ping_t ping;
@@ -121,8 +131,8 @@ static void test_payload_event(void)
     require_u8("event tag", (uint8_t)out.event, NETCHESSZX_SESSION_EVENT_MOVE);
     require_u8("retained", out.retained, 0u);
     require_u8("background drain", stub_background_drain_count, 1u);
-    require_u8("direct payload idle reset", ping.idle_ticks, 0u);
-    require_u8("direct payload misses reset", ping.misses, 0u);
+    require_u8("direct move idle deferred", ping.idle_ticks, 42u);
+    require_u8("direct move misses deferred", ping.misses, 3u);
 }
 
 static void test_retained_side_effect_event_ignored(void)
@@ -191,7 +201,7 @@ static void test_direct_guest_timeout_sends_ping(void)
     stub_read_result = SPECTRUM_LINK_READ_TIMEOUT;
 
     /* DIRECT guest owns keepalive PING. */
-    for (i = 0u; i < 75u; ++i) {
+    for (i = 0u; i < NETCHESSZX_SESSION_DIRECT_3S_POLLS; ++i) {
         require_u8("timeout poll",
                    netchesszx_session_poll(&ping, payload, sizeof(payload), &out),
                    NETCHESSZX_SESSION_POLL_NONE);
@@ -214,7 +224,8 @@ static void test_direct_failed_ping_disconnects(void)
     stub_read_result = SPECTRUM_LINK_READ_TIMEOUT;
     stub_send_ping_ok = 0u;
 
-    for (i = 0u; i < 74u; ++i) {
+    for (i = 0u; i < (uint16_t)(NETCHESSZX_SESSION_DIRECT_3S_POLLS -
+                                 1u); ++i) {
         require_u8("failed ping timeout poll",
                    netchesszx_session_poll(&ping, payload, sizeof(payload), &out),
                    NETCHESSZX_SESSION_POLL_NONE);
@@ -243,7 +254,8 @@ static void test_direct_host_timeout_is_passive(void)
     stub_read_result = SPECTRUM_LINK_READ_TIMEOUT;
 
     /* Two missed 3-window waits: 18 seconds at 50 Hz. */
-    for (i = 0u; i < (uint16_t)(75u * 6u - 1u); ++i) {
+    for (i = 0u; i < (uint16_t)(NETCHESSZX_SESSION_DIRECT_3S_POLLS *
+                                 6u - 1u); ++i) {
         require_u8("passive host timeout poll",
                    netchesszx_session_poll(&ping, payload, sizeof(payload), &out),
                    NETCHESSZX_SESSION_POLL_NONE);
@@ -280,7 +292,7 @@ static void test_mqtt_waiting_peer_does_not_run_liveness(void)
     require_u8("waiting peer misses unchanged", ping.misses, 0u);
 
     netchesszx_session_peer_mark_ready();
-    for (i = 0u; i < 120u; ++i) {
+    for (i = 0u; i < NETCHESSZX_SESSION_MQTT_4_8S_POLLS; ++i) {
         require_u8("ready peer timeout poll",
                    netchesszx_session_poll(&ping, payload, sizeof(payload), &out),
                    NETCHESSZX_SESSION_POLL_NONE);
@@ -303,7 +315,7 @@ static void test_mqtt_broker_activity_does_not_mask_peer_loss(void)
                                  NETCHESSZX_COLOR_WHITE);
     netchesszx_session_peer_mark_ready();
     netchesszx_session_ping_reset(&ping);
-    ping.idle_ticks = 119u;
+    ping.idle_ticks = (uint8_t)(NETCHESSZX_SESSION_MQTT_4_8S_POLLS - 1u);
     ping.misses = 4u;
     stub_read_result = SPECTRUM_LINK_READ_TIMEOUT;
     stub_link_activity = 1u;
@@ -316,6 +328,56 @@ static void test_mqtt_broker_activity_does_not_mask_peer_loss(void)
                NETCHESSZX_SESSION_EVENT_BYE);
     require_u8("mqtt activity releases peer", stub_publish_offline_count, 1u);
     require_u8("mqtt activity misses kept", ping.misses, 4u);
+}
+
+static void test_mqtt_guest_loss_is_logical_bye(void)
+{
+    char payload[SPECTRUM_LINK_PAYLOAD_MAX];
+    netchesszx_session_ping_t ping;
+    netchesszx_session_poll_result_t out;
+
+    reset_stubs();
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
+                                 NETCHESSZX_TRANSPORT_MQTT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    netchesszx_session_ping_reset(&ping);
+    ping.idle_ticks = (uint8_t)(NETCHESSZX_SESSION_MQTT_4_8S_POLLS - 1u);
+    ping.misses = 4u;
+    stub_read_result = SPECTRUM_LINK_READ_TIMEOUT;
+
+    require_u8("guest liveness poll", netchesszx_session_poll(
+                   &ping, payload, sizeof(payload), &out),
+               NETCHESSZX_SESSION_POLL_EVENT);
+    require_u8("guest liveness event", (uint8_t)out.event,
+               NETCHESSZX_SESSION_EVENT_BYE);
+    require_u8("guest liveness payload empty", (uint8_t)payload[0], 0u);
+    require_u8("guest liveness no offline publish",
+               stub_publish_offline_count, 0u);
+}
+
+static void test_mqtt_host_release_failure_disconnects(void)
+{
+    char payload[SPECTRUM_LINK_PAYLOAD_MAX];
+    netchesszx_session_ping_t ping;
+    netchesszx_session_poll_result_t out;
+
+    reset_stubs();
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_MQTT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    netchesszx_session_ping_reset(&ping);
+    ping.idle_ticks = (uint8_t)(NETCHESSZX_SESSION_MQTT_4_8S_POLLS - 1u);
+    ping.misses = 4u;
+    stub_read_result = SPECTRUM_LINK_READ_TIMEOUT;
+    stub_publish_offline_ok = 0u;
+
+    require_u8("host release failure poll", netchesszx_session_poll(
+                   &ping, payload, sizeof(payload), &out),
+               NETCHESSZX_SESSION_POLL_DISCONNECTED);
+    require_u8("host release failure publishes both seats",
+               stub_publish_offline_count, 2u);
 }
 
 
@@ -485,12 +547,13 @@ static void test_mqtt_setup_liveness_guards(void)
     netchesszx_mqtt_session_id = 78u;
     netchesszx_session_peer_reset();
     seed_ping(&ping, 3u);
-    ping.idle_ticks = 119u;
+    ping.idle_ticks = (uint8_t)(NETCHESSZX_SESSION_MQTT_4_8S_POLLS - 1u);
     stub_payload = "J 78";
     require_u8("initial join poll",
                netchesszx_session_poll(&ping, payload, sizeof(payload), &out),
                NETCHESSZX_SESSION_POLL_EVENT);
-    require_u8("initial join idle kept", ping.idle_ticks, 119u);
+    require_u8("initial join idle kept", ping.idle_ticks,
+               (uint8_t)(NETCHESSZX_SESSION_MQTT_4_8S_POLLS - 1u));
 
     netchesszx_session_peer_mark_ready();
     stub_payload = "PING";
@@ -584,7 +647,7 @@ static void test_read_disconnect(void)
 
 int main(void)
 {
-    test_payload_event();
+    test_move_event_defers_liveness();
     test_retained_side_effect_event_ignored();
     test_short_restore_frame_does_not_use_stale_tail();
     test_direct_guest_timeout_sends_ping();
@@ -592,6 +655,8 @@ int main(void)
     test_direct_host_timeout_is_passive();
     test_mqtt_waiting_peer_does_not_run_liveness();
     test_mqtt_broker_activity_does_not_mask_peer_loss();
+    test_mqtt_guest_loss_is_logical_bye();
+    test_mqtt_host_release_failure_disconnects();
     test_mqtt_only_live_peer_payload_resets_liveness();
     test_mqtt_ping_liveness_guards();
     test_mqtt_setup_liveness_guards();

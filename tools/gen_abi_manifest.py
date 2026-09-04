@@ -11,13 +11,19 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-from gen_overlay_defs import OPTIONAL_SYMBOLS, REQUIRED_SYMBOLS, parse_map
+from gen_overlay_defs import (
+    OPTIONAL_SYMBOLS,
+    REQUIRED_SYMBOLS,
+    SPECTRANEXT_ONLY_SYMBOLS,
+    parse_map,
+)
 
 
 MANIFEST_VERSION = 3
 DEFAULT_API_HEADER = Path("src/spectrum/overlay/overlay_api.h")
 DEFAULT_OVERLAY_HEADER = Path("src/spectrum/overlay/overlay.h")
 DEFAULT_SESSION_HEADER = Path("src/common/session/session.h")
+LAYOUT_MARKERS = ("_overlay_code_slot",)
 
 
 def normalize_type(text: str) -> str:
@@ -120,10 +126,40 @@ def parse_api_header(
     return entries
 
 
+def active_lines(path: Path, defines: set[str]) -> list[str]:
+    lines: list[str] = []
+    frames: list[tuple[bool, bool]] = []
+    active = True
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        directive = raw_line.strip().lstrip("#").split()
+        keyword = directive[0].upper() if directive else ""
+        if keyword in ("IFDEF", "IFNDEF", "IF"):
+            condition = True
+            if keyword in ("IFDEF", "IFNDEF") and len(directive) > 1:
+                condition = directive[1] in defines
+                if keyword == "IFNDEF":
+                    condition = not condition
+            frames.append((active, condition))
+            active = active and condition
+        elif keyword == "ELSE" and frames:
+            parent, condition = frames[-1]
+            active = parent and not condition
+        elif keyword == "ELIF" and frames:
+            parent, _ = frames[-1]
+            frames[-1] = (parent, True)
+            active = False
+        elif keyword == "ENDIF" and frames:
+            active, _ = frames.pop()
+        elif active:
+            lines.append(raw_line)
+    return lines
+
+
 def parse_constants(
     path: Path,
     prefix: str,
     values: dict[str, object] | None = None,
+    defines: set[str] | None = None,
 ) -> list[dict[str, object]]:
     constants: list[dict[str, object]] = []
     if values is None:
@@ -132,9 +168,7 @@ def parse_constants(
         rf"^#define\s+({re.escape(prefix)}[A-Za-z0-9_]+)\s+(.+)$"
     )
 
-    for line_no, raw_line in enumerate(
-        path.read_text(encoding="utf-8").splitlines(), 1
-    ):
+    for raw_line in active_lines(path, defines or set()):
         match = define_re.match(raw_line.strip())
         if not match:
             continue
@@ -192,16 +226,28 @@ def make_manifest(
     api_header: Path,
     overlay_header: Path,
     session_header: Path,
+    target: str,
 ) -> dict[str, object]:
     symbols = parse_map(map_path)
     api = parse_api_header(api_header)
     context_header = api_header.with_name("overlay_context.h")
     lowram_header = context_header.parents[1] / "lowram_map.h"
+    defines = (
+        {"NETCHESSZX_NEXT", "NETCHESSZX_NEXT_BANKING"}
+        if target == "next" else set()
+    )
     context_values: dict[str, object] = {}
-    parse_constants(lowram_header, "NETCHESSZX_LOWRAM_", context_values)
+    parse_constants(
+        lowram_header, "NETCHESSZX_LOWRAM_", context_values, defines
+    )
     api_by_asm = {entry["asm_name"]: entry for entry in api}
     resident_symbols = symbol_entries(symbols, REQUIRED_SYMBOLS, True)
-    resident_symbols.extend(symbol_entries(symbols, OPTIONAL_SYMBOLS, False))
+    resident_symbols.extend(symbol_entries(
+        symbols,
+        [name for name in OPTIONAL_SYMBOLS
+         if name not in SPECTRANEXT_ONLY_SYMBOLS],
+        False,
+    ))
 
     for entry in resident_symbols:
         api_entry = api_by_asm.get(entry["name"])
@@ -238,23 +284,17 @@ def make_manifest(
         },
         "markers": markers,
         "resident_symbols": resident_symbols,
-        "overlay_constants": parse_constants(overlay_header, "SPECTRUM_OVL_"),
+        "overlay_constants": parse_constants(
+            overlay_header, "SPECTRUM_OVL_", defines=defines
+        ),
         "overlay_context_constants": parse_constants(
-            context_header, "SPECTRUM_", context_values
+            context_header, "SPECTRUM_", context_values, defines
         ),
         "session_route_constants": parse_constants(
-            session_header, "SESSION_ROUTE_"
+            session_header, "SESSION_ROUTE_", defines=defines
         ),
         "api": api,
         "missing_required": missing_required,
-    }
-
-
-def stable_api(entry: dict[str, object]) -> dict[str, object]:
-    return {
-        key: entry[key]
-        for key in ("kind", "type", "return", "args", "calling_convention")
-        if key in entry
     }
 
 
@@ -295,6 +335,16 @@ def compare_manifests(
             f"manifest version changed: {baseline.get('version')!r} -> "
             f"{current.get('version')!r}"
         )
+
+    base_markers = baseline.get("markers", {})
+    cur_markers = current.get("markers", {})
+    if isinstance(base_markers, dict) and isinstance(cur_markers, dict):
+        for marker in LAYOUT_MARKERS:
+            if base_markers.get(marker) != cur_markers.get(marker):
+                errors.append(
+                    f"marker changed: {marker}: "
+                    f"{base_markers.get(marker)!r} -> {cur_markers.get(marker)!r}"
+                )
 
     for missing in current.get("missing_required", []):
         errors.append(f"required resident symbol missing: {missing}")
@@ -360,10 +410,10 @@ def compare_manifests(
             )
 
     if strict_addresses:
-        base_markers = baseline.get("markers", {})
-        cur_markers = current.get("markers", {})
         if isinstance(base_markers, dict) and isinstance(cur_markers, dict):
             for marker in sorted(set(base_markers) | set(cur_markers)):
+                if marker in LAYOUT_MARKERS:
+                    continue
                 if base_markers.get(marker) != cur_markers.get(marker):
                     errors.append(
                         f"marker changed: {marker}: {base_markers.get(marker)!r} -> {cur_markers.get(marker)!r}"
@@ -385,6 +435,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--overlay-api", type=Path, default=DEFAULT_API_HEADER)
     parser.add_argument("--overlay-header", type=Path, default=DEFAULT_OVERLAY_HEADER)
     parser.add_argument("--session-header", type=Path, default=DEFAULT_SESSION_HEADER)
+    parser.add_argument("--target", choices=("classic", "next"), required=True)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--write-baseline", type=Path)
@@ -399,6 +450,7 @@ def main(argv: list[str]) -> int:
         args.overlay_api,
         args.overlay_header,
         args.session_header,
+        args.target,
     )
 
     if args.output:

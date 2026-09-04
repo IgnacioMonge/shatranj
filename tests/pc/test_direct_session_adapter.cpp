@@ -1,4 +1,6 @@
-#include "pc/client/direct_session_adapter.h"
+#include "pc/client/desktop_session_adapter.h"
+
+#include "common/protocol/platform_protocol.h"
 
 #include <cstdio>
 #include <cstring>
@@ -18,7 +20,7 @@ static void check(bool ok, const char *label)
     }
 }
 
-static const DirectOwnedAction *findAction(const DirectActionBatch &batch,
+static const DesktopOwnedAction *findAction(const DesktopActionBatch &batch,
                                            uint8_t type)
 {
     for (uint8_t i = 0u; i < batch.count; ++i) {
@@ -29,9 +31,9 @@ static const DirectOwnedAction *findAction(const DirectActionBatch &batch,
     return nullptr;
 }
 
-static uint8_t sendId(const DirectActionBatch &batch)
+static uint8_t sendId(const DesktopActionBatch &batch)
 {
-    const DirectOwnedAction *send = findAction(batch, SESSION_ACT_SEND);
+    const DesktopOwnedAction *send = findAction(batch, SESSION_ACT_SEND);
 
     return send == nullptr ? 0u : send->action.data.send.tx_id;
 }
@@ -73,11 +75,11 @@ static QByteArray readFrame(QTcpSocket &socket)
     return frame;
 }
 
-static bool drainAdapter(DirectSessionAdapter &adapter,
+static bool drainAdapter(DesktopSessionAdapter &adapter,
                          QTcpSocket &socket,
                          LoopbackState &state)
 {
-    DirectActionBatch batch;
+    DesktopActionBatch batch;
     uint8_t transitions = 0u;
 
     while (adapter.takeNextBatch(&batch)) {
@@ -85,7 +87,7 @@ static bool drainAdapter(DirectSessionAdapter &adapter,
             return false;
         }
         for (uint8_t i = 0u; i < batch.count; ++i) {
-            const DirectOwnedAction &owned = batch.actions[i];
+            const DesktopOwnedAction &owned = batch.actions[i];
             const SessionAction &action = owned.action;
 
             if (action.type == SESSION_ACT_SEND) {
@@ -124,7 +126,7 @@ static bool drainAdapter(DirectSessionAdapter &adapter,
 
 static bool peerSend(QTcpSocket &peer,
                      QTcpSocket &client,
-                     DirectSessionAdapter &adapter,
+                     DesktopSessionAdapter &adapter,
                      LoopbackState &state,
                      const QByteArray &payload)
 {
@@ -136,7 +138,7 @@ static bool peerSend(QTcpSocket &peer,
     if (received != payload) {
         return false;
     }
-    adapter.enqueueRx(1u, received);
+    adapter.enqueueDirectRx(1u, received);
     return drainAdapter(adapter, client, state);
 }
 
@@ -144,7 +146,7 @@ static void testLoopbackSilentPeer()
 {
     QTcpServer server;
     QTcpSocket client;
-    DirectSessionAdapter adapter;
+    DesktopSessionAdapter adapter;
     LoopbackState state;
 
     if (!server.listen(QHostAddress::LocalHost, 0u)) {
@@ -159,7 +161,7 @@ static void testLoopbackSilentPeer()
     }
     QTcpSocket *peer = server.nextPendingConnection();
     if (peer == nullptr ||
-        !adapter.init(SESSION_ROLE_HOST, SESSION_COLOR_WHITE)) {
+        !adapter.initDirect(SESSION_ROLE_HOST, SESSION_COLOR_WHITE)) {
         check(false, "loopback peer and host adapter initialize");
         return;
     }
@@ -204,16 +206,16 @@ static void testLoopbackSilentPeer()
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
-    DirectSessionAdapter adapter;
-    DirectActionBatch hello;
-    DirectActionBatch batch;
-    DirectActionBatch remoteChat;
-    DirectActionBatch localChat;
-    const DirectOwnedAction *action;
-    const DirectOwnedAction *remoteAction;
+    DesktopSessionAdapter adapter;
+    DesktopActionBatch hello;
+    DesktopActionBatch batch;
+    DesktopActionBatch remoteChat;
+    DesktopActionBatch localChat;
+    const DesktopOwnedAction *action;
+    const DesktopOwnedAction *remoteAction;
     QByteArray bad("PING\0TAIL", 9);
 
-    check(adapter.init(SESSION_ROLE_GUEST, SESSION_COLOR_UNKNOWN),
+    check(adapter.initDirect(SESSION_ROLE_GUEST, SESSION_COLOR_UNKNOWN),
           "adapter init");
     adapter.enqueueLinkUp(0u);
     check(adapter.takeNextBatch(&hello), "link-up event drained");
@@ -225,7 +227,7 @@ int main(int argc, char **argv)
                           action->action.data.send.length) == 0,
           "directed HELLO is copied into owned batch");
 
-    adapter.enqueueRx(0u, QByteArray("NOISE"));
+    adapter.enqueueDirectRx(0u, QByteArray("NOISE"));
     adapter.enqueueTxResult(sendId(hello), SESSION_TX_OK);
     check(adapter.takeNextBatch(&batch) &&
               findAction(batch, SESSION_ACT_TIMER_SET) != nullptr,
@@ -235,16 +237,26 @@ int main(int argc, char **argv)
     check(adapter.takeNextBatch(&batch) && batch.count == 0u,
           "queued RX remains behind correlated tx result");
 
-    adapter.enqueueRx(0u, bad);
+    adapter.enqueueDirectRx(0u, bad);
     check(adapter.takeNextBatch(&batch) && batch.count == 0u,
           "embedded NUL remains visible to reducer validation");
 
-    adapter.enqueueRx(0u, QByteArray("HELLO DIRECT HOST WHITE=HOST"));
+    adapter.enqueueDirectRx(0u, QByteArray("HELLO DIRECT HOST WHITE=HOST"));
     check(adapter.takeNextBatch(&batch), "host HELLO event drained");
     adapter.enqueueTxResult(sendId(batch), SESSION_TX_OK);
     check(adapter.takeNextBatch(&batch), "HELLO reply result drained");
 
-    adapter.enqueueRx(0u, QByteArray("RQ"));
+    adapter.enqueueDirectRx(0u, QByteArray("MACH PC"));
+    check(adapter.takeNextBatch(&batch), "direct MACH event drained");
+    action = findAction(batch, SESSION_ACT_DELIVER_GAME);
+    check(action != nullptr &&
+              action->action.data.game.kind == SESSION_DELIVER_PLATFORM &&
+              action->action.data.game.value == NETCHESS_PLAT_PC &&
+              action->action.data.game.delivery_id == 0u &&
+              action->payload.isEmpty(),
+          "direct MACH action carries typed platform without payload");
+
+    adapter.enqueueDirectRx(0u, QByteArray("RQ"));
     check(adapter.takeNextBatch(&batch), "restore request drained");
     action = findAction(batch, SESSION_ACT_REQUEST_DECISION);
     check(action != nullptr &&
@@ -258,10 +270,10 @@ int main(int argc, char **argv)
           "restore decision sends RY");
     adapter.enqueueTxResult(sendId(batch), SESSION_TX_OK);
     check(adapter.takeNextBatch(&batch), "restore RY result drained");
-    adapter.enqueueRx(
+    adapter.enqueueDirectRx(
         0u, QByteArray("RS00 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
     check(adapter.takeNextBatch(&batch), "restore first chunk drained");
-    adapter.enqueueRx(
+    adapter.enqueueDirectRx(
         0u, QByteArray("RS01 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
     check(adapter.takeNextBatch(&batch), "restore second chunk drained");
     action = findAction(batch, SESSION_ACT_DELIVER_GAME);
@@ -291,10 +303,10 @@ int main(int argc, char **argv)
           "restored phase and ply drive next move");
     adapter.enqueueTxResult(sendId(batch), SESSION_TX_OK);
     check(adapter.takeNextBatch(&batch), "post-restore move handoff drained");
-    adapter.enqueueRx(0u, QByteArray("ACK 8"));
+    adapter.enqueueDirectRx(0u, QByteArray("ACK 8"));
     check(adapter.takeNextBatch(&batch), "post-restore move ACK drained");
 
-    adapter.enqueueRx(0u, QByteArray("CHAT hi"));
+    adapter.enqueueDirectRx(0u, QByteArray("CHAT hi"));
     check(adapter.takeNextBatch(&remoteChat), "temporary RX event drained");
     remoteAction = findAction(remoteChat, SESSION_ACT_DELIVER_GAME);
     check(remoteAction != nullptr && remoteAction->payload == QByteArray("hi") &&
@@ -314,7 +326,11 @@ int main(int argc, char **argv)
               std::memcmp(action->action.data.game.payload, "yo", 2u) == 0,
           "workspace DELIVER payload and local origin are copied");
 
+    adapter.enqueueDirectRx(0u, QByteArray("CHAT before-down"));
     adapter.enqueueLinkDown(0u);
+    check(adapter.takeNextBatch(&batch) &&
+              findAction(batch, SESSION_ACT_DELIVER_GAME) != nullptr,
+          "direct queued RX remains ahead of later link-down");
     check(adapter.takeNextBatch(&hello) &&
               findAction(hello, SESSION_ACT_SESSION_CHANGED) != nullptr,
           "link-down translates to ended action");

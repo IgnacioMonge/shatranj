@@ -22,6 +22,10 @@
 #define NETCHESSZX_TZ 2
 #endif
 
+#define NETCHESSZX_TIMEZONE_MIN (-11)
+#define NETCHESSZX_TIMEZONE_MAX 13
+#define NETCHESSZX_TIME_RTC 127
+
 #define NETCHESSZX_STRINGIFY_2(x) #x
 #define NETCHESSZX_STRINGIFY(x) NETCHESSZX_STRINGIFY_2(x)
 
@@ -41,11 +45,10 @@
 #ifdef NETCHESSZX_MQTT_CODE_TOKEN
 #define NETCHESSZX_MQTT_CODE NETCHESSZX_STRINGIFY(NETCHESSZX_MQTT_CODE_TOKEN)
 #else
-#define NETCHESSZX_MQTT_CODE "DEVROOM"
+#define NETCHESSZX_MQTT_CODE "NC0000"
 #endif
 #endif
 
-#define NETCHESSZX_MQTT_HOST_MAX 47u
 #define NETCHESSZX_MQTT_CODE_MAX 16u
 #define NETCHESSZX_DIRECT_HOST_MAX 15u
 
@@ -61,17 +64,8 @@
 #define NETCHESSZX_NOTATION_COORD 0u
 #define NETCHESSZX_NOTATION_SAN 1u
 
-#define NETCHESSZX_BOARD_THEME_CLASSIC 0u
-#define NETCHESSZX_BOARD_THEME_BLUE 1u
-#define NETCHESSZX_BOARD_THEME_GREEN 2u
-#define NETCHESSZX_BOARD_THEME_CYAN 3u
-#define NETCHESSZX_BOARD_THEME_MAGENTA 4u
-#define NETCHESSZX_BOARD_THEME_COUNT 5u
 
 #define NETCHESSZX_PIECE_SET_STD 0u
-#define NETCHESSZX_PIECE_SET_SPCY 1u
-#define NETCHESSZX_PIECE_SET_PIXL 2u
-#define NETCHESSZX_PIECE_SET_COUNT 3u
 
 extern uint8_t netchesszx_session_role;
 extern uint8_t netchesszx_transport;
@@ -109,8 +103,6 @@ const char *netchesszx_session_start_text(void);
     (netchesszx_local_color == NETCHESSZX_COLOR_WHITE)
 #define netchesszx_session_has_local_turn(white_turn) \
     ((uint8_t)((white_turn) == netchesszx_local_is_white()))
-#define netchesszx_remote_color() \
-    (netchesszx_local_color ^ 1u)
 #define netchesszx_local_side_char() \
     (netchesszx_local_is_white() ? 'W' : 'B')
 #define netchesszx_remote_side_char() \
@@ -125,5 +117,8 @@ extern char netchesszx_mqtt_code[NETCHESSZX_MQTT_CODE_MAX + 1u];
 extern const uint16_t netchesszx_mqtt_port;
 extern char netchesszx_direct_host[NETCHESSZX_DIRECT_HOST_MAX + 1u];
 extern uint16_t netchesszx_direct_port;
+extern int8_t netchesszx_timezone;
+extern int8_t netchesszx_timezone_last;
+extern uint8_t netchesszx_rtc_available;
 
 #endif

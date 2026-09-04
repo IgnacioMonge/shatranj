@@ -55,7 +55,16 @@ const char *netchesszx_session_start_text(void)
 }
 
 const char netchesszx_mqtt_host[] = NETCHESSZX_MQTT_HOST;
+/* AT+CIPSTART prefix/tail, a five-digit uint16_t port, and the NUL. */
+typedef char netchesszx_mqtt_host_size_check[
+    (sizeof(netchesszx_mqtt_host) - 1u + 27u <=
+     NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_SIZE)
+        ? 1
+        : -1];
 char netchesszx_mqtt_code[NETCHESSZX_MQTT_CODE_MAX + 1u];
 const uint16_t netchesszx_mqtt_port = NETCHESSZX_MQTT_PORT;
 char netchesszx_direct_host[NETCHESSZX_DIRECT_HOST_MAX + 1u] = "";
 uint16_t netchesszx_direct_port = NETCHESSZX_PORT;
+int8_t netchesszx_timezone = NETCHESSZX_TIME_RTC;
+int8_t netchesszx_timezone_last = NETCHESSZX_TZ;
+uint8_t netchesszx_rtc_available = 0u;

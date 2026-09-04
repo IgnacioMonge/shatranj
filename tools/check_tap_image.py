@@ -90,36 +90,50 @@ def find_code_block(blob: bytes, org: int) -> tuple[int, bytes]:
 
 
 def validate_image(
-    symbols: dict[str, int], code: bytes, tap: bytes, org: int
+    symbols: dict[str, int], code: bytes, tap: bytes, org: int,
+    load_org: int | None = None, low_code: bytes = b"",
 ) -> TapImage:
     data_compiler_tail = required_symbol(symbols, "__data_compiler_tail")
     data_end = required_symbol(symbols, "__DATA_END_tail")
     bss_head = required_symbol(symbols, "__BSS_head")
-    ram_end = required_symbol(symbols, "__BSS_END_tail")
+    ram_end = max(
+        required_symbol(symbols, "__BSS_END_tail"),
+        symbols.get("__bss_compiler_tail", 0),
+        symbols.get("__bss_user_tail", 0),
+    )
 
     if not org <= data_compiler_tail <= data_end <= bss_head <= ram_end:
         raise TapImageError("invalid DATA/BSS ordering in linker map")
 
-    expected = ram_end - org
-    if len(code) != expected:
+    resident_size = ram_end - org
+    if len(code) != resident_size:
         raise TapImageError(
-            f"CODE.bin length {len(code)} != RAM_END - ORG ({expected})"
+            f"CODE.bin length {len(code)} != RAM_END - ORG ({resident_size})"
         )
 
-    declared, payload = find_code_block(tap, org)
-    if declared != expected:
-        raise TapImageError(
-            f"TAP CODE length {declared} != RAM_END - ORG ({expected})"
-        )
-    if payload != code:
-        raise TapImageError("TAP CODE payload differs from CODE.bin")
+    if load_org is None:
+        load_org = org
+    if load_org > org:
+        raise TapImageError("TAP load origin is above resident ORG")
+    prefix_size = org - load_org
+    if len(low_code) > prefix_size:
+        raise TapImageError("low CODE section reaches resident ORG")
+    expected_payload = low_code + bytes(prefix_size - len(low_code)) + code
 
-    bss_offset = bss_head - org
-    if any(payload[bss_offset:expected]):
+    declared, payload = find_code_block(tap, load_org)
+    if declared != len(expected_payload):
+        raise TapImageError(
+            f"TAP CODE length {declared} != expected {len(expected_payload)}"
+        )
+    if payload != expected_payload:
+        raise TapImageError("TAP CODE payload differs from linked sections")
+
+    bss_offset = bss_head - load_org
+    if any(payload[bss_offset:]):
         raise TapImageError("TAP BSS contains non-zero bytes")
 
     return TapImage(
-        load_address=org,
+        load_address=load_org,
         payload=payload,
         initialized_bytes=bss_offset,
         bss_bytes=ram_end - bss_head,
@@ -133,6 +147,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--code-bin", type=Path, required=True)
     parser.add_argument("--tap", type=Path, required=True)
     parser.add_argument("--org", type=lambda value: int(value, 0), required=True)
+    parser.add_argument("--load-org", type=lambda value: int(value, 0))
+    parser.add_argument("--low-code-bin", type=Path)
     args = parser.parse_args(argv)
 
     try:
@@ -141,6 +157,8 @@ def main(argv: list[str]) -> int:
             args.code_bin.read_bytes(),
             args.tap.read_bytes(),
             args.org,
+            args.load_org,
+            args.low_code_bin.read_bytes() if args.low_code_bin else b"",
         )
     except (OSError, TapImageError) as exc:
         print(f"[ERR] TAP image contract: {exc}", file=sys.stderr)

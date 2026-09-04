@@ -2,17 +2,29 @@
 #include "spectrum/platform/uart.h"
 #include "spectrum/lowram_map.h"
 
+#ifdef NETCHESSZX_SPECTRANEXT
+extern void spectrum_net_background_drain(void);
+#else
 extern void net_uart_init(void);
 extern uint8_t net_uart_send(uint8_t c) NETCHESSZX_FASTCALL;
 extern uint8_t net_uart_ready(void);
 extern uint8_t net_uart_read(void);
 #ifdef NETCHESSZX_NEXT
 extern void net_uart_hard_reset(void);
+extern void net_uart_set_baud_230400(void);
+#endif
 #endif
 
 #ifdef NETCHESSZX_HOST_TEST
 void spectrum_frame_wait(void)
 {
+}
+#elif defined(NETCHESSZX_SPECTRANEXT)
+extern void spectrum_spxn_frame_wait(void);
+
+void spectrum_frame_wait(void)
+{
+    spectrum_spxn_frame_wait();
 }
 #else
 void spectrum_frame_wait(void)
@@ -37,13 +49,21 @@ void spectrum_frame_wait(void)
 }
 #endif
 
-/* RX ring under the UART wrappers. spectrum_uart_background_pump() stockpiles
-   HW bytes here while the app is blocked (notices, esxDOS ops, piece reveal)
-   so a DIRECT +IPD burst is not lost to the small HW FIFO. Readers drain the
-   ring first via the wrappers below, so byte order is preserved and every
-   consumer (DIRECT overlay, esp_at line parser, MQTT stream) is covered
-   without changes. Lives in the reclaimed printer buffer (see lowram_map.h)
-   so it costs no BSS; indices are uint8_t, so 256 is the ceiling. */
+#ifdef NETCHESSZX_SPECTRANEXT
+void spectrum_uart_background_pump(void)
+{
+    spectrum_net_background_drain();
+}
+#else
+/* RX ring under the UART wrappers. Calls to spectrum_uart_background_pump()
+   stockpile pending HW bytes during multi-frame UI waits and between selected
+   esxDOS calls. The pump does not run inside a synchronous esxDOS RST 8; the
+   Classic UART-ESP setup relies on its required CTS flow control there.
+   Readers drain the ring first via the wrappers below, so byte order is
+   preserved and every consumer (DIRECT overlay, esp_at line parser, MQTT
+   stream) is covered without changes. Lives in the reclaimed printer buffer
+   (see lowram_map.h) so it costs no BSS; indices are uint8_t, so 256 is the
+   ceiling. */
 #define SPECTRUM_UART_RING_SIZE NETCHESSZX_LOWRAM_UART_RING_SIZE
 #ifdef NETCHESSZX_FIXED_LOW_RAM
 static __at(NETCHESSZX_LOWRAM_UART_RING_ADDR) uint8_t uart_ring[SPECTRUM_UART_RING_SIZE];
@@ -77,6 +97,11 @@ void spectrum_uart_init(void)
 }
 
 #ifdef NETCHESSZX_NEXT
+void spectrum_uart_set_baud_230400(void)
+{
+    net_uart_set_baud_230400();
+}
+
 void spectrum_uart_hard_reset(void)
 {
     net_uart_hard_reset();
@@ -160,3 +185,4 @@ uint8_t spectrum_uart_read(void)
     }
     return net_uart_read();
 }
+#endif

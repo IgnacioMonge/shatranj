@@ -46,6 +46,7 @@ static void test_move_parser(void)
     char move[8];
     char spectrum_move[6];
     char notation[8];
+    char short_notation[2];
 
     check(netchess_proto_parse_move("MOVE 1 e2e4 3000",
                                     ply,
@@ -119,6 +120,39 @@ static void test_move_parser(void)
                                      notation,
                                      sizeof(notation)),
           "move rejects truncated Spectrum token");
+    check(!netchess_proto_parse_move("MOVE 8 e2e4 Nf3 extra",
+                                     ply,
+                                     sizeof(ply),
+                                     move,
+                                     sizeof(move),
+                                     notation,
+                                     sizeof(notation)),
+          "move rejects second notation token");
+    check(netchess_proto_parse_move("MOVE 9 e2e4 3000",
+                                    ply,
+                                    sizeof(ply),
+                                    move,
+                                    sizeof(move),
+                                    0,
+                                    0u),
+          "move accepts one legacy token without notation output");
+    check(!netchess_proto_parse_move("MOVE 10 e2e4 Nf3 extra",
+                                     ply,
+                                     sizeof(ply),
+                                     move,
+                                     sizeof(move),
+                                     0,
+                                     0u),
+          "move rejects second token without notation output");
+    check(netchess_proto_parse_move("MOVE 11 e2e4 Nf3",
+                                    ply,
+                                    sizeof(ply),
+                                    move,
+                                    sizeof(move),
+                                    short_notation,
+                                    sizeof(short_notation)),
+          "move accepts one notation larger than output");
+    check_text(short_notation, "N", "move truncates notation output");
 }
 
 static void test_chat_parser(void)
@@ -229,8 +263,49 @@ static void test_formatters(void)
     check(netchess_proto_format_bye(out, sizeof(out)), "format bye");
     check_text(out, "BYE", "bye format text");
 
+    check(netchess_proto_format_mach(out, sizeof(out), NETCHESS_PLAT_ZX),
+          "format mach zx");
+    check_text(out, "MACH ZX", "mach zx text");
+    check(netchess_proto_format_mach(out, sizeof(out), NETCHESS_PLAT_NXT),
+          "format mach nxt");
+    check_text(out, "MACH NXT", "mach nxt text");
+    check(netchess_proto_format_mach(out, sizeof(out), NETCHESS_PLAT_MAC),
+          "format mach mac");
+    check_text(out, "MACH MAC", "mach mac text");
+    check(netchess_proto_format_mach(out, sizeof(out), NETCHESS_PLAT_SPCX),
+          "format mach spcx");
+    check_text(out, "MACH SPCX", "mach spcx text");
+    check(!netchess_proto_format_mach(out, sizeof(out), NETCHESS_PLAT_UNKNOWN),
+          "format rejects unknown plat");
+
     check(!netchess_proto_format_move(out, 8u, "123", "e2e4", "e4"),
           "format detects overflow");
+}
+
+static void test_mach_parser(void)
+{
+    uint8_t plat = 0xffu;
+
+    check(netchess_proto_parse_mach("MACH ZX", &plat) &&
+              plat == NETCHESS_PLAT_ZX,
+          "parse mach zx");
+    check(netchess_proto_parse_mach("MACH NXT", &plat) &&
+              plat == NETCHESS_PLAT_NXT,
+          "parse mach nxt");
+    check(netchess_proto_parse_mach("MACH LNX", &plat) &&
+              plat == NETCHESS_PLAT_LNX,
+          "parse mach lnx");
+    check(netchess_proto_parse_mach("MACH PC", &plat) &&
+              plat == NETCHESS_PLAT_PC,
+          "parse mach pc");
+    check(netchess_proto_parse_mach("MACH SPCX", &plat) &&
+              plat == NETCHESS_PLAT_SPCX,
+          "parse mach spcx");
+    check(!netchess_proto_parse_mach("MACH SPC", &plat), "reject short spcx");
+    check(!netchess_proto_parse_mach("MACH ZZ", &plat), "reject bad code");
+    check(!netchess_proto_parse_mach("MACH ZX ", &plat), "reject trailing");
+    check(!netchess_proto_parse_mach("PLAT ZX", &plat), "reject non-mach");
+    check(!netchess_proto_parse_mach("MOVE e2e4", &plat), "reject move");
 }
 
 int main(void)
@@ -241,6 +316,7 @@ int main(void)
     test_ack_nack_parser();
     test_fixed_messages();
     test_formatters();
+    test_mach_parser();
 
     if (failures != 0) {
         printf("game protocol tests failed: %d\n", failures);

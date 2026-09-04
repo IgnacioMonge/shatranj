@@ -1,5 +1,7 @@
 #include "spectrum/board/san.h"
 
+#ifdef NETCHESSZX_HOST_TEST
+
 #include "common/chess/move_coords.h"
 #include "spectrum/board/board.h"
 
@@ -188,3 +190,5 @@ uint8_t spectrum_board_san_append_suffix(char *san) NETCHESSZX_FASTCALL
     *p = '\0';
     return state;
 }
+
+#endif

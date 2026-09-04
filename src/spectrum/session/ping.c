@@ -10,14 +10,8 @@ void netchesszx_host_session_observe_ping_reset(
 #endif
 
 #define MQTT_PING_MISSES_MAX 4u
-#ifdef NETCHESSZX_NEXT
-extern uint8_t net_uart_direct_idle_ticks;
-#define DIRECT_IDLE_PING_TICKS net_uart_direct_idle_ticks
-#else
-#define DIRECT_IDLE_PING_TICKS 75u
-#endif
-#define MQTT_IDLE_PING_TICKS \
-    ((uint8_t)(DIRECT_IDLE_PING_TICKS == 90u ? 144u : 120u))
+#define DIRECT_IDLE_PING_POLLS NETCHESSZX_SESSION_DIRECT_3S_POLLS
+#define MQTT_IDLE_PING_POLLS NETCHESSZX_SESSION_MQTT_4_8S_POLLS
 #define DIRECT_PING_WAIT_WINDOWS 3u
 #define DIRECT_PING_MISSES_MAX 2u
 
@@ -34,8 +28,8 @@ uint8_t netchesszx_session_ping_timeout(netchesszx_session_ping_t *ping,
                                         uint8_t can_send_direct_ping)
 {
     ++ping->idle_ticks;
-    if (ping->idle_ticks < (is_mqtt ? MQTT_IDLE_PING_TICKS :
-                                      DIRECT_IDLE_PING_TICKS)) {
+    if (ping->idle_ticks < (is_mqtt ? MQTT_IDLE_PING_POLLS :
+                                      DIRECT_IDLE_PING_POLLS)) {
         return NETCHESSZX_SESSION_PING_NONE;
     }
 

@@ -3,6 +3,8 @@
 #include "common/protocol/game_protocol.h"
 #include "common/protocol/mqtt_session_protocol.h"
 
+#include <string.h>
+
 #define MQTT_TX_NONE 0u
 #define MQTT_TX_ONLINE 1u
 #define MQTT_TX_HOST_RETAINED 2u
@@ -73,118 +75,6 @@ static const uint8_t mqtt_reason_reject[] = "REJECT";
 static const uint8_t mqtt_reason_sync[] = "SYNC";
 static const uint8_t mqtt_reply_rn[] = "RN";
 
-static uint8_t mqtt_slice_valid(const uint8_t *payload, uint8_t length)
-{
-    uint8_t i;
-
-    if (payload == 0 || length > SESSION_PAYLOAD_MAX || payload[length] != 0u) {
-        return 0u;
-    }
-    for (i = 0u; i < length; ++i) {
-        if (payload[i] == 0u) {
-            return 0u;
-        }
-    }
-    return 1u;
-}
-
-static uint8_t mqtt_fixed_slice_valid(const uint8_t *payload, uint8_t length)
-{
-    uint8_t i;
-
-    if (payload == 0) {
-        return 0u;
-    }
-    for (i = 0u; i < length; ++i) {
-        if (payload[i] == 0u) {
-            return 0u;
-        }
-    }
-    return 1u;
-}
-
-static uint8_t mqtt_text_equal(const uint8_t *payload,
-                               uint8_t length,
-                               const char *text)
-{
-    uint8_t i;
-
-    for (i = 0u; i < length; ++i) {
-        if (text[i] == '\0' || payload[i] != (uint8_t)text[i]) {
-            return 0u;
-        }
-    }
-    return (uint8_t)(text[length] == '\0');
-}
-
-static uint8_t mqtt_text_prefix(const uint8_t *payload,
-                                uint8_t length,
-                                const char *prefix)
-{
-    uint8_t i = 0u;
-
-    while (prefix[i] != '\0') {
-        if (i >= length || payload[i] != (uint8_t)prefix[i]) {
-            return 0u;
-        }
-        ++i;
-    }
-    return 1u;
-}
-
-static uint8_t mqtt_text_length(const char *text)
-{
-    uint8_t length = 0u;
-
-    while (length < SESSION_PAYLOAD_MAX && text[length] != '\0') {
-        ++length;
-    }
-    return length;
-}
-
-static char *mqtt_u16_text(char *out, uint16_t value)
-{
-    static const uint16_t places[5] = {10000u, 1000u, 100u, 10u, 1u};
-    uint16_t place;
-    uint8_t digit;
-    uint8_t i;
-    uint8_t started = 0u;
-
-    for (i = 0u; i < 5u; ++i) {
-        place = places[i];
-        digit = 0u;
-        while (value >= place) {
-            value = (uint16_t)(value - place);
-            ++digit;
-        }
-        if (digit != 0u || started != 0u || place == 1u) {
-            *out++ = (char)('0' + digit);
-            started = 1u;
-        }
-    }
-    *out = '\0';
-    return out;
-}
-
-static uint16_t mqtt_parse_u16(const char *text)
-{
-    uint16_t value = 0u;
-    uint8_t digit;
-
-    if (*text < '0' || *text > '9') {
-        return 0u;
-    }
-    while (*text >= '0' && *text <= '9') {
-        digit = (uint8_t)(*text - '0');
-        if (value > 6553u || (value == 6553u && digit > 5u)) {
-            return 0u;
-        }
-        value = (uint16_t)(value * 10u + digit);
-        ++text;
-    }
-    return *text == '\0' ? value : 0u;
-}
-
 static uint8_t mqtt_emit_timer_set(SessionState *state,
                                    SessionAction *actions,
                                    uint8_t *count,
@@ -202,104 +92,6 @@ static uint8_t mqtt_emit_timer_set(SessionState *state,
     if (timer_id == SESSION_TIMER_LIVENESS) {
         state->liveness_misses = 0u;
     }
-    return 1u;
-}
-
-static uint8_t mqtt_emit_timer_cancel(SessionState *state,
-                                      SessionAction *actions,
-                                      uint8_t *count,
-                                      uint8_t timer_id)
-{
-    uint8_t bit = (uint8_t)(1u << timer_id);
-
-    if ((state->timer_mask & bit) == 0u) {
-        return 1u;
-    }
-    if (*count >= SESSION_ACTION_CAPACITY) {
-        return 0u;
-    }
-    actions[*count].type = SESSION_ACT_TIMER_CANCEL;
-    actions[*count].data.timer_cancel.timer_id = timer_id;
-    ++*count;
-    state->timer_mask &= (uint8_t)~bit;
-    return 1u;
-}
-
-static uint8_t mqtt_emit_session(SessionAction *actions,
-                                 uint8_t *count,
-                                 uint8_t status)
-{
-    if (*count >= SESSION_ACTION_CAPACITY) {
-        return 0u;
-    }
-    actions[*count].type = SESSION_ACT_SESSION_CHANGED;
-    actions[*count].data.session.status = status;
-    ++*count;
-    return 1u;
-}
-
-static uint8_t mqtt_emit_side(SessionState *state,
-                              SessionAction *actions,
-                              uint8_t *count)
-{
-    if (*count >= SESSION_ACTION_CAPACITY) {
-        return 0u;
-    }
-    actions[*count].type = SESSION_ACT_SIDE_CHANGED;
-    actions[*count].data.side.color = state->local_color;
-    actions[*count].data.side.session_id = state->session_id;
-    ++*count;
-    return 1u;
-}
-
-static uint8_t mqtt_emit_close(SessionAction *actions,
-                               uint8_t *count,
-                               uint8_t link_id)
-{
-    if (*count >= SESSION_ACTION_CAPACITY) {
-        return 0u;
-    }
-    actions[*count].type = SESSION_ACT_LINK_CLOSE;
-    actions[*count].data.link_close.link_id = link_id;
-    ++*count;
-    return 1u;
-}
-
-static uint8_t mqtt_emit_game(SessionAction *actions,
-                              uint8_t *count,
-                              uint8_t kind,
-                              uint8_t delivery_id,
-                              uint16_t value,
-                              const uint8_t *payload,
-                              uint8_t length)
-{
-    if (*count >= SESSION_ACTION_CAPACITY) {
-        return 0u;
-    }
-    actions[*count].type = SESSION_ACT_DELIVER_GAME;
-    actions[*count].data.game.kind = kind;
-    actions[*count].data.game.delivery_id = delivery_id;
-    actions[*count].data.game.value = value;
-    actions[*count].data.game.payload = payload;
-    actions[*count].data.game.length = length;
-    ++*count;
-    return 1u;
-}
-
-static uint8_t mqtt_emit_decision(SessionAction *actions,
-                                  uint8_t *count,
-                                  uint8_t request_id,
-                                  uint8_t control,
-                                  uint16_t value)
-{
-    if (*count >= SESSION_ACTION_CAPACITY) {
-        return 0u;
-    }
-    actions[*count].type = SESSION_ACT_REQUEST_DECISION;
-    actions[*count].data.decision.request_id = request_id;
-    actions[*count].data.decision.control = control;
-    actions[*count].data.decision.value = value;
-    ++*count;
     return 1u;
 }
 
@@ -355,18 +147,12 @@ static uint8_t mqtt_send_text(SessionState *state,
                               SessionAction *actions,
                               uint8_t *count)
 {
-    uint8_t length = 0u;
-    uint8_t i;
+    uint8_t length = session_text_length(text);
 
-    while (length < SESSION_PAYLOAD_MAX && text[length] != '\0') {
-        ++length;
-    }
     if (length >= tx_capacity) {
         return 0u;
     }
-    for (i = 0u; i <= length; ++i) {
-        tx_scratch[i] = (uint8_t)text[i];
-    }
+    memcpy(tx_scratch, text, (size_t)length + 1u);
     return mqtt_send_buffer(state,
                             tx_scratch,
                             tx_capacity,
@@ -387,7 +173,7 @@ static uint8_t mqtt_prepare_reply(SessionState *state,
     if (*count + 2u + armed > SESSION_ACTION_CAPACITY) {
         return 0u;
     }
-    return mqtt_emit_timer_cancel(state,
+    return session_emit_timer_cancel(state,
                                   actions,
                                   count,
                                   SESSION_TIMER_LIVENESS);
@@ -480,7 +266,7 @@ static uint8_t mqtt_send_move(SessionState *state,
 {
     char ply[6];
 
-    mqtt_u16_text(ply, state->pending_value);
+    session_u16_text(ply, state->pending_value);
     if (!netchess_proto_format_move((char *)tx_scratch,
                                     tx_capacity,
                                     ply,
@@ -512,7 +298,7 @@ static uint8_t mqtt_send_value_text(SessionState *state,
     uint8_t i = 0u;
     uint8_t j = 0u;
 
-    mqtt_u16_text(value_text, value);
+    session_u16_text(value_text, value);
     while (prefix[i] != '\0') {
         if (i + 1u >= tx_capacity) {
             return 0u;
@@ -669,7 +455,7 @@ static uint8_t mqtt_send_move_reply(SessionState *state,
     if (!mqtt_prepare_reply(state, actions, count)) {
         return 0u;
     }
-    mqtt_u16_text(ply, value);
+    session_u16_text(ply, value);
     if (accepted != 0u) {
         formatted = netchess_proto_format_ack((char *)tx_scratch,
                                               tx_capacity,
@@ -713,7 +499,7 @@ static uint8_t mqtt_send_takeback_reply(SessionState *state,
                                   : (const char *)detail;
     uint8_t formatted;
 
-    mqtt_u16_text(ply, value);
+    session_u16_text(ply, value);
     if (accepted != 0u) {
         formatted = netchess_proto_format_ack((char *)tx_scratch,
                                               tx_capacity,
@@ -744,17 +530,23 @@ static uint8_t mqtt_finish(SessionState *state,
                            uint8_t close_link)
 {
     uint8_t timer_id;
+    uint8_t end_reason = SESSION_END_REASON_TRANSPORT_LOST;
+
+    if (state->pending_control == SESSION_REQUEST_BYE &&
+        state->pending_origin == MQTT_ORIGIN_LOCAL) {
+        end_reason = SESSION_END_REASON_LOCAL_BYE;
+    }
 
     for (timer_id = 0u; timer_id < SESSION_TIMER_COUNT; ++timer_id) {
-        if (!mqtt_emit_timer_cancel(state, actions, &count, timer_id)) {
+        if (!session_emit_timer_cancel(state, actions, &count, timer_id)) {
             return 0u;
         }
     }
     if (close_link != SESSION_LINK_NONE &&
-        !mqtt_emit_close(actions, &count, close_link)) {
+        !session_emit_close(actions, &count, close_link)) {
         return 0u;
     }
-    if (!mqtt_emit_session(actions, &count, SESSION_CHANGED_ENDED)) {
+    if (!session_emit_end(actions, &count, end_reason)) {
         return 0u;
     }
     session_reset(state);
@@ -768,11 +560,11 @@ static uint8_t mqtt_wait_for_peer(SessionState *state,
     uint8_t timer_id;
 
     for (timer_id = 0u; timer_id < SESSION_TIMER_COUNT; ++timer_id) {
-        if (!mqtt_emit_timer_cancel(state, actions, &count, timer_id)) {
+        if (!session_emit_timer_cancel(state, actions, &count, timer_id)) {
             return 0u;
         }
     }
-    if (!mqtt_emit_session(actions, &count, SESSION_CHANGED_ENDED)) {
+    if (!session_emit_end(actions, &count, SESSION_END_REASON_REMOTE_BYE)) {
         return 0u;
     }
     state->current_ply = 0u;
@@ -811,7 +603,7 @@ static uint8_t mqtt_send_offline_end(SessionState *state,
                                      SessionAction *actions,
                                      uint8_t *count)
 {
-    if (!mqtt_emit_timer_cancel(state,
+    if (!session_emit_timer_cancel(state,
                                 actions,
                                 count,
                                 SESSION_TIMER_LIVENESS)) {
@@ -872,6 +664,7 @@ static uint8_t mqtt_handle_host(SessionState *state,
     uint8_t count = 0u;
     uint8_t host_color;
     uint8_t local_color;
+    uint8_t restore_pending = 0u;
     uint16_t session_id;
 
     if (!netchess_mqtt_session_parse_host(
@@ -895,7 +688,7 @@ static uint8_t mqtt_handle_host(SessionState *state,
         }
         state->session_id = session_id;
         state->local_color = local_color;
-        return mqtt_emit_side(state, actions, &count) ? count : 0u;
+        return session_emit_side(state, actions, &count) ? count : 0u;
     }
     if ((event->data.rx.flags & SESSION_RX_LIVE) == 0u) {
         return 0u;
@@ -908,17 +701,37 @@ static uint8_t mqtt_handle_host(SessionState *state,
         if (state->phase != SESSION_PHASE_READY) {
             return 0u;
         }
+        restore_pending = (uint8_t)(
+            state->pending_control == SESSION_REQUEST_RESTORE);
+        state->timer_mask &= (uint8_t)~(uint8_t)(
+            (1u << SESSION_TIMER_CONTROL) |
+            (restore_pending ? (1u << SESSION_TIMER_LIVENESS) : 0u));
+        state->pending_control = 0u;
+        state->pending_origin = MQTT_ORIGIN_NONE;
+        state->pending_request_id = 0u;
+        state->pending_value = 0u;
+        state->control_retries = 0u;
+        state->restore_phase = MQTT_RESTORE_NONE;
+        state->restore_mask = 0u;
+        session_clear_duplicate(state);
+        if (restore_pending &&
+            !session_emit_game(actions, &count,
+                               SESSION_DELIVER_CONTROL_RESULT,
+                               SESSION_CONTROL_CANCELLED,
+                               SESSION_REQUEST_RESTORE, 0, 0u)) {
+            return 0u;
+        }
     }
     if (state->session_id != session_id ||
         state->local_color != local_color) {
         state->session_id = session_id;
         state->local_color = local_color;
-        if (!mqtt_emit_side(state, actions, &count)) {
+        if (!session_emit_side(state, actions, &count)) {
             return 0u;
         }
     }
-    if (state->peer_ready != 0u &&
-        !mqtt_emit_timer_cancel(state,
+    if (state->peer_ready != 0u && !restore_pending &&
+        !session_emit_timer_cancel(state,
                                 actions,
                                 &count,
                                 SESSION_TIMER_LIVENESS)) {
@@ -963,9 +776,9 @@ static uint8_t mqtt_handle_online(SessionState *state,
         (event->data.rx.flags & SESSION_RX_RETAINED) != 0u &&
         has_session_id != 0u && side == (char)local_side &&
         session_id == state->session_id && state->peer_ready == 0u) {
-        if (!mqtt_emit_session(actions, &count, SESSION_CHANGED_BUSY) ||
-            !mqtt_emit_close(actions, &count, state->active_link) ||
-            !mqtt_emit_session(actions, &count, SESSION_CHANGED_ENDED)) {
+        if (!session_emit_session(actions, &count, SESSION_CHANGED_BUSY) ||
+            !session_emit_close(actions, &count, state->active_link) ||
+            !session_emit_session(actions, &count, SESSION_CHANGED_ENDED)) {
             return 0u;
         }
         session_reset(state);
@@ -1039,7 +852,7 @@ static uint8_t mqtt_handle_join(SessionState *state,
         return 0u;
     }
     if ((state->peer_ready == 0u &&
-         !mqtt_emit_timer_cancel(state,
+         !session_emit_timer_cancel(state,
                                  actions,
                                  &count,
                                  SESSION_TIMER_CONTROL)) ||
@@ -1070,19 +883,29 @@ static uint8_t mqtt_handle_game_start(SessionState *state,
         (state->phase != SESSION_PHASE_READY &&
          state->phase != SESSION_PHASE_ACTIVE &&
          state->phase != SESSION_PHASE_OVER) ||
-        (state->phase == SESSION_PHASE_OVER &&
-         (state->pending_control != 0u ||
-          state->pending_request_id != 0u)) ||
         !netchess_proto_parse_game_start(
             (const char *)event->data.rx.payload, 0, 0u)) {
         return 0u;
     }
-    if (!mqtt_emit_timer_cancel(state,
+    if (state->pending_control != 0u || state->pending_request_id != 0u) {
+        return mqtt_send_text(state,
+                              "NACK GAME START BUSY",
+                              SESSION_ROUTE_CONTROL,
+                              0u,
+                              MQTT_TX_TRANSIENT_REPLY,
+                              tx_scratch,
+                              tx_capacity,
+                              actions,
+                              &count)
+                   ? count
+                   : 0u;
+    }
+    if (!session_emit_timer_cancel(state,
                                 actions,
                                 &count,
                                 SESSION_TIMER_LIVENESS) ||
         (state->phase != SESSION_PHASE_ACTIVE &&
-         !mqtt_emit_timer_cancel(state,
+         !session_emit_timer_cancel(state,
                                  actions,
                                  &count,
                                  SESSION_TIMER_CONTROL))) {
@@ -1122,11 +945,11 @@ static uint8_t mqtt_handle_start_reply(SessionState *state,
         (event->data.rx.flags & SESSION_RX_RETAINED) != 0u) {
         return 0u;
     }
-    accepted = mqtt_text_equal(payload,
+    accepted = session_text_equal(payload,
                                event->data.rx.length,
                                "ACK GAME START");
     if (accepted == 0u) {
-        if (!mqtt_text_prefix(payload,
+        if (!session_text_prefix(payload,
                               event->data.rx.length,
                               nack_prefix) ||
             (event->data.rx.length > 15u && payload[15] != ' ')) {
@@ -1150,7 +973,7 @@ static uint8_t mqtt_handle_start_reply(SessionState *state,
         }
         return count;
     }
-    if (!mqtt_emit_timer_cancel(state,
+    if (!session_emit_timer_cancel(state,
                                 actions,
                                 &count,
                                 SESSION_TIMER_CONTROL)) {
@@ -1161,10 +984,10 @@ static uint8_t mqtt_handle_start_reply(SessionState *state,
     if (accepted != 0u) {
         state->phase = SESSION_PHASE_ACTIVE;
         state->current_ply = 0u;
-        if (!mqtt_emit_session(actions, &count, SESSION_CHANGED_STARTED)) {
+        if (!session_emit_session(actions, &count, SESSION_CHANGED_STARTED)) {
             return 0u;
         }
-    } else if (!mqtt_emit_game(actions,
+    } else if (!session_emit_game(actions,
                                &count,
                                SESSION_DELIVER_CONTROL_RESULT,
                                SESSION_CONTROL_REJECTED,
@@ -1197,7 +1020,7 @@ static uint8_t mqtt_handle_chat(SessionState *state,
         !netchess_proto_parse_chat((const char *)event->data.rx.payload,
                                    text,
                                    sizeof(text)) ||
-        !mqtt_emit_game(actions,
+        !session_emit_game(actions,
                         &count,
                         SESSION_DELIVER_CHAT,
                         0u,
@@ -1430,7 +1253,7 @@ static uint8_t mqtt_begin_decision(SessionState *state,
         if (control == SESSION_REQUEST_DRAW &&
             state->pending_control == SESSION_REQUEST_DRAW &&
             state->pending_origin == MQTT_ORIGIN_LOCAL) {
-            if (!mqtt_emit_timer_cancel(state,
+            if (!session_emit_timer_cancel(state,
                                         actions,
                                         &count,
                                         SESSION_TIMER_CONTROL) ||
@@ -1455,7 +1278,7 @@ static uint8_t mqtt_begin_decision(SessionState *state,
         if (control == SESSION_REQUEST_RESET &&
             state->pending_control == SESSION_REQUEST_RESET &&
             state->phase == SESSION_PHASE_OVER) {
-            if (!mqtt_emit_timer_cancel(state,
+            if (!session_emit_timer_cancel(state,
                                         actions,
                                         &count,
                                         SESSION_TIMER_CONTROL) ||
@@ -1508,7 +1331,7 @@ static uint8_t mqtt_begin_decision(SessionState *state,
     state->pending_control = control;
     state->pending_origin = MQTT_ORIGIN_REMOTE;
     state->pending_value = value;
-    if (!mqtt_emit_decision(actions,
+    if (!session_emit_decision(actions,
                             &count,
                             state->delivery_id,
                             control,
@@ -1541,7 +1364,7 @@ static uint8_t mqtt_handle_resign(SessionState *state,
                 : MQTT_TX_TRANSIENT_REPLY;
 
         if (tx_kind == MQTT_TX_ACK_RESIGN_CROSSED &&
-            !mqtt_emit_timer_cancel(state,
+            !session_emit_timer_cancel(state,
                                     actions,
                                     &count,
                                     SESSION_TIMER_CONTROL)) {
@@ -1566,11 +1389,11 @@ static uint8_t mqtt_handle_resign(SessionState *state,
                    : 0u;
     }
     if (state->phase != SESSION_PHASE_ACTIVE ||
-        !mqtt_emit_timer_cancel(state,
+        !session_emit_timer_cancel(state,
                                 actions,
                                 &count,
                                 SESSION_TIMER_CONTROL) ||
-        !mqtt_emit_timer_cancel(state,
+        !session_emit_timer_cancel(state,
                                 actions,
                                 &count,
                                 SESSION_TIMER_LIVENESS)) {
@@ -1614,11 +1437,11 @@ static uint8_t mqtt_handle_control_reply(SessionState *state,
         (event->data.rx.flags & SESSION_RX_RETAINED) != 0u) {
         return 0u;
     }
-    if (mqtt_text_equal(payload, event->data.rx.length, "ACK RESET") &&
+    if (session_text_equal(payload, event->data.rx.length, "ACK RESET") &&
         state->pending_control == SESSION_REQUEST_RESET &&
         state->pending_origin == MQTT_ORIGIN_LOCAL &&
         state->pending_request_id == 0u) {
-        if (!mqtt_emit_timer_cancel(state,
+        if (!session_emit_timer_cancel(state,
                                     actions,
                                     &count,
                                     SESSION_TIMER_CONTROL)) {
@@ -1630,14 +1453,14 @@ static uint8_t mqtt_handle_control_reply(SessionState *state,
         state->phase = SESSION_PHASE_ACTIVE;
         state->current_ply = 0u;
         session_clear_duplicate(state);
-        if (!mqtt_emit_game(actions,
+        if (!session_emit_game(actions,
                             &count,
                             SESSION_DELIVER_CONTROL_RESULT,
                             SESSION_CONTROL_ACCEPTED,
                             SESSION_REQUEST_RESET,
                             0,
                             0u) ||
-            !mqtt_emit_session(actions, &count, SESSION_CHANGED_STARTED) ||
+            !session_emit_session(actions, &count, SESSION_CHANGED_STARTED) ||
             !mqtt_emit_timer_set(state,
                                  actions,
                                  &count,
@@ -1647,11 +1470,11 @@ static uint8_t mqtt_handle_control_reply(SessionState *state,
         }
         return count;
     }
-    if (mqtt_text_equal(payload, event->data.rx.length, "ACK DRAW") &&
+    if (session_text_equal(payload, event->data.rx.length, "ACK DRAW") &&
         state->pending_control == SESSION_REQUEST_DRAW &&
         state->pending_origin == MQTT_ORIGIN_LOCAL &&
         state->pending_request_id == 0u) {
-        if (!mqtt_emit_timer_cancel(state,
+        if (!session_emit_timer_cancel(state,
                                     actions,
                                     &count,
                                     SESSION_TIMER_CONTROL)) {
@@ -1662,7 +1485,7 @@ static uint8_t mqtt_handle_control_reply(SessionState *state,
         state->pending_origin = MQTT_ORIGIN_LOCAL;
         state->pending_value = 0u;
         state->control_retries = 0u;
-        if (!mqtt_emit_game(actions,
+        if (!session_emit_game(actions,
                             &count,
                             SESSION_DELIVER_CONTROL_RESULT,
                             SESSION_CONTROL_ACCEPTED,
@@ -1679,11 +1502,11 @@ static uint8_t mqtt_handle_control_reply(SessionState *state,
         }
         return count;
     }
-    if (mqtt_text_equal(payload, event->data.rx.length, "ACK RESIGN") &&
+    if (session_text_equal(payload, event->data.rx.length, "ACK RESIGN") &&
         state->pending_control == SESSION_REQUEST_RESIGN &&
         state->pending_origin == MQTT_ORIGIN_LOCAL &&
         state->pending_request_id == 0u) {
-        if (!mqtt_emit_timer_cancel(state,
+        if (!session_emit_timer_cancel(state,
                                     actions,
                                     &count,
                                     SESSION_TIMER_CONTROL)) {
@@ -1693,7 +1516,7 @@ static uint8_t mqtt_handle_control_reply(SessionState *state,
         state->pending_origin = MQTT_ORIGIN_LOCAL;
         state->pending_value = 0u;
         state->control_retries = 0u;
-        if (!mqtt_emit_game(actions,
+        if (!session_emit_game(actions,
                             &count,
                             SESSION_DELIVER_CONTROL_RESULT,
                             SESSION_CONTROL_ACCEPTED,
@@ -1710,11 +1533,11 @@ static uint8_t mqtt_handle_control_reply(SessionState *state,
         }
         return count;
     }
-    control = mqtt_text_prefix(payload,
+    control = session_text_prefix(payload,
                                event->data.rx.length,
                                "NACK RESET")
                   ? SESSION_REQUEST_RESET
-                  : mqtt_text_prefix(payload,
+                  : session_text_prefix(payload,
                                      event->data.rx.length,
                                      "NACK DRAW")
                         ? SESSION_REQUEST_DRAW
@@ -1724,7 +1547,7 @@ static uint8_t mqtt_handle_control_reply(SessionState *state,
         state->pending_request_id != 0u) {
         return 0u;
     }
-    if (!mqtt_emit_timer_cancel(state,
+    if (!session_emit_timer_cancel(state,
                                 actions,
                                 &count,
                                 SESSION_TIMER_CONTROL)) {
@@ -1738,7 +1561,7 @@ static uint8_t mqtt_handle_control_reply(SessionState *state,
         state->pending_control = 0u;
         state->pending_origin = MQTT_ORIGIN_NONE;
         state->pending_value = 0u;
-        return mqtt_emit_game(actions,
+        return session_emit_game(actions,
                               &count,
                               SESSION_DELIVER_CONTROL_RESULT,
                               result,
@@ -1777,7 +1600,7 @@ static uint8_t mqtt_handle_user_decision(SessionState *state,
     accepted = (uint8_t)(event->data.user.decision ==
                          SESSION_DECISION_ACCEPT);
     if (control == SESSION_REQUEST_TAKEBACK && accepted != 0u) {
-        if (!mqtt_emit_game(actions,
+        if (!session_emit_game(actions,
                             &count,
                             SESSION_DELIVER_TAKEBACK,
                             state->pending_request_id,
@@ -1862,12 +1685,16 @@ static uint8_t mqtt_handle_move(SessionState *state,
                                    0u)) {
         return 0u;
     }
-    ply = mqtt_parse_u16(ply_text);
+    ply = session_parse_u16(ply_text);
     if (ply == 0u) {
         return 0u;
     }
+    move_length = session_text_length(move);
     if (state->last_rx_kind == SESSION_REQUEST_MOVE &&
-        state->last_value == ply) {
+        state->last_value == ply &&
+        (state->last_result == SESSION_GAME_ACCEPTED ||
+         (session_text_length(workspace->last_move) == move_length &&
+          memcmp(workspace->last_move, move, move_length) == 0))) {
         return mqtt_send_move_reply(
                    state,
                    ply,
@@ -1896,24 +1723,31 @@ static uint8_t mqtt_handle_move(SessionState *state,
                    ? count
                    : 0u;
     }
-    if (state->pending_request_id != 0u ||
-        state->phase != SESSION_PHASE_ACTIVE) {
+    if (state->pending_request_id != 0u) {
+        static const uint8_t busy[] = "BUSY";
+
+        return mqtt_send_move_reply(state, ply, busy, 4u, 0u, tx_scratch,
+                                    tx_capacity, actions, &count)
+                   ? count
+                   : 0u;
+    }
+    if (state->phase != SESSION_PHASE_ACTIVE) {
         return 0u;
     }
     if (state->pending_control == SESSION_REQUEST_MOVE &&
         state->pending_origin == MQTT_ORIGIN_LOCAL &&
         ply == (uint16_t)(state->pending_value + 1u)) {
-        if (!mqtt_emit_timer_cancel(state,
+        if (!session_emit_timer_cancel(state,
                                     actions,
                                     &count,
                                     SESSION_TIMER_CONTROL) ||
-            !mqtt_emit_game(actions,
+            !session_emit_game(actions,
                             &count,
                             SESSION_DELIVER_LOCAL_MOVE,
                             0u,
                             state->pending_value,
                             (const uint8_t *)workspace->move,
-                            mqtt_text_length(workspace->move))) {
+                            session_text_length(workspace->move))) {
             return 0u;
         }
         state->current_ply = state->pending_value;
@@ -1953,17 +1787,17 @@ static uint8_t mqtt_handle_move(SessionState *state,
         ++move_ptr;
     }
     ++move_ptr;
-    move_length = mqtt_text_length(move);
     state->pending_request_id = session_next_delivery_id(state);
     state->pending_control = SESSION_REQUEST_MOVE;
     state->pending_origin = MQTT_ORIGIN_REMOTE;
     state->pending_value = ply;
     state->control_retries = 0u;
-    if (!mqtt_emit_timer_cancel(state,
+    memcpy(workspace->last_move, move, (size_t)move_length + 1u);
+    if (!session_emit_timer_cancel(state,
                                 actions,
                                 &count,
                                 SESSION_TIMER_LIVENESS) ||
-        !mqtt_emit_game(actions,
+        !session_emit_game(actions,
                         &count,
                         SESSION_DELIVER_REMOTE_MOVE,
                         state->delivery_id,
@@ -2011,13 +1845,13 @@ static uint8_t mqtt_handle_numeric_reply(SessionState *state,
                                    sizeof(detail))) {
         return 0u;
     }
-    value = mqtt_parse_u16(value_text);
+    value = session_parse_u16(value_text);
     if (value == 0u || state->pending_origin != MQTT_ORIGIN_LOCAL ||
         state->pending_request_id != 0u || value != state->pending_value) {
         return 0u;
     }
     if (state->pending_control == SESSION_REQUEST_TAKEBACK) {
-        if (!mqtt_emit_timer_cancel(state,
+        if (!session_emit_timer_cancel(state,
                                     actions,
                                     &count,
                                     SESSION_TIMER_CONTROL)) {
@@ -2025,7 +1859,7 @@ static uint8_t mqtt_handle_numeric_reply(SessionState *state,
         }
         if (accepted != 0u) {
             state->pending_request_id = session_next_delivery_id(state);
-            if (!mqtt_emit_game(actions,
+            if (!session_emit_game(actions,
                                 &count,
                                 SESSION_DELIVER_TAKEBACK,
                                 state->delivery_id,
@@ -2048,7 +1882,7 @@ static uint8_t mqtt_handle_numeric_reply(SessionState *state,
         }
         state->pending_control = 0u;
         state->pending_origin = MQTT_ORIGIN_NONE;
-        if (!mqtt_emit_game(actions,
+        if (!session_emit_game(actions,
                             &count,
                             SESSION_DELIVER_CONTROL_RESULT,
                             SESSION_CONTROL_REJECTED,
@@ -2067,8 +1901,8 @@ static uint8_t mqtt_handle_numeric_reply(SessionState *state,
     if (state->pending_control != SESSION_REQUEST_MOVE) {
         return 0u;
     }
-    if (accepted == 0u && mqtt_text_equal((const uint8_t *)detail,
-                                          mqtt_text_length(detail),
+    if (accepted == 0u && session_text_equal((const uint8_t *)detail,
+                                          session_text_length(detail),
                                           "BUSY")) {
         return mqtt_emit_timer_set(state,
                                    actions,
@@ -2078,7 +1912,7 @@ static uint8_t mqtt_handle_numeric_reply(SessionState *state,
                    ? count
                    : 0u;
     }
-    if (!mqtt_emit_timer_cancel(state,
+    if (!session_emit_timer_cancel(state,
                                 actions,
                                 &count,
                                 SESSION_TIMER_CONTROL)) {
@@ -2100,14 +1934,14 @@ static uint8_t mqtt_handle_numeric_reply(SessionState *state,
         }
         detail_length = (uint8_t)((event->data.rx.payload +
                                    event->data.rx.length) - detail_ptr);
-        if (!mqtt_emit_game(actions,
+        if (!session_emit_game(actions,
                             &count,
                             SESSION_DELIVER_LOCAL_MOVE,
                             0u,
                             value,
                             (const uint8_t *)workspace->move,
-                            mqtt_text_length(workspace->move)) ||
-            !mqtt_emit_game(actions,
+                            session_text_length(workspace->move)) ||
+            !session_emit_game(actions,
                             &count,
                             SESSION_DELIVER_CONTROL_RESULT,
                             SESSION_CONTROL_ACCEPTED,
@@ -2116,7 +1950,7 @@ static uint8_t mqtt_handle_numeric_reply(SessionState *state,
                             detail_length)) {
             return 0u;
         }
-    } else if (!mqtt_emit_game(actions,
+    } else if (!session_emit_game(actions,
                                &count,
                                SESSION_DELIVER_CONTROL_RESULT,
                                SESSION_CONTROL_REJECTED,
@@ -2148,9 +1982,9 @@ static uint8_t mqtt_handle_ping(SessionState *state,
         (event->data.rx.flags & SESSION_RX_RETAINED) != 0u) {
         return 0u;
     }
-    if (mqtt_text_equal(payload, event->data.rx.length, "ACK PING")) {
+    if (session_text_equal(payload, event->data.rx.length, "ACK PING")) {
         if (state->liveness_misses == 0u ||
-            !mqtt_emit_timer_cancel(state,
+            !session_emit_timer_cancel(state,
                                     actions,
                                     &count,
                                     SESSION_TIMER_LIVENESS) ||
@@ -2163,11 +1997,11 @@ static uint8_t mqtt_handle_ping(SessionState *state,
         }
         return count;
     }
-    if (!mqtt_text_equal(payload, event->data.rx.length, "PING")) {
+    if (!session_text_equal(payload, event->data.rx.length, "PING")) {
         return 0u;
     }
     state->liveness_misses = 0u;
-    if (!mqtt_emit_timer_cancel(state,
+    if (!session_emit_timer_cancel(state,
                                 actions,
                                 &count,
                                 SESSION_TIMER_LIVENESS) ||
@@ -2199,13 +2033,7 @@ static uint8_t mqtt_handle_restore_request(SessionState *state,
         (event->data.rx.flags & SESSION_RX_RETAINED) != 0u) {
         return 0u;
     }
-    if (mqtt_text_equal(payload, length, "RQ")) {
-        if (state->config.role == SESSION_ROLE_HOST) {
-            return mqtt_send_text(state, "RN", SESSION_ROUTE_GAME, 0u,
-                                  MQTT_TX_TRANSIENT_REPLY, tx_scratch,
-                                  tx_capacity, actions, &count)
-                       ? count : 0u;
-        }
+    if (session_text_equal(payload, length, "RQ")) {
         if (!state->peer_ready || state->phase < SESSION_PHASE_READY ||
             state->phase > SESSION_PHASE_OVER) {
             return 0u;
@@ -2247,12 +2075,12 @@ static uint8_t mqtt_handle_restore_reply(SessionState *state,
     uint8_t length = event->data.rx.length;
     uint8_t count = 0u;
 
-    if (mqtt_text_equal(payload, length, "RY") &&
+    if (session_text_equal(payload, length, "RY") &&
         state->restore_phase == MQTT_RESTORE_WAIT_RY &&
         state->pending_control == SESSION_REQUEST_RESTORE &&
         state->pending_origin == MQTT_ORIGIN_LOCAL &&
         state->pending_request_id == 0u) {
-        if (!mqtt_emit_timer_cancel(state, actions, &count,
+        if (!session_emit_timer_cancel(state, actions, &count,
                                     SESSION_TIMER_CONTROL)) {
             return 0u;
         }
@@ -2262,14 +2090,14 @@ static uint8_t mqtt_handle_restore_reply(SessionState *state,
                                        tx_capacity, actions, &count)
                    ? count : 0u;
     }
-    if (mqtt_text_equal(payload, length, "RN") &&
+    if (session_text_equal(payload, length, "RN") &&
         state->pending_control == SESSION_REQUEST_RESTORE &&
         ((state->pending_origin == MQTT_ORIGIN_REMOTE &&
           (state->pending_request_id != 0u ||
            state->restore_phase == MQTT_RESTORE_RECEIVE)) ||
          (state->pending_origin == MQTT_ORIGIN_LOCAL &&
           state->pending_request_id == 0u))) {
-        if (!mqtt_emit_timer_cancel(state, actions, &count,
+        if (!session_emit_timer_cancel(state, actions, &count,
                                     SESSION_TIMER_CONTROL)) {
             return 0u;
         }
@@ -2280,7 +2108,7 @@ static uint8_t mqtt_handle_restore_reply(SessionState *state,
         state->restore_phase = MQTT_RESTORE_NONE;
         state->restore_mask = 0u;
         session_clear_duplicate(state);
-        if (!mqtt_emit_game(actions, &count,
+        if (!session_emit_game(actions, &count,
                             SESSION_DELIVER_CONTROL_RESULT,
                             SESSION_CONTROL_REJECTED,
                             SESSION_REQUEST_RESTORE, payload, length) ||
@@ -2291,16 +2119,16 @@ static uint8_t mqtt_handle_restore_reply(SessionState *state,
         }
         return count;
     }
-    if (mqtt_text_equal(payload, length, "RA") &&
+    if (session_text_equal(payload, length, "RA") &&
         state->restore_phase == MQTT_RESTORE_WAIT_RA &&
         state->pending_control == SESSION_REQUEST_RESTORE &&
         state->pending_origin == MQTT_ORIGIN_LOCAL &&
         state->pending_request_id == 0u) {
-        mqtt_emit_timer_cancel(state, actions, &count, SESSION_TIMER_CONTROL);
+        session_emit_timer_cancel(state, actions, &count, SESSION_TIMER_CONTROL);
         state->phase =
             (uint8_t)(state->restore_mask >> MQTT_RESTORE_PHASE_SHIFT);
         state->current_ply = state->pending_value;
-        mqtt_emit_game(actions, &count, SESSION_DELIVER_RESTORE, 0u,
+        session_emit_game(actions, &count, SESSION_DELIVER_RESTORE, 0u,
                        state->current_ply, workspace->restore,
                        SESSION_RESTORE_BYTES);
         state->pending_control = 0u;
@@ -2328,8 +2156,8 @@ static uint8_t mqtt_handle_restore_chunk(SessionState *state,
     uint8_t count = 0u;
 
     if (length == 35u &&
-        (mqtt_text_prefix(payload, length, "RS00 ") ||
-         mqtt_text_prefix(payload, length, "RS01 ")) &&
+        (session_text_prefix(payload, length, "RS00 ") ||
+         session_text_prefix(payload, length, "RS01 ")) &&
         state->restore_phase == MQTT_RESTORE_APPLIED) {
         uint8_t chunk = (uint8_t)(payload[3] - '0');
 
@@ -2348,8 +2176,8 @@ static uint8_t mqtt_handle_restore_chunk(SessionState *state,
                    ? count : 0u;
     }
     if (length == 35u &&
-        (mqtt_text_prefix(payload, length, "RS00 ") ||
-         mqtt_text_prefix(payload, length, "RS01 ")) &&
+        (session_text_prefix(payload, length, "RS00 ") ||
+         session_text_prefix(payload, length, "RS01 ")) &&
         state->restore_phase == MQTT_RESTORE_RECEIVE) {
         uint8_t chunk = (uint8_t)(payload[3] - '0');
 
@@ -2369,7 +2197,7 @@ static uint8_t mqtt_handle_restore_chunk(SessionState *state,
                 MQTT_RESTORE_CHUNK_MASK &&
             state->pending_request_id == 0u) {
             state->pending_request_id = session_next_delivery_id(state);
-            if (!mqtt_emit_game(actions, &count, SESSION_DELIVER_RESTORE,
+            if (!session_emit_game(actions, &count, SESSION_DELIVER_RESTORE,
                                 state->delivery_id, 0u, workspace->restore,
                                 SESSION_RESTORE_BYTES)) {
                 return 0u;
@@ -2380,8 +2208,8 @@ static uint8_t mqtt_handle_restore_chunk(SessionState *state,
         return count;
     }
     if (length == 35u &&
-        (mqtt_text_prefix(payload, length, "RS00 ") ||
-         mqtt_text_prefix(payload, length, "RS01 "))) {
+        (session_text_prefix(payload, length, "RS00 ") ||
+         session_text_prefix(payload, length, "RS01 "))) {
         return mqtt_send_text(state, "RN", SESSION_ROUTE_GAME, 0u,
                               MQTT_TX_TRANSIENT_REPLY, tx_scratch,
                               tx_capacity, actions, &count)
@@ -2429,16 +2257,16 @@ static uint8_t mqtt_handle_rx(SessionState *state,
 
     if (state->link_up == 0u ||
         event->data.rx.link_id != state->active_link ||
-        !mqtt_slice_valid(payload, event->data.rx.length)) {
+        !session_slice_valid(payload, event->data.rx.length)) {
         return 0u;
     }
     if (state->peer_ready != 0u &&
         (event->data.rx.flags & SESSION_RX_LIVE) != 0u &&
         (event->data.rx.flags & SESSION_RX_RETAINED) == 0u &&
-        mqtt_text_equal(payload, event->data.rx.length, "BYE")) {
+        session_text_equal(payload, event->data.rx.length, "BYE")) {
         if (state->config.role == SESSION_ROLE_HOST) {
             for (timer_id = 0u; timer_id < SESSION_TIMER_COUNT; ++timer_id) {
-                if (!mqtt_emit_timer_cancel(state,
+                if (!session_emit_timer_cancel(state,
                                             actions,
                                             &count,
                                             timer_id)) {
@@ -2460,8 +2288,20 @@ static uint8_t mqtt_handle_rx(SessionState *state,
         }
         return mqtt_wait_for_peer(state, actions, 0u);
     }
+    if (state->peer_ready != 0u &&
+        event->data.rx.route == SESSION_ROUTE_GAME &&
+        (event->data.rx.flags & SESSION_RX_LIVE) != 0u &&
+        (event->data.rx.flags & SESSION_RX_RETAINED) == 0u) {
+        uint8_t platform;
+
+        if (session_parse_mach(payload, event->data.rx.length, &platform)) {
+            return session_emit_game(actions, &count,
+                                     SESSION_DELIVER_PLATFORM, 0u, platform,
+                                     0, 0u) ? count : 0u;
+        }
+    }
     if (state->pending_tx_kind != MQTT_TX_NONE) {
-        if (mqtt_text_prefix(payload, event->data.rx.length, "CHAT ")) {
+        if (session_text_prefix(payload, event->data.rx.length, "CHAT ")) {
             return mqtt_handle_chat(state, event, actions, 0u);
         }
         return 0u;
@@ -2499,36 +2339,36 @@ static uint8_t mqtt_handle_rx(SessionState *state,
                                       tx_capacity,
                                       actions);
     }
-    if (mqtt_text_equal(payload,
+    if (session_text_equal(payload,
                         event->data.rx.length,
                         "ACK GAME START") ||
-        mqtt_text_prefix(payload,
+        session_text_prefix(payload,
                          event->data.rx.length,
                          "NACK GAME START")) {
         return mqtt_handle_start_reply(state, event, actions);
     }
-    if (mqtt_text_prefix(payload, event->data.rx.length, "CHAT ")) {
+    if (session_text_prefix(payload, event->data.rx.length, "CHAT ")) {
         return mqtt_handle_chat(state, event, actions, 1u);
     }
-    if (mqtt_text_equal(payload, event->data.rx.length, "RQ") ||
-        mqtt_text_equal(payload, event->data.rx.length, "RY") ||
-        mqtt_text_equal(payload, event->data.rx.length, "RN") ||
-        mqtt_text_equal(payload, event->data.rx.length, "RA") ||
+    if (session_text_equal(payload, event->data.rx.length, "RQ") ||
+        session_text_equal(payload, event->data.rx.length, "RY") ||
+        session_text_equal(payload, event->data.rx.length, "RN") ||
+        session_text_equal(payload, event->data.rx.length, "RA") ||
         (event->data.rx.length == 35u &&
-         (mqtt_text_prefix(payload, event->data.rx.length, "RS00 ") ||
-          mqtt_text_prefix(payload, event->data.rx.length, "RS01 ")))) {
+         (session_text_prefix(payload, event->data.rx.length, "RS00 ") ||
+          session_text_prefix(payload, event->data.rx.length, "RS01 ")))) {
         return mqtt_handle_restore(state, event, workspace, tx_scratch,
                                    tx_capacity, actions);
     }
-    if (mqtt_text_equal(payload, event->data.rx.length, "PING") ||
-        mqtt_text_equal(payload, event->data.rx.length, "ACK PING")) {
+    if (session_text_equal(payload, event->data.rx.length, "PING") ||
+        session_text_equal(payload, event->data.rx.length, "ACK PING")) {
         return mqtt_handle_ping(state,
                                 event,
                                 tx_scratch,
                                 tx_capacity,
                                 actions);
     }
-    if (mqtt_text_prefix(payload, event->data.rx.length, "MOVE ")) {
+    if (session_text_prefix(payload, event->data.rx.length, "MOVE ")) {
         if (event->data.rx.route != SESSION_ROUTE_GAME) {
             return 0u;
         }
@@ -2541,9 +2381,9 @@ static uint8_t mqtt_handle_rx(SessionState *state,
     }
     if ((event->data.rx.flags & SESSION_RX_LIVE) != 0u &&
         (event->data.rx.flags & SESSION_RX_RETAINED) == 0u) {
-        if (mqtt_text_equal(payload, event->data.rx.length,
+        if (session_text_equal(payload, event->data.rx.length,
                             NETCHESS_PROTO_CANCEL_RESET) ||
-            mqtt_text_equal(payload, event->data.rx.length,
+            session_text_equal(payload, event->data.rx.length,
                             NETCHESS_PROTO_CANCEL_DRAW)) {
             uint8_t control = payload[7] == 'R' ? SESSION_REQUEST_RESET
                                                 : SESSION_REQUEST_DRAW;
@@ -2565,7 +2405,7 @@ static uint8_t mqtt_handle_rx(SessionState *state,
                        0, 0u, tx_scratch, tx_capacity, actions, &count)
                        ? count : 0u;
         }
-        if (mqtt_text_equal(payload, event->data.rx.length, "RESET")) {
+        if (session_text_equal(payload, event->data.rx.length, "RESET")) {
             return mqtt_begin_decision(state,
                                        SESSION_REQUEST_RESET,
                                        0u,
@@ -2573,7 +2413,7 @@ static uint8_t mqtt_handle_rx(SessionState *state,
                                        tx_capacity,
                                        actions);
         }
-        if (mqtt_text_equal(payload, event->data.rx.length, "DRAW")) {
+        if (session_text_equal(payload, event->data.rx.length, "DRAW")) {
             return mqtt_begin_decision(state,
                                        SESSION_REQUEST_DRAW,
                                        0u,
@@ -2581,7 +2421,7 @@ static uint8_t mqtt_handle_rx(SessionState *state,
                                        tx_capacity,
                                        actions);
         }
-        if (mqtt_text_equal(payload, event->data.rx.length, "RESIGN")) {
+        if (session_text_equal(payload, event->data.rx.length, "RESIGN")) {
             return mqtt_handle_resign(state,
                                       tx_scratch,
                                       tx_capacity,
@@ -2590,7 +2430,7 @@ static uint8_t mqtt_handle_rx(SessionState *state,
         takeback = netchess_after_prefix((const char *)payload,
                                          "TAKEBACK ");
         if (takeback != 0) {
-            value = mqtt_parse_u16(takeback);
+            value = session_parse_u16(takeback);
             if (value != 0u) {
                 return mqtt_begin_decision(state,
                                            SESSION_REQUEST_TAKEBACK,
@@ -2602,19 +2442,19 @@ static uint8_t mqtt_handle_rx(SessionState *state,
             return 0u;
         }
     }
-    if (mqtt_text_equal(payload, event->data.rx.length, "ACK RESET") ||
-        mqtt_text_equal(payload, event->data.rx.length, "ACK DRAW") ||
-        mqtt_text_equal(payload, event->data.rx.length, "ACK RESIGN") ||
-        mqtt_text_prefix(payload, event->data.rx.length, "NACK RESET") ||
-        mqtt_text_prefix(payload, event->data.rx.length, "NACK DRAW")) {
+    if (session_text_equal(payload, event->data.rx.length, "ACK RESET") ||
+        session_text_equal(payload, event->data.rx.length, "ACK DRAW") ||
+        session_text_equal(payload, event->data.rx.length, "ACK RESIGN") ||
+        session_text_prefix(payload, event->data.rx.length, "NACK RESET") ||
+        session_text_prefix(payload, event->data.rx.length, "NACK DRAW")) {
         return mqtt_handle_control_reply(state,
                                          event,
                                          tx_scratch,
                                          tx_capacity,
                                          actions);
     }
-    if (mqtt_text_prefix(payload, event->data.rx.length, "ACK ") ||
-        mqtt_text_prefix(payload, event->data.rx.length, "NACK ")) {
+    if (session_text_prefix(payload, event->data.rx.length, "ACK ") ||
+        session_text_prefix(payload, event->data.rx.length, "NACK ")) {
         return mqtt_handle_numeric_reply(state, event, workspace, actions);
     }
     return 0u;
@@ -2628,7 +2468,6 @@ static uint8_t mqtt_handle_local(SessionState *state,
                                  SessionAction *actions)
 {
     uint8_t count = 0u;
-    uint8_t i;
     uint8_t timer_id;
 
     if (event->data.local.request == SESSION_REQUEST_RESTORE &&
@@ -2637,7 +2476,7 @@ static uint8_t mqtt_handle_local(SessionState *state,
             state->pending_origin != MQTT_ORIGIN_LOCAL ||
             state->pending_tx_kind != MQTT_TX_NONE ||
             state->restore_phase != MQTT_RESTORE_WAIT_RY ||
-            !mqtt_emit_timer_cancel(state, actions, &count,
+            !session_emit_timer_cancel(state, actions, &count,
                                     SESSION_TIMER_CONTROL)) {
             return 0u;
         }
@@ -2653,7 +2492,7 @@ static uint8_t mqtt_handle_local(SessionState *state,
             return 0u;
         }
         for (timer_id = 0u; timer_id < SESSION_TIMER_COUNT; ++timer_id) {
-            if (!mqtt_emit_timer_cancel(state,
+            if (!session_emit_timer_cancel(state,
                                         actions,
                                         &count,
                                         timer_id)) {
@@ -2681,7 +2520,7 @@ static uint8_t mqtt_handle_local(SessionState *state,
         state->pending_origin == MQTT_ORIGIN_LOCAL &&
         state->pending_request_id == 0u &&
         state->pending_tx_kind == MQTT_TX_NONE) {
-        if (!mqtt_emit_timer_cancel(state, actions, &count,
+        if (!session_emit_timer_cancel(state, actions, &count,
                                     SESSION_TIMER_CONTROL)) {
             return 0u;
         }
@@ -2696,26 +2535,28 @@ static uint8_t mqtt_handle_local(SessionState *state,
          event->data.local.request != SESSION_REQUEST_CHAT)) {
         return 0u;
     }
-    if (event->data.local.request == SESSION_REQUEST_CHAT) {
+    switch (event->data.local.request) {
+    case SESSION_REQUEST_CHAT:
         if (state->pending_control == SESSION_REQUEST_MOVE ||
             state->pending_control == SESSION_REQUEST_RESTORE ||
             event->data.local.length > SESSION_CHAT_TEXT_MAX ||
-            !mqtt_slice_valid(event->data.local.payload,
+            !session_slice_valid(event->data.local.payload,
                               event->data.local.length) ||
             !netchess_proto_format_chat(
                 (char *)tx_scratch,
                 tx_capacity,
                 (const char *)event->data.local.payload) ||
-            !mqtt_emit_timer_cancel(state,
+            !session_emit_timer_cancel(state,
                                     actions,
                                     &count,
                                     SESSION_TIMER_LIVENESS)) {
             return 0u;
         }
-        session_drop_restore_cache(state);
-        for (i = 0u; i <= event->data.local.length; ++i) {
-            workspace->chat[i] = (char)event->data.local.payload[i];
+        if (state->restore_phase != MQTT_RESTORE_APPLIED) {
+            session_drop_restore_cache(state);
         }
+        memcpy(workspace->chat, event->data.local.payload,
+               (size_t)event->data.local.length + 1u);
         return mqtt_send_buffer(state,
                                 tx_scratch,
                                 tx_capacity,
@@ -2726,26 +2567,26 @@ static uint8_t mqtt_handle_local(SessionState *state,
                                 MQTT_TX_CHAT)
                    ? count
                    : 0u;
-    }
-    if (event->data.local.request == SESSION_REQUEST_MOVE) {
+    case SESSION_REQUEST_MOVE:
         if (state->phase != SESSION_PHASE_ACTIVE ||
-            !mqtt_slice_valid(event->data.local.payload,
+            !session_slice_valid(event->data.local.payload,
                               event->data.local.length) ||
             state->current_ply == 65535u ||
             (event->data.local.length != 4u &&
              event->data.local.length != 5u)) {
             return 0u;
         }
-        if (!mqtt_emit_timer_cancel(state,
+        if (!session_emit_timer_cancel(state,
                                     actions,
                                     &count,
                                     SESSION_TIMER_LIVENESS)) {
             return 0u;
         }
-        session_drop_restore_cache(state);
-        for (i = 0u; i < event->data.local.length; ++i) {
-            workspace->move[i] = (char)event->data.local.payload[i];
+        if (state->restore_phase != MQTT_RESTORE_APPLIED) {
+            session_drop_restore_cache(state);
         }
+        memcpy(workspace->move, event->data.local.payload,
+               event->data.local.length);
         workspace->move[event->data.local.length] = '\0';
         state->pending_control = SESSION_REQUEST_MOVE;
         state->pending_origin = MQTT_ORIGIN_LOCAL;
@@ -2762,11 +2603,10 @@ static uint8_t mqtt_handle_local(SessionState *state,
         state->pending_control = 0u;
         state->pending_origin = MQTT_ORIGIN_NONE;
         return 0u;
-    }
-    if (event->data.local.request == SESSION_REQUEST_START) {
+    case SESSION_REQUEST_START:
         if (state->config.role != SESSION_ROLE_HOST ||
             state->phase != SESSION_PHASE_READY ||
-            !mqtt_emit_timer_cancel(state,
+            !session_emit_timer_cancel(state,
                                     actions,
                                     &count,
                                     SESSION_TIMER_LIVENESS)) {
@@ -2789,22 +2629,19 @@ static uint8_t mqtt_handle_local(SessionState *state,
         state->pending_control = 0u;
         state->pending_origin = MQTT_ORIGIN_NONE;
         return 0u;
-    }
-    if (event->data.local.request == SESSION_REQUEST_RESTORE) {
-        if (state->config.role != SESSION_ROLE_HOST ||
-            event->data.local.length != SESSION_RESTORE_BYTES ||
+    case SESSION_REQUEST_RESTORE:
+        if (event->data.local.length != SESSION_RESTORE_BYTES ||
             event->data.local.phase < SESSION_PHASE_READY ||
             event->data.local.phase > SESSION_PHASE_OVER ||
-            !mqtt_fixed_slice_valid(event->data.local.payload,
+            !session_fixed_slice_valid(event->data.local.payload,
                                     event->data.local.length) ||
-            !mqtt_emit_timer_cancel(state, actions, &count,
+            !session_emit_timer_cancel(state, actions, &count,
                                     SESSION_TIMER_LIVENESS)) {
             return 0u;
         }
         session_drop_restore_cache(state);
-        for (i = 0u; i < SESSION_RESTORE_BYTES; ++i) {
-            workspace->restore[i] = event->data.local.payload[i];
-        }
+        memcpy(workspace->restore, event->data.local.payload,
+               SESSION_RESTORE_BYTES);
         state->pending_control = SESSION_REQUEST_RESTORE;
         state->pending_origin = MQTT_ORIGIN_LOCAL;
         state->pending_value = event->data.local.value;
@@ -2822,41 +2659,44 @@ static uint8_t mqtt_handle_local(SessionState *state,
         state->restore_phase = MQTT_RESTORE_NONE;
         state->restore_mask = 0u;
         return 0u;
-    }
-    if ((event->data.local.request == SESSION_REQUEST_RESET &&
-         state->phase != SESSION_PHASE_ACTIVE &&
-         state->phase != SESSION_PHASE_OVER) ||
-        ((event->data.local.request == SESSION_REQUEST_DRAW ||
-          event->data.local.request == SESSION_REQUEST_RESIGN ||
-          event->data.local.request == SESSION_REQUEST_TAKEBACK) &&
-         state->phase != SESSION_PHASE_ACTIVE) ||
-        (event->data.local.request != SESSION_REQUEST_RESET &&
-         event->data.local.request != SESSION_REQUEST_DRAW &&
-         event->data.local.request != SESSION_REQUEST_RESIGN &&
-         event->data.local.request != SESSION_REQUEST_TAKEBACK) ||
-        (event->data.local.request == SESSION_REQUEST_TAKEBACK &&
-         event->data.local.value == 0u) ||
-        !mqtt_emit_timer_cancel(state,
-                                actions,
-                                &count,
-                                SESSION_TIMER_LIVENESS)) {
+    case SESSION_REQUEST_RESET:
+    case SESSION_REQUEST_DRAW:
+    case SESSION_REQUEST_RESIGN:
+    case SESSION_REQUEST_TAKEBACK:
+        if (event->data.local.request == SESSION_REQUEST_RESET) {
+            if (state->phase != SESSION_PHASE_ACTIVE &&
+                state->phase != SESSION_PHASE_OVER) {
+                return 0u;
+            }
+        } else if (state->phase != SESSION_PHASE_ACTIVE ||
+                   (event->data.local.request == SESSION_REQUEST_TAKEBACK &&
+                    event->data.local.value == 0u)) {
+            return 0u;
+        }
+        if (!session_emit_timer_cancel(state,
+                                       actions,
+                                       &count,
+                                       SESSION_TIMER_LIVENESS)) {
+            return 0u;
+        }
+        state->pending_control = event->data.local.request;
+        state->pending_origin = MQTT_ORIGIN_LOCAL;
+        state->pending_value = event->data.local.value;
+        state->control_retries = 0u;
+        if (mqtt_send_local_pending(state,
+                                    workspace,
+                                    tx_scratch,
+                                    tx_capacity,
+                                    actions,
+                                    &count)) {
+            return count;
+        }
+        state->pending_control = 0u;
+        state->pending_origin = MQTT_ORIGIN_NONE;
+        return 0u;
+    default:
         return 0u;
     }
-    state->pending_control = event->data.local.request;
-    state->pending_origin = MQTT_ORIGIN_LOCAL;
-    state->pending_value = event->data.local.value;
-    state->control_retries = 0u;
-    if (mqtt_send_local_pending(state,
-                                workspace,
-                                tx_scratch,
-                                tx_capacity,
-                                actions,
-                                &count)) {
-        return count;
-    }
-    state->pending_control = 0u;
-    state->pending_origin = MQTT_ORIGIN_NONE;
-    return 0u;
 }
 
 static uint8_t mqtt_handle_game_result(SessionState *state,
@@ -2896,7 +2736,7 @@ static uint8_t mqtt_handle_game_result(SessionState *state,
             return 0u;
         }
     } else if (event->data.game.detail_length != 0u &&
-               !mqtt_slice_valid(event->data.game.detail,
+               !session_slice_valid(event->data.game.detail,
                                  event->data.game.detail_length)) {
         return 0u;
     }
@@ -2912,7 +2752,7 @@ static uint8_t mqtt_handle_game_result(SessionState *state,
         !mqtt_prepare_reply(state, actions, &count)) {
         return 0u;
     }
-    if (!mqtt_emit_timer_cancel(state,
+    if (!session_emit_timer_cancel(state,
                                 actions,
                                 &count,
                                 SESSION_TIMER_CONTROL)) {
@@ -2993,7 +2833,7 @@ static uint8_t mqtt_handle_game_result(SessionState *state,
     state->pending_request_id = 0u;
     state->pending_control = 0u;
     state->pending_origin = MQTT_ORIGIN_NONE;
-    if (!mqtt_emit_game(actions,
+    if (!session_emit_game(actions,
                         &count,
                         SESSION_DELIVER_CONTROL_RESULT,
                         accepted != 0u
@@ -3053,7 +2893,7 @@ static uint8_t mqtt_tx_ok_bootstrap(SessionState *state,
         if (state->peer_ready == 0u) {
             state->peer_ready = 1u;
             state->phase = SESSION_PHASE_READY;
-            if (!mqtt_emit_session(actions, &count, SESSION_CHANGED_READY) ||
+            if (!session_emit_session(actions, &count, SESSION_CHANGED_READY) ||
                 !mqtt_emit_timer_set(state,
                                      actions,
                                      &count,
@@ -3135,7 +2975,7 @@ static uint8_t mqtt_tx_ok_outbound(SessionState *state,
     case MQTT_TX_RESIGN:
         if (state->phase != SESSION_PHASE_OVER) {
             state->phase = SESSION_PHASE_OVER;
-            if (!mqtt_emit_game(actions,
+            if (!session_emit_game(actions,
                                 &count,
                                 SESSION_DELIVER_CONTROL,
                                 0u,
@@ -3153,13 +2993,13 @@ static uint8_t mqtt_tx_ok_outbound(SessionState *state,
                    ? count
                    : 0u;
     case MQTT_TX_CHAT:
-        if (!mqtt_emit_game(actions,
+        if (!session_emit_game(actions,
                             &count,
                             SESSION_DELIVER_CHAT,
                             0u,
                             SESSION_CHAT_LOCAL,
                             (const uint8_t *)workspace->chat,
-                            mqtt_text_length(workspace->chat)) ||
+                            session_text_length(workspace->chat)) ||
             (state->pending_control == 0u &&
              !mqtt_emit_timer_set(state,
                                   actions,
@@ -3187,14 +3027,14 @@ static uint8_t mqtt_tx_ok_control(SessionState *state,
         if (state->pending_request_id != 0u) {
             state->phase = SESSION_PHASE_ACTIVE;
             state->current_ply = 0u;
-            if (!mqtt_emit_game(actions,
+            if (!session_emit_game(actions,
                                 &count,
                                 SESSION_DELIVER_CONTROL,
                                 0u,
                                 SESSION_REQUEST_RESET,
                                 0,
                                 0u) ||
-                !mqtt_emit_session(actions,
+                !session_emit_session(actions,
                                    &count,
                                    SESSION_CHANGED_STARTED)) {
                 return 0u;
@@ -3214,7 +3054,7 @@ static uint8_t mqtt_tx_ok_control(SessionState *state,
                    : 0u;
     case MQTT_TX_ACK_DRAW:
         if (state->pending_request_id != 0u &&
-            !mqtt_emit_game(actions,
+            !session_emit_game(actions,
                             &count,
                             SESSION_DELIVER_CONTROL,
                             0u,
@@ -3229,7 +3069,7 @@ static uint8_t mqtt_tx_ok_control(SessionState *state,
         state->pending_request_id = 0u;
         state->control_retries = 0u;
         state->pending_value = 0u;
-        if (!mqtt_emit_timer_cancel(state,
+        if (!session_emit_timer_cancel(state,
                                     actions,
                                     &count,
                                     SESSION_TIMER_LIVENESS) ||
@@ -3248,7 +3088,7 @@ static uint8_t mqtt_tx_ok_control(SessionState *state,
         state->pending_request_id = 0u;
         state->control_retries = 0u;
         state->pending_value = 0u;
-        if (!mqtt_emit_game(actions,
+        if (!session_emit_game(actions,
                             &count,
                             SESSION_DELIVER_CONTROL_RESULT,
                             SESSION_CONTROL_ACCEPTED,
@@ -3275,7 +3115,7 @@ static uint8_t mqtt_tx_ok_control(SessionState *state,
         state->pending_origin = MQTT_ORIGIN_NONE;
         state->pending_request_id = 0u;
         state->pending_value = 0u;
-        if (!mqtt_emit_game(actions,
+        if (!session_emit_game(actions,
                             &count,
                             local != 0u
                                 ? SESSION_DELIVER_CONTROL_RESULT
@@ -3286,7 +3126,7 @@ static uint8_t mqtt_tx_ok_control(SessionState *state,
                             SESSION_REQUEST_RESET,
                             0,
                             0u) ||
-            !mqtt_emit_session(actions, &count, SESSION_CHANGED_STARTED) ||
+            !session_emit_session(actions, &count, SESSION_CHANGED_STARTED) ||
             !mqtt_emit_timer_set(state,
                                  actions,
                                  &count,
@@ -3299,7 +3139,7 @@ static uint8_t mqtt_tx_ok_control(SessionState *state,
     case MQTT_TX_ACK_RESIGN:
         if (state->pending_request_id != 0u) {
             state->phase = SESSION_PHASE_OVER;
-            if (!mqtt_emit_game(actions,
+            if (!session_emit_game(actions,
                                 &count,
                                 SESSION_DELIVER_CONTROL,
                                 0u,
@@ -3323,7 +3163,7 @@ static uint8_t mqtt_tx_ok_control(SessionState *state,
         state->pending_request_id = 0u;
         state->pending_value = 0u;
         state->control_retries = 0u;
-        if (!mqtt_emit_game(actions,
+        if (!session_emit_game(actions,
                             &count,
                             SESSION_DELIVER_CONTROL_RESULT,
                             SESSION_CONTROL_ACCEPTED,
@@ -3371,7 +3211,7 @@ static uint8_t mqtt_tx_ok_control(SessionState *state,
         if ((tx_kind == MQTT_TX_NACK_RESET ||
              tx_kind == MQTT_TX_NACK_DRAW) &&
             state->pending_value == MQTT_CANCEL_REMOTE &&
-            !mqtt_emit_game(actions,
+            !session_emit_game(actions,
                             &count,
                             SESSION_DELIVER_CONTROL_RESULT,
                             SESSION_CONTROL_EXPIRED,
@@ -3415,7 +3255,7 @@ static uint8_t mqtt_tx_ok_restore(SessionState *state,
         if (state->last_rx_kind == SESSION_REQUEST_RESTORE) {
             session_clear_duplicate(state);
         }
-        if (!mqtt_emit_game(actions, &count,
+        if (!session_emit_game(actions, &count,
                             SESSION_DELIVER_CONTROL_RESULT,
                             SESSION_CONTROL_REJECTED,
                             SESSION_REQUEST_RESTORE,
@@ -3431,7 +3271,7 @@ static uint8_t mqtt_tx_ok_restore(SessionState *state,
         state->restore_phase = MQTT_RESTORE_RECEIVE;
         state->restore_mask = 0u;
         state->pending_request_id = 0u;
-        if (!mqtt_emit_timer_cancel(state, actions, &count,
+        if (!session_emit_timer_cancel(state, actions, &count,
                                     SESSION_TIMER_LIVENESS) ||
             !mqtt_emit_timer_set(state, actions, &count,
                                  SESSION_TIMER_CONTROL,
@@ -3509,7 +3349,7 @@ static uint8_t mqtt_tx_ok_session(SessionState *state,
             state->current_ply = 0u;
             state->pending_control = 0u;
             state->pending_origin = MQTT_ORIGIN_NONE;
-            if (!mqtt_emit_session(actions, &count, SESSION_CHANGED_STARTED)) {
+            if (!session_emit_session(actions, &count, SESSION_CHANGED_STARTED)) {
                 return 0u;
             }
         }
@@ -3629,7 +3469,7 @@ static uint8_t mqtt_handle_tx_result(SessionState *state,
         return 0u;
     }
     tx_kind = state->pending_tx_kind;
-    if (!mqtt_emit_timer_cancel(state,
+    if (!session_emit_timer_cancel(state,
                                 actions,
                                 &count,
                                 SESSION_TIMER_TX_GUARD)) {
@@ -3728,7 +3568,7 @@ static uint8_t mqtt_handle_liveness_timeout(SessionState *state,
                        &count)
                        ? count : 0u;
         }
-        return mqtt_finish(state, actions, count, SESSION_LINK_NONE);
+        return mqtt_wait_for_peer(state, actions, count);
     }
     return mqtt_send_text(state,
                           "PING",
@@ -3947,7 +3787,7 @@ static uint8_t mqtt_handle_setup_timeout(SessionState *state,
         state->config.role == SESSION_ROLE_GUEST &&
         state->peer_ready != 0u &&
         state->phase == SESSION_PHASE_READY) {
-        if (!mqtt_emit_timer_cancel(state,
+        if (!session_emit_timer_cancel(state,
                                     actions,
                                     &count,
                                     SESSION_TIMER_LIVENESS)) {

@@ -62,25 +62,6 @@ function Remove-EmptyGeneratedDir {
     }
 }
 
-function Remove-GeneratedGlob {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$RelativePattern
-    )
-
-    $matches = Get-ChildItem -Path (Join-Path $Root $RelativePattern) -Force -ErrorAction SilentlyContinue
-    foreach ($item in $matches) {
-        $resolved = (Resolve-Path -LiteralPath $item.FullName).Path
-        $rootPrefix = $Root.TrimEnd('\') + '\'
-
-        if (-not $resolved.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "Refusing to remove outside project tree: $resolved"
-        }
-
-        Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop
-    }
-}
-
 Remove-GeneratedPath ".aider.chat.history.md"
 Remove-GeneratedPath ".aider.input.history"
 Remove-GeneratedPath ".aider.tags.cache.v4"

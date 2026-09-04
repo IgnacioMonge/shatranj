@@ -11,7 +11,7 @@
       "displayName": "MSVC x64 (no vcvars needed)",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
-      "binaryDir": "$env{LOCALAPPDATA}/netchesszx/pc-build",
+      "binaryDir": "${sourceParentDir}/build/pc-build",
       "cacheVariables": {
         "CMAKE_PREFIX_PATH": "$env{QT_ROOT_DIR};$env{QTDIR}"
       },

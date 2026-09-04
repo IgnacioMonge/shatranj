@@ -6,6 +6,7 @@
 #include <functional>
 
 class QKeyEvent;
+class QResizeEvent;
 
 class AppBanner : public QWidget {
     Q_DISABLE_COPY_MOVE(AppBanner)
@@ -18,16 +19,18 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     void paintEvent(QPaintEvent *) override;
-    void renderBridgeMosaic();
-
-    struct MosaicPixel {
-        int x, y, size, r, g, b, a;
-    };
+    void ensureImages();
+    void ensureBoardStrip();
 
     QImage mosaicImage_;
+    QImage wordmarkImage_;
+    QImage boardImage_;
+    QImage boardStrip_;
+    bool imagesLoaded_ = false;
     bool pressed_ = false;
 };
 

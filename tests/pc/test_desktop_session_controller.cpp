@@ -21,6 +21,9 @@ int main(int argc, char **argv)
     DesktopSessionController::Callbacks callbacks;
     int sends = 0;
     int sideChanges = 0;
+    int sessionChanges = 0;
+    uint8_t lastSessionStatus = SESSION_CHANGED_READY;
+    uint8_t lastSessionEndReason = SESSION_END_REASON_NONE;
     bool mqttTransportReady = true;
     DesktopSessionController::Mode lastMode =
         DesktopSessionController::Mode::Mqtt;
@@ -44,6 +47,11 @@ int main(int argc, char **argv)
     callbacks.error = [&](const QString &) {
         ++failures;
     };
+    callbacks.sessionChanged = [&](uint8_t status, uint8_t endReason) {
+        ++sessionChanges;
+        lastSessionStatus = status;
+        lastSessionEndReason = endReason;
+    };
     controller.setCallbacks(callbacks);
 
     check(controller.initializeDirect(SESSION_ROLE_HOST, SESSION_COLOR_WHITE),
@@ -51,6 +59,11 @@ int main(int argc, char **argv)
     check(controller.linkUp(1u), "direct link produces actions");
     check(sends > 0 && lastMode == DesktopSessionController::Mode::Direct,
           "direct send callback");
+    check(controller.linkDown(1u), "direct transport loss produces actions");
+    check(sessionChanges == 1 &&
+              lastSessionStatus == SESSION_CHANGED_ENDED &&
+              lastSessionEndReason == SESSION_END_REASON_TRANSPORT_LOST,
+          "direct transport loss forwards ended session callback");
 
     sends = 0;
     check(controller.initializeMqtt(SESSION_ROLE_GUEST,
@@ -69,6 +82,12 @@ int main(int argc, char **argv)
     check(!controller.receiveMqtt(1u, QByteArray("invalid/topic"), false,
                                   QByteArray("payload")),
           "reject unknown MQTT route");
+    sends = 0;
+    check(controller.initializeDirect(SESSION_ROLE_GUEST,
+                                      SESSION_COLOR_UNKNOWN) &&
+              controller.linkUp(2u) && sends > 0 &&
+              lastMode == DesktopSessionController::Mode::Direct,
+          "controller switches from MQTT back to a fresh direct session");
 
     DesktopSessionController interrupted;
     DesktopSessionController::Callbacks interruptedCallbacks;

@@ -6,6 +6,7 @@ extern "C" {
 }
 
 #include <limits>
+#include <utility>
 
 namespace {
 
@@ -27,39 +28,56 @@ DesktopTransportCodec::DirectFeedResult DesktopTransportCodec::feedDirect(
 {
     DirectFeedResult result;
     QByteArray &buffer = directBuffers_[linkId];
-    buffer.append(data);
     constexpr qsizetype kMaxLineBytes =
         static_cast<qsizetype>(SESSION_PAYLOAD_MAX);
 
+    const bool hadPending = !buffer.isEmpty();
+    if (hadPending) {
+        buffer.append(data);
+    }
+    const QByteArray &src = hadPending ? buffer : data;
+
+    qsizetype consumed = 0;
     while (true) {
-        const qsizetype eol = buffer.indexOf('\n');
+        const qsizetype eol = src.indexOf('\n', consumed);
         if (eol < 0) {
             break;
         }
-        const bool hasCr = eol > 0 && buffer.at(eol - 1) == '\r';
-        const qsizetype payloadLength = eol - (hasCr ? 1 : 0);
+        const bool hasCr = eol > consumed && src.at(eol - 1) == '\r';
+        const qsizetype payloadLength =
+            eol - consumed - (hasCr ? 1 : 0);
         if (payloadLength > kMaxLineBytes) {
             buffer.clear();
             result.overflow = true;
             return result;
         }
 
-        QByteArray line = buffer.left(eol);
-        buffer.remove(0, eol + 1);
-        if (hasCr) {
-            line.chop(1);
-        }
-        if (!line.isEmpty()) {
-            deliver(line);
+        if (payloadLength > 0) {
+            deliver(QByteArray(src.constData() + consumed,
+                               static_cast<int>(payloadLength)));
             result.delivered = true;
         }
+        consumed = eol + 1;
     }
 
-    const bool pendingCr = buffer.size() == kMaxLineBytes + 1 &&
-                           buffer.endsWith('\r');
-    if (buffer.size() > kMaxLineBytes && !pendingCr) {
+    const qsizetype leftover = src.size() - consumed;
+    const bool pendingCr = leftover == kMaxLineBytes + 1 && leftover > 0 &&
+                           src.endsWith('\r');
+    if (leftover > kMaxLineBytes && !pendingCr) {
         buffer.clear();
         result.overflow = true;
+        return result;
+    }
+
+    if (hadPending) {
+        if (consumed != 0) {
+            buffer.remove(0, consumed);
+        }
+    } else if (leftover > 0) {
+        buffer = QByteArray(src.constData() + consumed,
+                            static_cast<int>(leftover));
+    } else {
+        buffer.clear();
     }
     return result;
 }
@@ -87,11 +105,18 @@ QVector<QByteArray> DesktopTransportCodec::feedMqtt(const QByteArray &data,
     if (malformed != nullptr) {
         *malformed = false;
     }
-    mqttBuffer_.append(data);
+
+    const bool hadPending = !mqttBuffer_.isEmpty();
+    if (hadPending) {
+        mqttBuffer_.append(data);
+    }
+    const QByteArray &src = hadPending ? mqttBuffer_ : data;
+
+    qsizetype consumed = 0;
     while (true) {
-        const int packetLength = availableMqttPacketLength();
+        const int packetLength = availableMqttPacketLength(src, consumed);
         if (packetLength == 0) {
-            return packets;
+            break;
         }
         if (packetLength < 0) {
             mqttBuffer_.clear();
@@ -100,33 +125,50 @@ QVector<QByteArray> DesktopTransportCodec::feedMqtt(const QByteArray &data,
             }
             return packets;
         }
-        packets.append(mqttBuffer_.left(packetLength));
-        mqttBuffer_.remove(0, packetLength);
+        packets.append(QByteArray(src.constData() + consumed, packetLength));
+        consumed += packetLength;
     }
+
+    if (hadPending) {
+        if (consumed != 0) {
+            mqttBuffer_.remove(0, consumed);
+        }
+    } else if (consumed < src.size()) {
+        mqttBuffer_ = QByteArray(src.constData() + consumed,
+                                 static_cast<int>(src.size() - consumed));
+    } else {
+        mqttBuffer_.clear();
+    }
+    return packets;
 }
 
-int DesktopTransportCodec::availableMqttPacketLength() const
+int DesktopTransportCodec::availableMqttPacketLength(const QByteArray &buffer,
+                                                     qsizetype offset) const
 {
-    if (mqttBuffer_.size() < 2) {
+    const qsizetype available = buffer.size() - offset;
+
+    if (available < 2) {
         return 0;
     }
     int multiplier = 1;
     int remaining = 0;
     int used = 0;
-    for (int i = 1; i < mqttBuffer_.size() && i < 5; ++i) {
-        const auto encoded = static_cast<unsigned char>(mqttBuffer_.at(i));
+    for (qsizetype i = offset + 1;
+         i < buffer.size() && i < offset + 5;
+         ++i) {
+        const auto encoded = static_cast<unsigned char>(buffer.at(i));
         remaining += (encoded & 0x7f) * multiplier;
         multiplier *= 128;
-        used = i;
+        used = static_cast<int>(i - offset);
         if ((encoded & 0x80) == 0) {
             const int total = used + 1 + remaining;
             if (total > static_cast<int>(NETCHESSZX_MQTT_PACKET_MAX)) {
                 return -1;
             }
-            return mqttBuffer_.size() >= total ? total : 0;
+            return available >= total ? total : 0;
         }
     }
-    return mqttBuffer_.size() >= 5 ? -1 : 0;
+    return available >= 5 ? -1 : 0;
 }
 
 bool DesktopTransportCodec::decodeMqttPacket(const QByteArray &raw,
@@ -185,7 +227,7 @@ QByteArray DesktopTransportCodec::encodeMqttConnect(
         useWill ? willTopic.constData() : nullptr,
         useWill ? willPayload.constData() : nullptr,
         useWill && retainWill ? 1 : 0);
-    return encodedPacket(length, packet);
+    return encodedPacket(length, std::move(packet));
 }
 
 QByteArray DesktopTransportCodec::encodeMqttSubscribe(uint16_t packetId,
@@ -195,7 +237,7 @@ QByteArray DesktopTransportCodec::encodeMqttSubscribe(uint16_t packetId,
     const size_t length = netchess_mqtt_encode_subscribe(
         reinterpret_cast<uint8_t *>(packet.data()),
         static_cast<size_t>(packet.size()), packetId, topic.constData(), 1);
-    return encodedPacket(length, packet);
+    return encodedPacket(length, std::move(packet));
 }
 
 QByteArray DesktopTransportCodec::encodeMqttUnsubscribe(uint16_t packetId,
@@ -205,7 +247,7 @@ QByteArray DesktopTransportCodec::encodeMqttUnsubscribe(uint16_t packetId,
     const size_t length = netchess_mqtt_encode_unsubscribe(
         reinterpret_cast<uint8_t *>(packet.data()),
         static_cast<size_t>(packet.size()), packetId, topic.constData());
-    return encodedPacket(length, packet);
+    return encodedPacket(length, std::move(packet));
 }
 
 QByteArray DesktopTransportCodec::encodeMqttPublish(uint16_t packetId,
@@ -222,7 +264,7 @@ QByteArray DesktopTransportCodec::encodeMqttPublish(uint16_t packetId,
         static_cast<size_t>(packet.size()), packetId, topic.constData(),
         reinterpret_cast<const uint8_t *>(payload.constData()),
         static_cast<uint16_t>(payload.size()), 1, retain ? 1 : 0);
-    return encodedPacket(length, packet);
+    return encodedPacket(length, std::move(packet));
 }
 
 QByteArray DesktopTransportCodec::encodeMqttPuback(uint16_t packetId)
@@ -231,7 +273,7 @@ QByteArray DesktopTransportCodec::encodeMqttPuback(uint16_t packetId)
     const size_t length = netchess_mqtt_encode_puback(
         reinterpret_cast<uint8_t *>(packet.data()),
         static_cast<size_t>(packet.size()), packetId);
-    return encodedPacket(length, packet);
+    return encodedPacket(length, std::move(packet));
 }
 
 QByteArray DesktopTransportCodec::encodeMqttPing()
@@ -240,5 +282,5 @@ QByteArray DesktopTransportCodec::encodeMqttPing()
     const size_t length = netchess_mqtt_encode_pingreq(
         reinterpret_cast<uint8_t *>(packet.data()),
         static_cast<size_t>(packet.size()));
-    return encodedPacket(length, packet);
+    return encodedPacket(length, std::move(packet));
 }

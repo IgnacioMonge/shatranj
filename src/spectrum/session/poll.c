@@ -45,16 +45,24 @@ uint8_t netchesszx_session_poll(netchesszx_session_ping_t *ping,
         if (ping_ev != NETCHESSZX_SESSION_PING_NONE) {
             if (ping_ev == NETCHESSZX_SESSION_PING_LOST) {
                 if ((uint8_t)(is_mqtt &
-                              netchesszx_session_peer_ready_state) &&
-                    netchesszx_session_is_host()) {
-                    ping_ev = spectrum_link_mqtt_publish_offline(
-                        SPECTRUM_LINK_ROUTE_PRESENCE_PEER);
-                    if (ping_ev) {
-                        out->event = NETCHESSZX_SESSION_EVENT_BYE;
-                        return NETCHESSZX_SESSION_POLL_EVENT;
+                              netchesszx_session_peer_ready_state)) {
+                    if (netchesszx_session_is_host()) {
+                        ping_ev = spectrum_link_mqtt_publish_offline(
+                            SPECTRUM_LINK_ROUTE_PRESENCE_PEER);
+                        if (ping_ev) {
+                            out->event = NETCHESSZX_SESSION_EVENT_BYE;
+                            return NETCHESSZX_SESSION_POLL_EVENT;
+                        }
+                        (void)spectrum_link_mqtt_publish_offline(
+                            SPECTRUM_LINK_ROUTE_PRESENCE);
+                        return NETCHESSZX_SESSION_POLL_DISCONNECTED;
                     }
-                    (void)spectrum_link_mqtt_publish_offline(
-                        SPECTRUM_LINK_ROUTE_PRESENCE);
+                    /* A guest has no retained peer seat to reclaim. Keep the
+                       broker alive and let the application enter its normal
+                       MQTT peer-wait path through a logical BYE. */
+                    out->event = NETCHESSZX_SESSION_EVENT_BYE;
+                    out->retained = 0u;
+                    return NETCHESSZX_SESSION_POLL_EVENT;
                 }
                 return NETCHESSZX_SESSION_POLL_DISCONNECTED;
             }
@@ -73,9 +81,6 @@ uint8_t netchesszx_session_poll(netchesszx_session_ping_t *ping,
         return NETCHESSZX_SESSION_POLL_NONE;
     }
 
-    if (!is_mqtt) {
-        netchesszx_session_ping_rx_data(ping);
-    }
     spectrum_link_background_drain();
     if (is_mqtt) {
         payload_flags = spectrum_link_payload_flags();
@@ -98,9 +103,13 @@ uint8_t netchesszx_session_poll(netchesszx_session_ping_t *ping,
         out->retained = 0u;
         return NETCHESSZX_SESSION_POLL_NONE;
     }
+    if (!is_mqtt && out->event != NETCHESSZX_SESSION_EVENT_MOVE) {
+        netchesszx_session_ping_rx_data(ping);
+    }
     if ((uint8_t)(is_mqtt & netchesszx_session_peer_ready_state) &&
         out->event >= NETCHESSZX_SESSION_EVENT_PING &&
         out->event <= NETCHESSZX_SESSION_EVENT_HOST_BUSY &&
+        out->event != NETCHESSZX_SESSION_EVENT_MOVE &&
         out->event != NETCHESSZX_SESSION_EVENT_ACK_MOVE &&
         out->event != NETCHESSZX_SESSION_EVENT_NACK_MOVE &&
         (out->event != NETCHESSZX_SESSION_EVENT_ACK_PING ||

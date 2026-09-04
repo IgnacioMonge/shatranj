@@ -1,14 +1,15 @@
 SECTION code_user
 
-; Cold, Next-only graphics services. The resident trampoline maps this page
-; into MMU slot 0 under DI, so this code must not enable interrupts, call ROM,
-; or remap slot 0. Bundle reads use the resident slot-1 copy primitive.
+; Next-only graphics services run from resident memory. The wrapper enters
+; under DI; bundle reads temporarily use slot 0 and restore its exact previous
+; mapping before returning here.
 
+IFNDEF NETCHESSZX_NEXT_EXTENSION
 PUBLIC next_graphics_bank_init
 PUBLIC next_graphics_bank_set
 PUBLIC next_graphics_bank_about
+ENDIF
 
-EXTERN _overlay_code_slot
 EXTERN _spectrum_next_sprites_hide_all
 EXTERN asset_load_size
 EXTERN asset_set_index
@@ -16,15 +17,16 @@ EXTERN next_copy_bundle
 EXTERN nextreg_read
 EXTERN nextreg_write
 
-INCLUDE "asm/next/graphics_bank_layout.asm"
+INCLUDE "asm/next/extension_bank_layout.asm"
 
-; Stable three-JP table; tools/gen_next_nex.py validates it in the linked blob.
+IFNDEF NETCHESSZX_NEXT_EXTENSION
 next_graphics_bank_init:
     jp ngb_init
 next_graphics_bank_set:
     jp ngb_set
 next_graphics_bank_about:
     jp ngb_about
+ENDIF
 
 ngb_init:
     call ngb_sprite_system_init
@@ -51,6 +53,7 @@ ngb_set:
     push iy
     call next_copy_bundle
     call ngb_sprite_upload_set_current
+ngb_success:
     pop iy
     pop ix
     ld hl, 1
@@ -66,7 +69,7 @@ ngb_about:
     push iy
     call _spectrum_next_sprites_hide_all
     ld hl, next_about_pal_offset
-    ld de, _overlay_code_slot
+    ld de, next_palette_stage
     ld bc, 512
     call next_copy_bundle
     ld a, nextreg_palette_control
@@ -75,7 +78,7 @@ ngb_about:
     ld a, nextreg_palette_index
     ld e, 0
     call nextreg_write
-    ld hl, _overlay_code_slot
+    ld hl, next_palette_stage
     ld d, 0
     ld bc, nextreg_select
     ld a, nextreg_palette_value_9
@@ -93,13 +96,7 @@ ngb_about_palette_loop:
     ld a, nextreg_layer2_bank
     ld e, next_about_bank
     call nextreg_write
-    ld bc, layer2_port
-    ld a, 2
-    out (c), a
-    pop iy
-    pop ix
-    ld hl, 1
-    ret
+    jp ngb_success
 
 ngb_sprite_system_init:
     ld a, nextreg_sprite_transparency_index
@@ -112,10 +109,10 @@ ngb_sprite_system_init:
     ld e, 0
     call nextreg_write
     ld hl, next_sprite_pal_offset
-    ld de, _overlay_code_slot
+    ld de, next_palette_stage
     ld bc, next_sprite_palette_size * 2 + next_ula_standard_palette_size
     call next_copy_bundle
-    ld hl, _overlay_code_slot
+    ld hl, next_palette_stage
     ld d, next_sprite_palette_size
     call ngb_palette_upload_pairs
     ld a, nextreg_palette_control
@@ -126,6 +123,15 @@ ngb_sprite_system_init:
     call nextreg_write
     ld d, next_ula_standard_palette_size / 2
     call ngb_palette_upload_pairs
+    ; Groups 0/1 mirror classic ULA colours; groups 2/3 are private board/menu
+    ; colours. Keep ULA+ enabled for the whole application so theme changes do
+    ; not leave the attribute file interpreted under a stale palette mode.
+    ld a, nextreg_ula_control
+    call nextreg_read
+    or 0x08
+    ld e, a
+    ld a, nextreg_ula_control
+    call nextreg_write
     ld a, nextreg_sprite_layer_system
     call nextreg_read
     or 0x01

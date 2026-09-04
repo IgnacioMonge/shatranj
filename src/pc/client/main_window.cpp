@@ -12,29 +12,26 @@
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QEvent>
-#include <QEventLoop>
 #include <QFileInfo>
 #include <QFont>
+#include <QFontMetrics>
 #include <QGridLayout>
 #include <QHash>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
-#include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
-#include <QLinearGradient>
 #include <QLineEdit>
 #include <QLocale>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMessageBox>
-#include <QMouseEvent>
 #include <QNetworkInterface>
 #include <QPainter>
-#include <QPainterPath>
 #include <QPixmap>
 #include <QPlainTextEdit>
+#include <QPoint>
 #include <QPointer>
 #include <QPushButton>
 #include <QRadioButton>
@@ -42,6 +39,7 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QSet>
+#include <QShowEvent>
 #include <QSize>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -76,6 +74,7 @@
 
 extern "C" {
 #include "common/chess/position.h"
+#include "common/protocol/platform_protocol.h"
 #include "common/savegame/savegame_wire.h"
 #include "common/chess/rules_compact.h"
 #include "common/session/session.h"
@@ -86,11 +85,10 @@ extern "C" {
 #include "chess_helpers.h"
 #include "desktop_session_controller.h"
 #include "desktop_transport_codec.h"
-#ifdef Q_OS_MACOS
-#include "mac_window_chrome.h"
-#endif
 #include "piece_renderer.h"
+#include "window_chrome.h"
 #include "save_game_store.h"
+#include "ui_theme.h"
 
 namespace {
 using namespace PieceRenderer;
@@ -104,6 +102,9 @@ constexpr int kChatTextMax = SESSION_CHAT_TEXT_MAX;
 constexpr int kSpectrumFrameMs = 20;
 constexpr int kPieceRevealStepMs = 5 * kSpectrumFrameMs;
 constexpr int kPieceRevealMiddlePauseMs = 3 * kSpectrumFrameMs;
+constexpr int kPieceMorphStepMs = 1 * kSpectrumFrameMs;
+constexpr int kPieceMorphMiddlePauseMs = 1 * kSpectrumFrameMs;
+constexpr int kPieceFlashStepMs = 90;
 // A TCP listener may exist before the remote app is ready for its DIRECT handshake.
 constexpr const char *kAppVersion = NETCHESSZX_APP_VERSION;
 constexpr const char *kDirectHostBusyStatus = "Host busy";
@@ -120,31 +121,10 @@ struct MqttBufferedPublish {
     bool retained = false;
 };
 
-static QStringList directIpHistoryWithImpl(const QStringList &history,
-                                           const QString &host)
-{
-    QStringList result;
-    const auto append = [&result](const QString &candidate) {
-        const QString ip = candidate.trimmed();
-        if (ChessHelpers::isDirectIpSyntaxOk(ip) && !result.contains(ip)) {
-            result.append(ip);
-        }
-    };
-
-    append(host);
-    for (const QString &ip : history) {
-        if (result.size() >= kDirectIpHistoryMax) {
-            break;
-        }
-        append(ip);
-    }
-    return result;
-}
-
 static QIcon directIpHistoryIcon()
 {
     QPixmap pixmap(16, 16);
-    const QColor color(QStringLiteral("#00d7ff"));
+    const QColor color(QStringLiteral(SHZ_ACCENT));
 
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
@@ -156,13 +136,60 @@ static QIcon directIpHistoryIcon()
     return QIcon(pixmap);
 }
 
-static QByteArray mqttClientIdForImpl(bool host, quint64 nonce)
+static QIcon sessionActionIcon(const char *kind)
 {
-    return QStringLiteral("PC%1%2")
-        .arg(host ? QLatin1Char('H') : QLatin1Char('J'))
-        .arg(nonce, 16, 16, QLatin1Char('0'))
-        .toUpper()
-        .toLatin1();
+    QPixmap pixmap(16, 16);
+    const QColor color(QStringLiteral(SHZ_ACCENT));
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QPen(color, 1.6, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+    painter.setBrush(Qt::NoBrush);
+    if (std::strcmp(kind, "takeback") == 0) {
+        painter.drawLine(QPointF(12.5, 4.5), QPointF(12.5, 10.5));
+        painter.drawLine(QPointF(12.5, 10.5), QPointF(4.5, 10.5));
+        QPolygonF head;
+        head << QPointF(4.5, 10.5) << QPointF(8.0, 7.5) << QPointF(8.0, 13.5);
+        painter.setBrush(color);
+        painter.setPen(Qt::NoPen);
+        painter.drawPolygon(head);
+    } else if (std::strcmp(kind, "reset") == 0) {
+        QRectF arc(3.0, 3.0, 10.0, 10.0);
+        painter.drawArc(arc, 50 * 16, 260 * 16);
+        QPolygonF head;
+        head << QPointF(11.5, 3.0) << QPointF(15.0, 6.5) << QPointF(9.5, 6.5);
+        painter.setBrush(color);
+        painter.setPen(Qt::NoPen);
+        painter.drawPolygon(head);
+    } else {
+        painter.drawLine(QPointF(3.5, 6.0), QPointF(12.5, 6.0));
+        painter.drawLine(QPointF(3.5, 10.0), QPointF(12.5, 10.0));
+    }
+    return QIcon(pixmap);
+}
+
+static uint8_t localMachinePlatform()
+{
+#if defined(Q_OS_MACOS)
+    return NETCHESS_PLAT_MAC;
+#elif defined(Q_OS_LINUX)
+    return NETCHESS_PLAT_LNX;
+#elif defined(Q_OS_WIN)
+    return NETCHESS_PLAT_PC;
+#else
+    return NETCHESS_PLAT_UNKNOWN;
+#endif
+}
+
+static QByteArray localMachPayload()
+{
+    char text[16];
+
+    if (!netchess_proto_format_mach(text, sizeof(text),
+                                    localMachinePlatform())) {
+        return QByteArray();
+    }
+    return QByteArray(text);
 }
 
 static bool isSessionControlCommand(const QString &command)
@@ -199,39 +226,93 @@ static QMessageBox::StandardButton askQuestion(
 static QString appStyleSheet()
 {
     return QStringLiteral(
-        "QMainWindow, QWidget { background:#1b1b25; color:#f1f3f6;"
-        " font:10pt \"Segoe UI\"; }"
-        "QLabel { color:#f1f3f6; background:transparent; }"
-        "QLineEdit, QSpinBox, QPlainTextEdit, QTextEdit { background:#2b2b39; color:#f1f3f6;"
-        " border:1px solid #555568; padding:3px 6px; selection-background-color:#00b7d8;"
-        " selection-color:#101018; }"
-        "QLineEdit:disabled, QSpinBox:disabled, QPlainTextEdit:disabled, QTextEdit:disabled {"
-        " background:#252532; color:#88889a; border-color:#3a3a4a; }"
-        "QPlainTextEdit, QTextEdit { padding:5px; }"
-        "QPushButton { background:#3b465b; color:#f1f3f6; border:0;"
-        " font:700 9pt \"Segoe UI\"; padding:3px 10px; min-height:18px; }"
-        "QPushButton:hover { background:#46546d; }"
-        "QPushButton:pressed { background:#31394b; }"
-        "QPushButton:disabled { background:#303040; color:#8a8aa0; }"
-        "QRadioButton { color:#f1f3f6; spacing:5px; }"
-        "QRadioButton::indicator { width:10px; height:10px; border-radius:5px;"
-        " border:1px solid #6a6a7e; background:#242432; }"
-        "QRadioButton::indicator:checked { background:#00d7ff; border:1px solid #00d7ff; }"
-        "QRadioButton::indicator:disabled { background:#303040; border-color:#454557; }"
-        "QRadioButton::indicator:checked:disabled { background:#8a8aa0; border:1px solid #8a8aa0; }"
-        "QRadioButton:checked:disabled { color:#c7c7d2; }"
-        "QScrollBar:vertical { background:#242432; width:12px; margin:0; }"
-        "QScrollBar::handle:vertical { background:#4c4c62; min-height:24px; }"
+        "QMainWindow, QDialog { background:" SHZ_INK "; color:" SHZ_TEXT "; }"
+        "QWidget { color:" SHZ_TEXT "; }"
+        // Exact-class selector: plain layout containers must not paint the
+        // window ground over the card they sit on. Real controls keep theirs.
+        ".QWidget { background:transparent; }"
+        "QWidget#topCard, QWidget#sidePanel { background:" SHZ_CARD ";"
+        " border:1px solid " SHZ_BORDER_SOFT "; border-radius:" SHZ_R_LG "; }"
+        "QLabel { color:" SHZ_TEXT "; background:transparent; }"
+        "QLabel#caption { color:" SHZ_ACCENT "; font-weight:700; font-size:10px;"
+        " letter-spacing:1px; padding:0; background:transparent; }"
+        "QLineEdit, QSpinBox, QComboBox, QPlainTextEdit, QTextEdit {"
+        " background:" SHZ_SURFACE "; color:" SHZ_TEXT ";"
+        " border:1px solid " SHZ_BORDER "; border-radius:" SHZ_R ";"
+        " padding:4px 8px; selection-background-color:" SHZ_ACCENT_DEEP ";"
+        " selection-color:" SHZ_WELL "; }"
+        "QLineEdit:hover, QSpinBox:hover, QComboBox:hover {"
+        " border-color:" SHZ_ACCENT_DEEP "; }"
+        "QLineEdit:focus, QSpinBox:focus, QComboBox:focus,"
+        " QPlainTextEdit:focus, QTextEdit:focus { border-color:" SHZ_ACCENT "; }"
+        "QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled,"
+        " QPlainTextEdit:disabled, QTextEdit:disabled { background:" SHZ_QUIET ";"
+        " color:" SHZ_TEXT_MUTED "; border-color:" SHZ_BORDER_SOFT "; }"
+        "QPlainTextEdit, QTextEdit { padding:6px; }"
+        "QComboBox::drop-down { border:0; width:18px; }"
+        "QComboBox QAbstractItemView { background:" SHZ_SURFACE ";"
+        " color:" SHZ_TEXT "; border:1px solid " SHZ_BORDER ";"
+        " selection-background-color:" SHZ_ACCENT_DEEP "; selection-color:" SHZ_WELL ";"
+        " outline:0; }"
+        "QPushButton { background:" SHZ_SURFACE_ALT "; color:" SHZ_TEXT ";"
+        " border:1px solid " SHZ_SURFACE_ALT "; border-radius:" SHZ_R ";"
+        " font-weight:600; font-size:9pt; padding:4px 12px; min-height:20px; }"
+        "QPushButton:hover { background:" SHZ_HOVER "; border-color:" SHZ_HOVER "; }"
+        "QPushButton:pressed { background:" SHZ_PRESSED ";"
+        " border-color:" SHZ_PRESSED "; }"
+        "QPushButton:disabled { background:" SHZ_DISABLED ";"
+        " color:" SHZ_TEXT_MUTED "; border-color:" SHZ_DISABLED "; }"
+        "QRadioButton, QCheckBox { color:" SHZ_TEXT "; spacing:6px;"
+        " background:transparent; }"
+        "QRadioButton::indicator { width:11px; height:11px; border-radius:6px;"
+        " border:1px solid " SHZ_TEXT_MUTED "; background:" SHZ_SURFACE "; }"
+        "QRadioButton::indicator:hover { border-color:" SHZ_ACCENT "; }"
+        "QRadioButton::indicator:checked { background:" SHZ_ACCENT ";"
+        " border:1px solid " SHZ_ACCENT "; }"
+        "QRadioButton::indicator:disabled { background:" SHZ_DISABLED ";"
+        " border-color:" SHZ_BORDER "; }"
+        "QRadioButton::indicator:checked:disabled { background:" SHZ_TEXT_MUTED ";"
+        " border:1px solid " SHZ_TEXT_MUTED "; }"
+        "QRadioButton:checked:disabled { color:" SHZ_TEXT_DIM "; }"
+        "QScrollBar:vertical { background:transparent; width:10px; margin:2px; }"
+        "QScrollBar::handle:vertical { background:" SHZ_SCROLL ";"
+        " border-radius:3px; min-height:28px; }"
+        "QScrollBar::handle:vertical:hover { background:" SHZ_ACCENT_DEEP "; }"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
-        "QStatusBar { background:#15151d; border-top:1px solid #343445; }"
-        "QStatusBar QLabel { color:#00d7ff; font:700 11px \"Segoe UI\"; }");
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
+        " background:transparent; }"
+        "QToolTip { background:" SHZ_SURFACE "; color:" SHZ_TEXT ";"
+        " border:1px solid " SHZ_BORDER "; padding:4px 7px; }"
+        "QStatusBar { background:" SHZ_WELL ";"
+        " border-top:1px solid " SHZ_BORDER_SOFT "; }"
+        "QStatusBar::item { border:0; }"
+        "QStatusBar QLabel { color:" SHZ_ACCENT "; font-weight:700;"
+        " font-size:11px; letter-spacing:0.5px; }");
+}
+
+static QString boardFrameStyle()
+{
+    return QStringLiteral(
+        "QWidget#boardFrame { background:%1;"
+        " border:1px solid " SHZ_BOARD_EDGE "; border-radius:" SHZ_R_LG "; }")
+        .arg(PieceRenderer::boardWellColor(kBoardSquareSize).name());
+}
+
+// The 8x8 block gets the same blunt vertex as the frame: only its four outer
+// squares round off, and always by display position so a flip follows along.
+static PieceRenderer::SquareCorner displayCorner(int displayRow, int displayCol)
+{
+    if (displayRow == 0 && displayCol == 0) return PieceRenderer::CornerTopLeft;
+    if (displayRow == 0 && displayCol == 7) return PieceRenderer::CornerTopRight;
+    if (displayRow == 7 && displayCol == 0) return PieceRenderer::CornerBottomLeft;
+    if (displayRow == 7 && displayCol == 7) return PieceRenderer::CornerBottomRight;
+    return PieceRenderer::CornerNone;
 }
 
 static QLabel *captionLabel(const QString &text, QWidget *parent)
 {
     auto *label = new QLabel(text.toUpper(), parent);
-    label->setStyleSheet(
-        "QLabel { color:#00d7ff; font:700 10px \"Segoe UI\"; padding:0; }");
+    label->setObjectName(QStringLiteral("caption"));
     return label;
 }
 
@@ -255,12 +336,31 @@ static void setWidgetStyle(QWidget *widget, const QString &style)
 
 QByteArray mqttClientIdFor(bool host, quint64 nonce)
 {
-    return mqttClientIdForImpl(host, nonce);
+    return QStringLiteral("PC%1%2")
+        .arg(host ? QLatin1Char('H') : QLatin1Char('J'))
+        .arg(nonce, 16, 16, QLatin1Char('0'))
+        .toUpper()
+        .toLatin1();
 }
 
 QStringList directIpHistoryWith(const QStringList &history, const QString &host)
 {
-    return directIpHistoryWithImpl(history, host);
+    QStringList result;
+    const auto append = [&result](const QString &candidate) {
+        const QString ip = candidate.trimmed();
+        if (ChessHelpers::isDirectIpSyntaxOk(ip) && !result.contains(ip)) {
+            result.append(ip);
+        }
+    };
+
+    append(host);
+    for (const QString &ip : history) {
+        if (result.size() >= kDirectIpHistoryMax) {
+            break;
+        }
+        append(ip);
+    }
+    return result;
 }
 
 class MainWindowImpl final : public QMainWindow {
@@ -355,6 +455,21 @@ public:
                           payload, retained);
     }
 
+    bool testBeginMqttRestore()
+    {
+        const QByteArray snapshot(SESSION_RESTORE_BYTES, 'A');
+
+        return submitSessionLocalRequest(SESSION_REQUEST_RESTORE, 0u,
+                                         snapshot, SESSION_PHASE_READY) &&
+               directUiBusy_ == SESSION_REQUEST_RESTORE;
+    }
+
+    bool testRestoreUiIdle() const
+    {
+        return directUiBusy_ == 0u && directDecisionRequestId_ == 0u &&
+               directDecisionControl_ == 0u && directDecisionBox_ == nullptr;
+    }
+
     void testSetMqttWriteFailure(bool enabled)
     {
         testMqttWriteFailure_ = enabled;
@@ -363,6 +478,37 @@ public:
     bool testSessionReady() const
     {
         return directSessionReady_;
+    }
+
+    QString testStatusContextText() const
+    {
+        return statusContextText();
+    }
+
+    bool testStatusBarAligned()
+    {
+        const bool wasVisible = isVisible();
+        if (!wasVisible) {
+            show();
+        }
+        QCoreApplication::processEvents();
+        alignStatusBarToControls();
+        QCoreApplication::processEvents();
+
+        const int leftAnchor =
+            flipBoardButton_->mapToGlobal(QPoint(0, 0)).x();
+        const int leftStatus =
+            statusStateLabel_->mapToGlobal(QPoint(0, 0)).x();
+        const int rightAnchor = logToggleButton_->mapToGlobal(
+            QPoint(logToggleButton_->width(), 0)).x();
+        const int rightStatus = moveClockLabel_->mapToGlobal(
+            QPoint(moveClockLabel_->width(), 0)).x();
+        const bool aligned = qAbs(leftStatus - leftAnchor) <= 1 &&
+                             qAbs(rightStatus - rightAnchor) <= 1;
+        if (!wasVisible) {
+            hide();
+        }
+        return aligned;
     }
 
     bool testDisconnectButtonAvailable() const
@@ -466,6 +612,17 @@ public:
 
     bool testResignRestartUiProjection()
     {
+        const auto terminalReasonVisible = [this](const char *reason) {
+            const QString expected = QString::fromLatin1(reason);
+            endGameOver(expected);
+            return gameOver_ && statusMessage_ == expected;
+        };
+        const bool terminalReasons =
+            terminalReasonVisible(NETCHESSZX_UI_EVENT_CHECKMATE_WON) &&
+            terminalReasonVisible(NETCHESSZX_UI_EVENT_CHECKMATE_LOST) &&
+            terminalReasonVisible(NETCHESSZX_UI_EVENT_STALEMATE) &&
+            terminalReasonVisible(NETCHESSZX_UI_EVENT_DRAW_AGREED);
+
         gameOver_ = true;
         gameClockRunning_ = false;
         directLocalResignPending_ = true;
@@ -520,8 +677,82 @@ public:
         chatEdit_->clear();
         setConnectedUi(false);
         return pendingBlocked && completedBlocked && failedRestart &&
-               remoteResign && controlHighlighted && regularChatNormal &&
-               chatSharesControls;
+               remoteResign && terminalReasons && controlHighlighted &&
+               regularChatNormal && chatSharesControls;
+    }
+
+    bool testBoardStateProjection()
+    {
+        const auto resetRulesBoard = [this]() {
+            return netchesszx_rules_reset() == NETCHESSZX_OK &&
+                   syncBoardFromRules();
+        };
+        const auto pieceAt = [this](const char *square) {
+            return board_['8' - square[1]][square[0] - 'a'];
+        };
+        const auto playMoves = [this](const char *const *moves, int count) {
+            for (int index = 0; index < count; ++index) {
+                if (!applyMoveToBoard(QString::fromLatin1(moves[index]))) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        bool ok = resetRulesBoard();
+        nextPly_ = 1;
+        bool takebackOk = saveTakebackSnapshot(1, true) &&
+                          applyMoveToBoard(QStringLiteral("e2e4")) &&
+                          pieceAt("e2") == '.' && pieceAt("e4") == 'P';
+        restoreTakebackSnapshot();
+        takebackOk = takebackOk && pieceAt("e2") == 'P' && pieceAt("e4") == '.';
+        ok = ok && takebackOk;
+
+        static const char *const castleMoves[] = {
+            "e2e4", "e7e5", "g1f3", "b8c6", "f1e2", "g8f6", "e1g1"
+        };
+        bool castleOk = resetRulesBoard() &&
+                        playMoves(castleMoves,
+                                  static_cast<int>(sizeof(castleMoves) /
+                                                   sizeof(castleMoves[0])));
+        castleOk = castleOk && pieceAt("g1") == 'K' && pieceAt("f1") == 'R' &&
+                   pieceAt("e1") == '.' && pieceAt("h1") == '.';
+        ok = ok && castleOk;
+
+        static const char *const enPassantMoves[] = {
+            "e2e4", "a7a6", "e4e5", "d7d5", "e5d6"
+        };
+        bool enPassantOk = resetRulesBoard() &&
+            playMoves(enPassantMoves,
+                      static_cast<int>(sizeof(enPassantMoves) /
+                                       sizeof(enPassantMoves[0])));
+        enPassantOk = enPassantOk && pieceAt("d6") == 'P' && pieceAt("d5") == '.';
+        ok = ok && enPassantOk;
+
+        netchesszx_save_state_t promotion = {};
+        std::memset(promotion.cells, '.', sizeof(promotion.cells));
+        promotion.cells[4] = 'k';
+        promotion.cells[8] = 'P';
+        promotion.cells[60] = 'K';
+        promotion.side = NETCHESSZX_SAVE_SIDE_WHITE;
+        promotion.ep = NETCHESSZX_SAVE_EP_NONE;
+        promotion.host_color = NETCHESSZX_SAVE_HOST_WHITE;
+        bool promotionOk = restoreApplyState(promotion) &&
+                           applyMoveToBoard(QStringLiteral("a7a8q")) &&
+                           pieceAt("a8") == 'Q' && pieceAt("a7") == '.';
+        netchesszx_save_state_t projected = {};
+        promotionOk = promotionOk && currentSaveState(&projected, false) &&
+                      projected.cells[0] == 'Q' && projected.cells[8] == '.';
+        ok = ok && promotionOk;
+
+        const bool resetOk = resetRulesBoard();
+        nextPly_ = 1;
+        gameOver_ = false;
+        gameCheck_ = false;
+        clearTakebackState();
+        clearMoveHistory();
+        refreshBoard();
+        return ok && resetOk;
     }
 
     bool testRestoredMoveProjection()
@@ -546,7 +777,7 @@ public:
              "", "", "RESTORED", "1.", "E2E4"},
         };
         netchesszx_save_state_t base;
-        bool ok = currentSaveState(&base, false);
+        bool ok = testBoardStateProjection() && currentSaveState(&base, false);
         const auto cellText = [this](int row, int col) {
             QTableWidgetItem *item = moveTable_->item(row, col);
             return item != nullptr ? item->text() : QString();
@@ -560,12 +791,16 @@ public:
                 ok = false;
                 break;
             }
+            const int restoredColumn = (test.ply & 1u) != 0u ? 1 : 2;
+            QTableWidgetItem *restoredItem =
+                moveTable_->item(0, restoredColumn);
             appendMoveRecord(test.nextPly,
                              (test.nextPly & 1) != 0
                                  ? QStringLiteral("e2e4")
                                  : QStringLiteral("e7e5"),
                              QString());
             ok = moveTable_->rowCount() == test.rows &&
+                 moveTable_->item(0, restoredColumn) == restoredItem &&
                  cellText(0, 0) == QString::fromLatin1(test.row0Number) &&
                  cellText(0, 1) == QString::fromLatin1(test.row0White) &&
                  cellText(0, 2) == QString::fromLatin1(test.row0Black);
@@ -578,9 +813,62 @@ public:
                 break;
             }
         }
+
+        clearMoveHistory();
+        for (int ply = 1; ok && ply <= 400; ++ply) {
+            appendMoveRecord(ply, QStringLiteral("e2e4"), QString());
+        }
+        QTableWidgetItem *middleItem = moveTable_->item(100, 1);
+        appendMoveRecord(401, QStringLiteral("e2e4"), QString());
+        appendMoveRecord(402, QStringLiteral("e7e5"), QString());
+        ok = ok && moveHistoryRecords_.size() == 400 &&
+             moveTable_->rowCount() == 200 &&
+             moveTable_->item(99, 1) == middleItem &&
+             cellText(0, 0) == QStringLiteral("2.") &&
+             cellText(199, 0) == QStringLiteral("201.");
         clearMoveHistory();
         setConnectedUi(false);
         return ok;
+    }
+
+    bool testSessionEndPresentation()
+    {
+        struct EndCase {
+            uint8_t reason;
+            const char *expected;
+        };
+        static const EndCase cases[] = {
+            {SESSION_END_REASON_LOCAL_BYE,
+             NETCHESSZX_UI_PHASE_DISCONNECTED},
+            {SESSION_END_REASON_REMOTE_BYE,
+             NETCHESSZX_UI_PC_EVENT_OPPONENT_LEFT},
+            {SESSION_END_REASON_TRANSPORT_LOST,
+             NETCHESSZX_UI_PC_ERROR_CONNECTION_LOST},
+        };
+        const QSignalBlocker directBlocker(directRadio_);
+        const QSignalBlocker mqttBlocker(mqttRadio_);
+        bool ok = true;
+
+        directRadio_->setChecked(true);
+        mqttRadio_->setChecked(false);
+        for (const EndCase &test : cases) {
+            directSessionReady_ = true;
+            directEndStatus_.clear();
+            localDisconnectPending_ = false;
+            handleDirectSessionChanged(SESSION_CHANGED_ENDED, test.reason);
+            const QString expected = QString::fromLatin1(test.expected);
+            ok = ok && statusMessage_ == expected &&
+                 statusStateText() == expected;
+        }
+        return ok;
+    }
+
+    bool testCancelPendingPieceFlash()
+    {
+        const bool pending = static_cast<bool>(flashDone_);
+
+        invalidatePieceFlash();
+        return pending && directUiBusy_ == 0u;
     }
 #endif
 
@@ -590,21 +878,22 @@ public:
         setWindowTitle(QStringLiteral("Shatranj %1").arg(
             QString::fromLatin1(kAppVersion)));
         setStyleSheet(appStyleSheet());
-        resetBoard();
-        PieceRenderer::prewarmPieceIcons();
         netchesszx_rules_reset();
+        (void)syncBoardFromRules();
         auto *root = new QWidget(this);
         auto *layout = new QVBoxLayout(root);
-        layout->setContentsMargins(8, 8, 8, 4);
-        layout->setSpacing(6);
+        layout->setContentsMargins(10, 10, 10, 6);
+        layout->setSpacing(10);
         auto *banner = new AppBanner(root);
         banner->clicked = [this]() {
             showAboutDialog();
         };
         layout->addWidget(banner);
-        auto *topRows = new QVBoxLayout();
-        topRows->setContentsMargins(0, 0, 0, 0);
-        topRows->setSpacing(14);
+        auto *topCard = new QWidget(root);
+        topCard->setObjectName(QStringLiteral("topCard"));
+        auto *topRows = new QVBoxLayout(topCard);
+        topRows->setContentsMargins(12, 6, 12, 6);
+        topRows->setSpacing(4);
         auto *connectionRow = new QHBoxLayout();
         connectionRow->setContentsMargins(0, 0, 0, 0);
         connectionRow->setSpacing(0);
@@ -656,9 +945,10 @@ public:
         hostEdit_->setMinimumWidth(hostEdit_->sizeHint().width());
         directIpHistoryMenu_ = new QMenu(hostEdit_);
         directIpHistoryMenu_->setStyleSheet(
-            "QMenu { background:#242432; color:#f1f3f6; border:1px solid #555568; padding:4px; }"
-            "QMenu::item { min-width:140px; padding:7px 12px; }"
-            "QMenu::item:selected { background:#00b7d8; color:#101018; }");
+            "QMenu { background:" SHZ_SURFACE "; color:" SHZ_TEXT ";"
+            " border:1px solid " SHZ_BORDER "; border-radius:" SHZ_R "; padding:4px; }"
+            "QMenu::item { min-width:140px; padding:7px 12px; border-radius:4px; }"
+            "QMenu::item:selected { background:" SHZ_ACCENT_DEEP "; color:" SHZ_WELL "; }");
 
         portSpin_ = new QSpinBox(root);
         portSpin_->setAccessibleName(QStringLiteral("Port"));
@@ -668,9 +958,9 @@ public:
 
         roomEdit_ = new QLineEdit(root);
         roomEdit_->setAccessibleName(QStringLiteral("Room"));
-        roomEdit_->setPlaceholderText("Room");
-        roomEdit_->setMaxLength(8);
-        roomEdit_->setText(settings.value("connection/room", "DEVROOM").toString());
+        roomEdit_->setPlaceholderText("NC0000");
+        roomEdit_->setMaxLength(6);
+        roomEdit_->setText(settings.value("connection/room", "NC0000").toString());
         roomEdit_->setClearButtonEnabled(true);
         roomEdit_->setMinimumWidth(100);
 
@@ -710,7 +1000,11 @@ public:
         connectionControls->setSpacing(8);
         connectionControls->addWidget(directRadio_);
         connectionControls->addWidget(mqttRadio_);
-        hostCaptionLabel_ = captionLabel("Host", root);
+        hostCaptionLabel_ = captionLabel("LOCAL IP", root);
+        hostCaptionLabel_->setMinimumWidth(
+            hostCaptionLabel_->fontMetrics().horizontalAdvance(
+                QStringLiteral("LOCAL IP")));
+        hostCaptionLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         roomCaptionLabel_ = captionLabel("Room", root);
         connectionControls->addWidget(hostCaptionLabel_);
         connectionControls->addWidget(hostEdit_);
@@ -744,12 +1038,13 @@ public:
         roleRow->addWidget(hostColorLabel_, 0, Qt::AlignBaseline);
         roleRow->addWidget(hostWhiteRadio_, 0, Qt::AlignBaseline);
         roleRow->addWidget(hostBlackRadio_, 0, Qt::AlignBaseline);
+        resetButton_->hide();
         sessionRow->addWidget(roleWidget);
         sessionRow->addStretch(1);
         sessionRow->addWidget(actionWidget);
         topRows->addLayout(connectionRow);
         topRows->addLayout(sessionRow);
-        layout->addLayout(topRows);
+        layout->addWidget(topCard);
 
         auto *mainRow = new QHBoxLayout();
         mainRow->setContentsMargins(0, 0, 0, 0);
@@ -760,8 +1055,7 @@ public:
         boardFrame_ = boardWidget;
         boardWidget->setFixedSize(kBoardCoordSize * 2 + kBoardSquareSize * 8 + 2,
                                   kBoardCoordSize * 2 + kBoardSquareSize * 8 + 2);
-        boardWidget->setStyleSheet(
-            "QWidget#boardFrame { background:#101010; border:1px solid #e6e6e2; }");
+        boardWidget->setStyleSheet(boardFrameStyle());
         auto *boardLayout = new QGridLayout(boardWidget);
         boardLayout->setContentsMargins(1, 1, 1, 1);
         boardLayout->setSpacing(0);
@@ -776,7 +1070,8 @@ public:
                     squareClicked(row, col);
                 });
                 squares_[row][col] = button;
-                setSquareStyle(row, col, squareStyle(row, col, false, false, false, false));
+                setSquareStyle(row, col, squareStyle(row, col, false, false, false, false,
+                                                     false, true, displayCorner(row, col)));
                 boardLayout->addWidget(button, row + 1, col + 1);
             }
         }
@@ -790,15 +1085,18 @@ public:
                                       kBoardCoordSize - 4,
                                       kBoardCoordSize - 4);
         flipBoardButton_->setStyleSheet(
-            "QPushButton { background:#20202a; color:#00d7ff; border:1px solid #454557;"
-            " font:700 11px \"Segoe UI\"; padding:0; }"
-            "QPushButton:hover { background:#2b3442; color:#ffffff; }");
+            "QPushButton { background:" SHZ_QUIET "; color:" SHZ_ACCENT ";"
+            " border:1px solid " SHZ_BORDER "; border-radius:" SHZ_R ";"
+            " font-weight:700; font-size:11px; padding:0; min-height:0; }"
+            "QPushButton:hover { background:" SHZ_SURFACE_ALT ";"
+            " border-color:" SHZ_ACCENT "; color:" SHZ_TEXT "; }");
         flipBoardButton_->raise();
 
         auto *sideWidget = new QWidget(root);
+        sideWidget->setObjectName(QStringLiteral("sidePanel"));
         sideWidget->setFixedSize(kSidePanelWidth, boardWidget->height());
         auto *sidePanel = new QVBoxLayout(sideWidget);
-        sidePanel->setContentsMargins(0, 0, 0, 0);
+        sidePanel->setContentsMargins(12, 10, 12, 10);
         sidePanel->setSpacing(6);
 
         sidePanel->addWidget(captionLabel("Status / Move", root));
@@ -810,18 +1108,24 @@ public:
 
         selectedLabel_ = new QLabel(root);
         selectedLabel_->hide();
-        selectedLabel_->setStyleSheet("QLabel { color:#c7c7d8; font:10px \"Segoe UI\"; }");
+        selectedLabel_->setStyleSheet(
+            "QLabel { color:" SHZ_TEXT_DIM "; font-size:10px; }");
 
         showHintsCheck_ = new QCheckBox("Enabled", root);
         showHintsCheck_->setAccessibleName(QStringLiteral("Show legal move hints"));
         showHintsCheck_->setChecked(settings.value("ui/showHints", true).toBool());
         showHintsCheck_->setStyleSheet(
-            "QCheckBox { color:#c7c7d8; font:10px \"Segoe UI\"; spacing:5px; }"
-            "QCheckBox::indicator { width:8px; height:8px; border:1px solid #6a6a7e; background:#242432; }"
-            "QCheckBox::indicator:checked { background:#00d7ff; border:1px solid #00d7ff; }"
-            "QCheckBox::indicator:disabled { background:#303040; border-color:#454557; }"
-            "QCheckBox::indicator:checked:disabled { background:#8a8aa0; border:1px solid #8a8aa0; }"
-            "QCheckBox:checked:disabled { color:#c7c7d2; }"
+            "QCheckBox { color:" SHZ_TEXT_DIM "; font-size:10px; spacing:6px; }"
+            "QCheckBox::indicator { width:10px; height:10px; border-radius:3px;"
+            " border:1px solid " SHZ_TEXT_MUTED "; background:" SHZ_SURFACE "; }"
+            "QCheckBox::indicator:hover { border-color:" SHZ_ACCENT "; }"
+            "QCheckBox::indicator:checked { background:" SHZ_ACCENT ";"
+            " border:1px solid " SHZ_ACCENT "; }"
+            "QCheckBox::indicator:disabled { background:" SHZ_DISABLED ";"
+            " border-color:" SHZ_BORDER "; }"
+            "QCheckBox::indicator:checked:disabled { background:" SHZ_TEXT_MUTED ";"
+            " border:1px solid " SHZ_TEXT_MUTED "; }"
+            "QCheckBox:checked:disabled { color:" SHZ_TEXT_DIM "; }"
         );
 
         auto *settingsButton = new QToolButton(root);
@@ -829,12 +1133,15 @@ public:
         settingsButton->setAccessibleName(QStringLiteral("Settings"));
         settingsButton->setToolTip("Settings");
         settingsButton->setPopupMode(QToolButton::InstantPopup);
-        settingsButton->setFixedSize(24, 22);
+        settingsButton->setFixedSize(32, 32);  // square, like the save/load buttons
         settingsButton->setFocusPolicy(Qt::StrongFocus);
         settingsButton->setStyleSheet(
-            "QToolButton { background:#242432; color:#00d7ff; border:1px solid #555568;"
-            " font:700 13px \"Segoe UI\"; padding:0; }"
-            "QToolButton:hover { background:#2b3442; color:#ffffff; }");
+            "QToolButton { background:" SHZ_QUIET "; color:" SHZ_ACCENT ";"
+            " border:1px solid " SHZ_BORDER "; border-radius:" SHZ_R ";"
+            " font-weight:700; font-size:13px; padding:0; }"
+            "QToolButton::menu-indicator { image:none; width:0; }"
+            "QToolButton:hover { background:" SHZ_SURFACE_ALT ";"
+            " border-color:" SHZ_ACCENT "; color:" SHZ_TEXT "; }");
 
         auto *chatHeaderRow = new QHBoxLayout();
         chatHeaderRow->setContentsMargins(0, 0, 0, 0);
@@ -849,8 +1156,9 @@ public:
         chatLogEdit_->setFixedHeight(132);
         chatLogEdit_->setLineWrapMode(QPlainTextEdit::WidgetWidth);
         chatLogEdit_->setStyleSheet(
-            "QPlainTextEdit { background:#2b2b39; color:#e8eef6;"
-            " font:10pt \"Segoe UI\"; border:1px solid #555568; padding:5px; }");
+            "QPlainTextEdit { background:" SHZ_SURFACE "; color:" SHZ_TEXT ";"
+            " font-size:10pt; border:1px solid " SHZ_BORDER ";"
+            " border-radius:" SHZ_R "; padding:7px; }");
         chatLogEdit_->document()->setMaximumBlockCount(200);
         sidePanel->addWidget(chatLogEdit_);
 
@@ -864,9 +1172,12 @@ public:
         chatEdit_->setMaxLength(kChatTextMax);
         chatEdit_->setMinimumHeight(32);
         chatEdit_->setStyleSheet(
-            "QLineEdit { background:#202b35; color:#ffffff; border:1px solid #00d7ff;"
-            " padding:3px 6px; selection-background-color:#00b7d8; selection-color:#101018; }"
-            "QLineEdit:focus { background:#243444; border:1px solid #6fefff; }");
+            "QLineEdit { background:#202b35; color:#ffffff;"
+            " border:1px solid " SHZ_ACCENT "; border-radius:" SHZ_R ";"
+            " padding:4px 8px; selection-background-color:" SHZ_ACCENT_DEEP ";"
+            " selection-color:" SHZ_WELL "; }"
+            "QLineEdit:focus { background:#243444;"
+            " border:1px solid " SHZ_ACCENT_SOFT "; }");
         chatEdit_->installEventFilter(this);
         moveEdit_ = chatEdit_;
         chatButton_ = new QPushButton("SEND", root);
@@ -875,14 +1186,59 @@ public:
         chatButton_->setMinimumSize(72, 32);
         setWidgetStyle(chatButton_, chatButtonStyle(false));
 
-        auto *chatCountLabel = new QLabel(
-            QStringLiteral("0/%1").arg(kChatTextMax), root);
-        chatCountLabel->setAccessibleName(QStringLiteral("Chat character count"));
-        chatCountLabel->setStyleSheet(
-            "QLabel { color:#8a8aa0; font:9px \"Segoe UI\"; }");
+        chatCountLabel_ = new QLabel(chatEdit_);
+        chatCountLabel_->setAccessibleName(QStringLiteral("Chat character count"));
+        chatCountLabel_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+        chatCountLabel_->setStyleSheet(
+            "QLabel { color:" SHZ_TEXT_MUTED "; font-size:9px;"
+            " background:transparent; padding:0; }");
+        chatCountLabel_->setText(QStringLiteral("0/%1").arg(kChatTextMax));
+        takebackButton_ = new QPushButton(root);
+        resetIconButton_ = new QPushButton(root);
+        drawButton_ = new QPushButton(root);
+        takebackButton_->setIcon(sessionActionIcon("takeback"));
+        resetIconButton_->setIcon(sessionActionIcon("reset"));
+        drawButton_->setIcon(sessionActionIcon("draw"));
+        takebackButton_->setAccessibleName(QStringLiteral("Request takeback"));
+        resetIconButton_->setAccessibleName(QStringLiteral("Reset game"));
+        drawButton_->setAccessibleName(QStringLiteral("Offer draw"));
+        takebackButton_->setToolTip(QStringLiteral("Takeback"));
+        resetIconButton_->setToolTip(QStringLiteral("Reset game"));
+        drawButton_->setToolTip(QStringLiteral("Offer a draw"));
+        const QString iconButtonStyle =
+            "QPushButton { background:" SHZ_QUIET "; color:" SHZ_ACCENT ";"
+            " border:1px solid " SHZ_BORDER "; border-radius:" SHZ_R ";"
+            " padding:0; min-height:0; min-width:0; }"
+            "QPushButton:hover { background:" SHZ_SURFACE_ALT ";"
+            " border-color:" SHZ_ACCENT "; }"
+            "QPushButton:disabled { background:" SHZ_DISABLED ";"
+            " border-color:" SHZ_DISABLED "; }";
+        for (QPushButton *button : {takebackButton_, resetIconButton_, drawButton_}) {
+            button->setIconSize(QSize(16, 16));
+            button->setFixedSize(32, 32);
+            button->setFocusPolicy(Qt::StrongFocus);
+            button->setAutoDefault(false);
+            button->setDefault(false);
+            button->setStyleSheet(iconButtonStyle);
+        }
+        connect(takebackButton_, &QPushButton::clicked, this, [this]() {
+            (void)requestTakeback();
+            refreshSessionCommandButtons();
+        });
+        connect(resetIconButton_, &QPushButton::clicked, this, [this]() {
+            if (resetButton_ != nullptr) {
+                resetButton_->click();
+            }
+        });
+        connect(drawButton_, &QPushButton::clicked, this, [this]() {
+            (void)requestDraw();
+            refreshSessionCommandButtons();
+        });
         auto *chatActionRow = new QHBoxLayout();
         chatActionRow->setSpacing(6);
-        chatActionRow->addWidget(chatCountLabel);
+        chatActionRow->addWidget(takebackButton_);
+        chatActionRow->addWidget(resetIconButton_);
+        chatActionRow->addWidget(drawButton_);
         chatActionRow->addStretch(1);
         chatActionRow->addWidget(chatButton_);
         chatControls->addWidget(chatEdit_);
@@ -909,7 +1265,8 @@ public:
 
         auto *settingsMenu = new QMenu(settingsButton);
         settingsMenu->setStyleSheet(
-            "QMenu { background:#242432; color:#f1f3f6; border:1px solid #555568; }");
+            "QMenu { background:" SHZ_SURFACE "; color:" SHZ_TEXT ";"
+            " border:1px solid " SHZ_BORDER "; border-radius:" SHZ_R "; }");
         auto *settingsPanel = new QWidget(settingsMenu);
         auto *settingsLayout = new QGridLayout(settingsPanel);
         settingsLayout->setContentsMargins(8, 8, 8, 8);
@@ -969,23 +1326,30 @@ public:
         moveTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
         moveTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
         moveTable_->setStyleSheet(
-            "QTableWidget { background:#2b2b39; color:#f1f0e8;"
-            " alternate-background-color:#313142;"
-            " font:9pt \"Cascadia Mono\"; border:1px solid #555568; }"
-            "QTableWidget::item { padding:0 6px; border-bottom:1px solid #3a3a4a;"
-            " border-right:1px solid #4c4c5d; }"
-            "QHeaderView::section { background:#2b2b39; color:#f1f0e8;"
-            " font:700 8pt \"Cascadia Mono\"; border:0;"
-            " border-right:1px solid #4c4c5d; border-bottom:1px solid #5b5b70;"
-            " padding:0 6px; }");
+            QStringLiteral(
+                "QTableWidget { background:" SHZ_SURFACE "; color:#f1f0e8;"
+                " alternate-background-color:" SHZ_ROW_ALT ";"
+                " font-family:\"%1\"; font-size:9pt;"
+                " border:1px solid " SHZ_BORDER "; border-radius:" SHZ_R "; }"
+                "QTableWidget::item { padding:0 6px;"
+                " border-bottom:1px solid " SHZ_BORDER_SOFT "; border-right:0; }"
+                "QHeaderView::section { background:" SHZ_SURFACE ";"
+                " color:#f1f0e8; font-family:\"%1\"; font-weight:700;"
+                " font-size:8pt; letter-spacing:1px; border:0;"
+                " border-bottom:1px solid #5b5b70; padding:0 6px; }")
+                .arg(UiTheme::monoFamily()));
         logStack_->addWidget(moveTable_);
 
         logEdit_ = new QTextEdit(logStack_);
         logEdit_->setReadOnly(true);
         logEdit_->setLineWrapMode(QTextEdit::WidgetWidth);
         logEdit_->setStyleSheet(
-            "QTextEdit { background:#2b2b39; color:#f1f0e8;"
-            " font:9pt \"Cascadia Mono\"; border:1px solid #555568; padding:5px; }");
+            QStringLiteral(
+                "QTextEdit { background:" SHZ_SURFACE "; color:#f1f0e8;"
+                " font-family:\"%1\"; font-size:9pt;"
+                " border:1px solid " SHZ_BORDER "; border-radius:" SHZ_R ";"
+                " padding:6px; }")
+                .arg(UiTheme::monoFamily()));
         logEdit_->document()->setDocumentMargin(0);
         logEdit_->document()->setMaximumBlockCount(400);
         logStack_->addWidget(logEdit_);
@@ -1024,27 +1388,30 @@ public:
         setCentralWidget(root);
         socket_ = new QTcpSocket(this);
         directServer_ = new QTcpServer(this);
-        statusStateLabel_ = new QLabel("DISCONNECTED", this);
-        statusContextLabel_ = new QLabel(QString(), this);
-        gameClockLabel_ = new QLabel("GAME --:--", this);
-        moveClockLabel_ = new QLabel("MOVE --:--", this);
+        statusBarContents_ = new QWidget(statusBar());
+        statusBarLayout_ = new QHBoxLayout(statusBarContents_);
+        statusBarLayout_->setContentsMargins(0, 0, 0, 0);
+        statusBarLayout_->setSpacing(6);
+        statusStateLabel_ = new QLabel("DISCONNECTED", statusBarContents_);
+        statusContextLabel_ = new QLabel(QString(), statusBarContents_);
+        gameClockLabel_ = new QLabel("GAME --:--", statusBarContents_);
+        moveClockLabel_ = new QLabel("MOVE --:--", statusBarContents_);
         statusStateLabel_->setMinimumWidth(120);
         statusContextLabel_->setSizePolicy(QSizePolicy::Expanding,
                                            QSizePolicy::Preferred);
         gameClockLabel_->setMinimumWidth(80);
         moveClockLabel_->setMinimumWidth(80);
-        statusStateLabel_->setStyleSheet("QLabel { color:#00d7ff; font:700 11px Segoe UI; }");
-        statusContextLabel_->setStyleSheet("QLabel { color:#00d7ff; font:700 11px Segoe UI; }");
-        gameClockLabel_->setStyleSheet("QLabel { color:#00d7ff; font:700 11px Segoe UI; }");
-        moveClockLabel_->setStyleSheet("QLabel { color:#00d7ff; font:700 11px Segoe UI; }");
+        statusContextLabel_->setStyleSheet(
+            "QLabel { color:" SHZ_ACCENT "; font-weight:600; font-size:11px; }");
         statusContextLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
         gameClockLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         moveClockLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         statusBar()->setSizeGripEnabled(false);
-        statusBar()->addWidget(statusStateLabel_);
-        statusBar()->addWidget(statusContextLabel_, 1);
-        statusBar()->addPermanentWidget(gameClockLabel_);
-        statusBar()->addPermanentWidget(moveClockLabel_);
+        statusBarLayout_->addWidget(statusStateLabel_);
+        statusBarLayout_->addWidget(statusContextLabel_, 1);
+        statusBarLayout_->addWidget(gameClockLabel_);
+        statusBarLayout_->addWidget(moveClockLabel_);
+        statusBar()->addWidget(statusBarContents_, 1);
 
         configureSessionFromUi();
         if (isMqttMode() && pcIsHost_) {
@@ -1072,8 +1439,53 @@ public:
             retryDirectConnection();
         });
 
+        revealTimer_ = new QTimer(this);
+        revealTimer_->setSingleShot(true);
+        connect(revealTimer_, &QTimer::timeout, this, [this]() {
+            advancePieceReveal();
+        });
+        flashTimer_ = new QTimer(this);
+        flashTimer_->setSingleShot(true);
+        connect(flashTimer_, &QTimer::timeout, this, [this]() {
+            advancePieceFlash();
+        });
+        feedbackTimer_ = new QTimer(this);
+        feedbackTimer_->setSingleShot(true);
+        connect(feedbackTimer_, &QTimer::timeout, this, [this]() {
+            advanceDestinationFeedback();
+        });
+
         configureSessionControllerCallbacks();
 
+        connectUiSignals();
+
+        setConnectedUi(false);
+        layoutChatCountLabel();
+        updateClockLabels();
+        refreshBoard();
+        animateBoardPiecesIn();
+    }
+
+    ~MainWindowImpl() override
+    {
+        if (revealTimer_ != nullptr) {
+            revealTimer_->stop();
+        }
+        if (flashTimer_ != nullptr) {
+            flashTimer_->stop();
+        }
+        if (feedbackTimer_ != nullptr) {
+            feedbackTimer_->stop();
+        }
+        flashDone_ = {};
+        for (QTcpSocket *sock : findChildren<QTcpSocket *>()) {
+            QObject::disconnect(sock, nullptr, this, nullptr);
+        }
+    }
+
+private:
+    void connectUiSignals()
+    {
         connect(connectButton_, &QPushButton::clicked, this, [this]() {
             if (isConnected()) {
                 const QMessageBox::StandardButton answer = askQuestion(
@@ -1124,7 +1536,6 @@ public:
             connectToOpponent();
         });
         connect(flipBoardButton_, &QPushButton::clicked, this, [this]() {
-            boardOrientationManual_ = true;
             boardWhiteAtBottom_ = !boardWhiteAtBottom_;
             coordinatesInitialized_ = false;
             refreshBoard();
@@ -1292,10 +1703,13 @@ public:
             sendChat();
         });
         connect(chatEdit_, &QLineEdit::textChanged, this,
-                [this, chatCountLabel](const QString &text) {
+                [this](const QString &text) {
             chatInputHistoryIndex_ = static_cast<int>(chatInputHistory_.size());
-            chatCountLabel->setText(
-                QStringLiteral("%1/%2").arg(text.size()).arg(kChatTextMax));
+            if (chatCountLabel_ != nullptr) {
+                chatCountLabel_->setText(
+                    QStringLiteral("%1/%2").arg(text.size()).arg(kChatTextMax));
+            }
+            layoutChatCountLabel();
             refreshChatButton();
         });
         connect(chatEdit_, &QLineEdit::returnPressed, this, [this]() {
@@ -1316,20 +1730,8 @@ public:
         connect(directServer_, &QTcpServer::newConnection, this, [this]() {
             acceptDirectClient();
         });
-
-        setConnectedUi(false);
-        updateClockLabels();
-        refreshBoard();
     }
 
-    ~MainWindowImpl() override
-    {
-        for (QTcpSocket *sock : findChildren<QTcpSocket *>()) {
-            QObject::disconnect(sock, nullptr, this, nullptr);
-        }
-    }
-
-private:
     struct MoveRecord {
         int ply = 0;
         QString move;
@@ -1337,7 +1739,6 @@ private:
     };
 
     struct TakebackSnapshot {
-        char board[8][8] = {};
         QByteArray rules;
         QString lastMove;
         int ply = 0;
@@ -1349,16 +1750,18 @@ private:
         bool valid = false;
     };
 
+    void showEvent(QShowEvent *event) override
+    {
+        QMainWindow::showEvent(event);
+        applyWindowChrome(this, QColor(QStringLiteral(SHZ_INK)),
+                          QColor(QStringLiteral(SHZ_TEXT)));
+    }
+
     void closeEvent(QCloseEvent *event) override
     {
         if (isConnected()) {
-            if (isMqttMode()) {
-                directEndStatus_ = NETCHESSZX_UI_PHASE_DISCONNECTED;
-                (void)submitSessionLocalRequest(SESSION_REQUEST_BYE);
-            } else {
-                directEndStatus_ = NETCHESSZX_UI_PHASE_DISCONNECTED;
-                (void)submitSessionLocalRequest(SESSION_REQUEST_BYE);
-            }
+            directEndStatus_ = NETCHESSZX_UI_PHASE_DISCONNECTED;
+            (void)submitSessionLocalRequest(SESSION_REQUEST_BYE);
         }
         if (directServer_ != nullptr) {
             directServer_->close();
@@ -1368,6 +1771,10 @@ private:
 
     bool eventFilter(QObject *watched, QEvent *event) override
     {
+        if (watched == chatEdit_ &&
+            (event->type() == QEvent::Resize || event->type() == QEvent::Show)) {
+            layoutChatCountLabel();
+        }
         if (watched == chatEdit_ && event->type() == QEvent::KeyPress) {
             auto *keyEvent = static_cast<QKeyEvent *>(event);
             if ((keyEvent->key() == Qt::Key_Up || keyEvent->key() == Qt::Key_Down) &&
@@ -1412,7 +1819,8 @@ private:
         label->setAlignment(Qt::AlignCenter);
         label->setFixedHeight(363);
         label->setPixmap(image.scaled(QSize(363, 363), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-        label->setStyleSheet("QLabel { background:#080706; border-bottom:1px solid #3a2a17; }");
+        label->setStyleSheet(
+            "QLabel { background:#080706; border-bottom:1px solid #3a2a17; }");
         return label;
     }
 
@@ -1426,8 +1834,9 @@ private:
             "QDialog { background:#171821; color:#f2f2f0; }"
             "QLabel { color:#f2f2f0; background:#171821; }"
             "QLabel#muted { color:#c4c7cf; }"
-            "QLabel#link { color:#00d7ff; }"
-            "QPushButton { background:#292a36; color:#f2f2f0; border:1px solid #444654;"
+            "QLabel#link { color:" SHZ_ACCENT "; }"
+            "QPushButton { background:#292a36; color:#f2f2f0;"
+            " border:1px solid #444654; border-radius:" SHZ_R ";"
             " padding:6px 18px; }"
             "QPushButton:hover { background:#343646; }");
 
@@ -1461,7 +1870,7 @@ private:
         info->setOpenExternalLinks(true);
         info->setWordWrap(true);
         info->setStyleSheet(
-            "QLabel { color:#c4c7cf; font:9pt \"Segoe UI\";"
+            "QLabel { color:#c4c7cf; font-size:9pt;"
             " padding-left:28px; padding-right:28px; }");
         layout->addWidget(info);
 
@@ -1476,24 +1885,14 @@ private:
         dialog.exec();
     }
 
-    void resetBoard()
+    bool syncBoardFromRules()
     {
-        const char *rows[8] = {
-            "rnbqkbnr",
-            "pppppppp",
-            "........",
-            "........",
-            "........",
-            "........",
-            "PPPPPPPP",
-            "RNBQKBNR"
-        };
-
-        for (int row = 0; row < 8; ++row) {
-            for (int col = 0; col < 8; ++col) {
-                board_[row][col] = rows[row][col];
-            }
+        CompactRulesState state = {};
+        if (netchesszx_rules_save(&state, sizeof(state)) != NETCHESSZX_OK) {
+            return false;
         }
+        ChessHelpers::asciiBoardFromCompact(state.board, &board_[0][0]);
+        return true;
     }
 
     void refreshBoard()
@@ -1503,34 +1902,21 @@ private:
             for (int displayCol = 0; displayCol < 8; ++displayCol) {
                 const int boardRow = boardRowForDisplay(displayRow);
                 const int boardCol = boardColForDisplay(displayCol);
-                const bool selected = (boardRow == selectedRow_ && boardCol == selectedCol_);
-                const bool target = (boardRow == targetRow_ && boardCol == targetCol_);
-                const bool legalTarget = isLegalTarget(boardRow, boardCol);
-                const bool feedback = isFeedbackSquare(boardRow, boardCol);
                 squares_[displayRow][displayCol]->setAccessibleName(
                     QStringLiteral("Board square %1").arg(ChessHelpers::squareName(boardRow, boardCol).toUpper()));
                 squares_[displayRow][displayCol]->setText(QString());
-                const bool hasPiece = (board_[boardRow][boardCol] != '.');
-                const bool showHints = showHintsCheck_ ? showHintsCheck_->isChecked() : true;
-                const bool styledBackground = selected || feedback ||
-                    (target && hasPiece) ||
-                    (legalTarget && showHints && hasPiece);
-                const bool textured = !PieceRenderer::boardTexture().isEmpty() && !styledBackground;
-                squares_[displayRow][displayCol]->setIconSize(
-                    QSize(textured ? kBoardSquareSize : kPieceIconSize,
-                          textured ? kBoardSquareSize : kPieceIconSize));
-                squares_[displayRow][displayCol]->setIcon(
-                    textured ? PieceRenderer::boardSquareIcon(board_[boardRow][boardCol], boardRow,
-                                                              boardCol, kBoardSquareSize,
-                                                              kPieceIconSize, boardPiecesVisible_,
-                                                              legalTarget && showHints && !hasPiece,
-                                                              target && !hasPiece)
-                             : (boardPiecesVisible_
-                                    ? PieceRenderer::pieceIcon(board_[boardRow][boardCol])
-                                    : QIcon()));
-                setSquareStyle(displayRow, displayCol,
-                               squareStyle(boardRow, boardCol, selected, target,
-                                           legalTarget, feedback, hasPiece, showHints));
+                refreshBoardSquareVisual(boardRow, boardCol);
+            }
+        }
+    }
+
+    void refreshChangedBoardSquares(const char previous[8][8])
+    {
+        for (int row = 0; row < 8; ++row) {
+            for (int col = 0; col < 8; ++col) {
+                if (previous[row][col] != board_[row][col]) {
+                    refreshBoardSquareVisual(row, col);
+                }
             }
         }
     }
@@ -1541,8 +1927,9 @@ private:
         label->setAlignment(Qt::AlignCenter);
         label->setFixedSize(size);
         label->setStyleSheet(
-            "QLabel { color:#e8eef6; background:transparent;"
-            " font:700 12px Segoe UI; padding:0; margin:0; }");
+            "QLabel { color:" SHZ_TEXT "; background:transparent;"
+            " font-weight:700; font-size:11px; letter-spacing:1px;"
+            " padding:0; margin:0; }");
         return label;
     }
 
@@ -1722,7 +2109,6 @@ private:
     void syncBoardOrientationWithPcSide()
     {
         boardWhiteAtBottom_ = pcPlaysWhite_;
-        boardOrientationManual_ = false;
         coordinatesInitialized_ = false;
     }
 
@@ -1756,15 +2142,7 @@ private:
 
     bool isLegalTarget(int row, int col) const
     {
-        const QString square = ChessHelpers::squareName(row, col);
-
-        for (const QString &target : legalTargets_) {
-            if (target == square) {
-                return true;
-            }
-        }
-
-        return false;
+        return legalTargets_.contains(ChessHelpers::squareName(row, col));
     }
 
     void setSquareStyle(int displayRow, int displayCol, const QString &style)
@@ -1794,7 +2172,8 @@ private:
         const bool hasPiece = (board_[row][col] != '.');
         const bool showHints = showHintsCheck_ ? showHintsCheck_->isChecked() : true;
         setSquareStyle(displayRow, displayCol,
-                       squareStyle(row, col, selected, target, legalTarget, feedback, hasPiece, showHints));
+                       squareStyle(row, col, selected, target, legalTarget, feedback, hasPiece,
+                                   showHints, displayCorner(displayRow, displayCol)));
     }
 
     void refreshBoardSquareVisual(int row, int col)
@@ -1829,73 +2208,186 @@ private:
                                                       kBoardSquareSize, kPieceIconSize,
                                                       boardPiecesVisible_ && visible,
                                                       legalTarget && showHints && !hasPiece,
-                                                      target && !hasPiece)
+                                                      target && !hasPiece,
+                                                      displayCorner(displayRow, displayCol))
                      : (boardPiecesVisible_ && visible
                             ? PieceRenderer::pieceIcon(board_[row][col])
                             : QIcon()));
     }
 
-    void revealBoardSquarePair(int generation, int rowA, int colA, int rowB, int colB)
+    void invalidatePieceReveal()
     {
-        if (generation != pieceRevealGeneration_) {
-            return;
+        if (revealTimer_ != nullptr) {
+            revealTimer_->stop();
         }
+        morphSquares_.clear();
+    }
+
+    void invalidatePieceFlash()
+    {
+        if (flashTimer_ != nullptr) {
+            flashTimer_->stop();
+        }
+        auto done = std::move(flashDone_);
+        flashDone_ = {};
+        if (done) {
+            done(true);
+        }
+    }
+
+    void invalidateDestinationFeedback()
+    {
+        if (feedbackTimer_ != nullptr) {
+            feedbackTimer_->stop();
+        }
+    }
+
+    void revealBoardSquarePair(int rowA, int colA, int rowB, int colB)
+    {
         refreshBoardSquareIcon(rowA, colA, true);
         refreshBoardSquareIcon(rowB, colB, true);
     }
 
-    void animateBoardPiecesIn()
+    void advancePieceReveal()
     {
-        const int generation = ++pieceRevealGeneration_;
-        int delay = 0;
+        if (revealIsMorph_) {
+            if (revealStep_ >= morphSquares_.size()) {
+                if (revealTimer_ != nullptr) {
+                    revealTimer_->stop();
+                }
+                return;
+            }
+            const QPoint square = morphSquares_.at(revealStep_);
+            refreshBoardSquareIcon(square.x(), square.y(), true);
+            ++revealStep_;
+            if (revealStep_ >= morphSquares_.size()) {
+                if (revealTimer_ != nullptr) {
+                    revealTimer_->stop();
+                }
+                return;
+            }
+            int nextMs = kPieceMorphStepMs;
+            if (revealStep_ == morphMid_) {
+                nextMs += kPieceMorphMiddlePauseMs;
+            }
+            revealTimer_->start(nextMs);
+            return;
+        }
 
+        if (revealStep_ >= 16) {
+            if (revealTimer_ != nullptr) {
+                revealTimer_->stop();
+            }
+            return;
+        }
+        const int i = revealStep_ < 8 ? revealStep_ : revealStep_ - 8;
+        if (revealStep_ < 8) {
+            revealBoardSquarePair(0, i, 7, 7 - i);
+        } else {
+            revealBoardSquarePair(1, 7 - i, 6, i);
+        }
+        ++revealStep_;
+        if (revealStep_ >= 16) {
+            if (revealTimer_ != nullptr) {
+                revealTimer_->stop();
+            }
+            return;
+        }
+        int nextMs = revealStepMs_;
+        if (revealStep_ == 8) {
+            nextMs += revealPauseMs_;
+        }
+        revealTimer_->start(nextMs);
+    }
+
+    void animateBoardPiecePairs(int stepMs, int pauseMs, bool hideFirst)
+    {
+        invalidatePieceReveal();
+        revealIsMorph_ = false;
+        revealStep_ = 0;
+        revealStepMs_ = stepMs;
+        revealPauseMs_ = pauseMs;
         boardPiecesVisible_ = true;
-        for (int row = 0; row < 8; ++row) {
-            for (int col = 0; col < 8; ++col) {
-                refreshBoardSquareIcon(row, col, false);
+        if (hideFirst) {
+            for (int row = 0; row < 8; ++row) {
+                for (int col = 0; col < 8; ++col) {
+                    refreshBoardSquareIcon(row, col, false);
+                }
             }
         }
+        advancePieceReveal();
+    }
 
-        for (int i = 0; i < 8; ++i) {
-            QTimer::singleShot(delay, this, [this, generation, i]() {
-                revealBoardSquarePair(generation, 0, i, 7, 7 - i);
-            });
-            delay += kPieceRevealStepMs;
+    void animateBoardPiecesIn()
+    {
+        animateBoardPiecePairs(kPieceRevealStepMs, kPieceRevealMiddlePauseMs, true);
+    }
+
+    void animateBoardPiecesMorph()
+    {
+        if (!boardPiecesVisible_) {
+            animateBoardPiecesIn();
+            return;
         }
-        delay += kPieceRevealMiddlePauseMs;
-        for (int i = 0; i < 8; ++i) {
-            QTimer::singleShot(delay, this, [this, generation, i]() {
-                revealBoardSquarePair(generation, 1, 7 - i, 6, i);
-            });
-            delay += kPieceRevealStepMs;
+
+        // The setup reveal only walks the home ranks. A mid-game set change
+        // must retarget every occupied square or moved pieces keep the old set.
+        invalidatePieceReveal();
+        revealIsMorph_ = true;
+        revealStep_ = 0;
+        morphSquares_.clear();
+        morphSquares_.reserve(32);
+        for (int row = 0; row < 8; ++row) {
+            for (int col = 0; col < 8; ++col) {
+                if (board_[row][col] != '.') {
+                    morphSquares_.append(QPoint(row, col));
+                } else {
+                    refreshBoardSquareIcon(row, col, true);
+                }
+            }
+        }
+        morphMid_ = morphSquares_.size() / 2;
+        if (!morphSquares_.isEmpty()) {
+            advancePieceReveal();
         }
     }
 
-    void flashPieceAt(int row, int col, std::function<void()> done)
+    void advancePieceFlash()
+    {
+        ++flashStep_;
+        if (flashRow_ < 0 || flashCol_ < 0 || flashStep_ > 5) {
+            return;
+        }
+        refreshBoardSquareIcon(flashRow_, flashCol_, (flashStep_ % 2) != 0);
+        if (flashStep_ < 5) {
+            flashTimer_->start(kPieceFlashStepMs);
+            return;
+        }
+        refreshBoardSquareIcon(flashRow_, flashCol_, true);
+        auto done = std::move(flashDone_);
+        flashDone_ = {};
+        if (done) {
+            done(false);
+        }
+    }
+
+    void flashPieceAt(int row, int col, std::function<void(bool)> done)
     {
         if (row < 0 || row >= 8 || col < 0 || col >= 8 ||
             board_[row][col] == '.' || !boardPiecesVisible_) {
             if (done) {
-                done();
+                done(false);
             }
             return;
         }
 
-        const int generation = ++pieceFlashGeneration_;
-        for (int step = 0; step <= 5; ++step) {
-            QTimer::singleShot(step * 90, this, [this, generation, row, col, step, done]() {
-                if (generation != pieceFlashGeneration_) {
-                    return;
-                }
-                refreshBoardSquareIcon(row, col, (step % 2) != 0);
-                if (step == 5) {
-                    refreshBoardSquareIcon(row, col, true);
-                    if (done) {
-                        done();
-                    }
-                }
-            });
-        }
+        invalidatePieceFlash();
+        flashRow_ = row;
+        flashCol_ = col;
+        flashStep_ = 0;
+        flashDone_ = std::move(done);
+        refreshBoardSquareIcon(flashRow_, flashCol_, false);
+        flashTimer_->start(kPieceFlashStepMs);
     }
 
     void refreshBoardSquareStyleByName(const QString &square)
@@ -1995,8 +2487,8 @@ private:
                                 QVector<DesktopSessionFollowup> &followups) {
             handleDirectGameAction(kind, deliveryId, value, payload, followups);
         };
-        callbacks.sessionChanged = [this](uint8_t status) {
-            handleDirectSessionChanged(status);
+        callbacks.sessionChanged = [this](uint8_t status, uint8_t endReason) {
+            handleDirectSessionChanged(status, endReason);
         };
         callbacks.sideChanged = [this](DesktopSessionController::Mode mode,
                                        uint8_t color, uint16_t sessionId) {
@@ -2026,15 +2518,14 @@ private:
         directLocalResignPending_ = false;
         directResignRestartPending_ = false;
         directEndStatus_.clear();
+        resetPeerMachineState();
 
         const uint8_t role = pcIsHost_ ? SESSION_ROLE_HOST : SESSION_ROLE_GUEST;
         const uint8_t hostColor = pcIsHost_
                                       ? (hostPlaysWhite_ ? SESSION_COLOR_WHITE
                                                         : SESSION_COLOR_BLACK)
                                       : SESSION_COLOR_UNKNOWN;
-        directSessionInitialized_ =
-            sessionController_.initializeDirect(role, hostColor);
-        return directSessionInitialized_;
+        return sessionController_.initializeDirect(role, hostColor);
     }
 
     bool initializeMqttSession()
@@ -2048,14 +2539,82 @@ private:
         directResignRestartPending_ = false;
         mqttSessionLinked_ = false;
         mqttSideReady_ = pcIsHost_;
+        resetPeerMachineState();
         const uint8_t role = pcIsHost_ ? SESSION_ROLE_HOST : SESSION_ROLE_GUEST;
         const uint8_t hostColor = pcIsHost_
                                       ? (hostPlaysWhite_ ? SESSION_COLOR_WHITE
                                                         : SESSION_COLOR_BLACK)
                                       : SESSION_COLOR_UNKNOWN;
-        mqttSessionInitialized_ =
-            sessionController_.initializeMqtt(role, hostColor, mqttSessionId_);
-        return mqttSessionInitialized_;
+        return sessionController_.initializeMqtt(role, hostColor,
+                                                 mqttSessionId_);
+    }
+
+    void resetPeerMachineState()
+    {
+        peerPlatform_ = NETCHESS_PLAT_UNKNOWN;
+        localMachSent_ = false;
+    }
+
+    void setPeerPlatform(uint8_t platform)
+    {
+        const char *code = netchess_proto_mach_code(platform);
+
+        if (code == nullptr || peerPlatform_ == platform) {
+            return;
+        }
+        peerPlatform_ = platform;
+        appendLog("PEER MACHINE: " + QString::fromLatin1(code));
+        refreshStatusBar();
+    }
+
+    void sendLocalMachAnnouncement()
+    {
+        if (localMachSent_ || !directSessionReady_) {
+            return;
+        }
+        localMachSent_ = true;
+
+        const QByteArray payload = localMachPayload();
+        if (payload.isEmpty()) {
+            appendLog("NOTICE: local machine identity unavailable");
+            return;
+        }
+
+        if (isMqttMode()) {
+            const QByteArray suffix =
+                sessionController_.mqttTopicSuffixForRoute(SESSION_ROUTE_GAME);
+            if (suffix.isEmpty() ||
+                !mqttPublish(QString::fromLatin1(suffix),
+                             QString::fromLatin1(payload), false)) {
+                appendLog("NOTICE: MACH announcement not sent");
+            }
+            return;
+        }
+
+        const QPointer<QTcpSocket> sock =
+            directSocketForLink(directPrimaryLinkId_);
+        if (sock == nullptr ||
+            sock->state() != QAbstractSocket::ConnectedState) {
+            appendLog("NOTICE: MACH announcement link unavailable");
+            return;
+        }
+
+        QByteArray frame = payload;
+        frame.append('\n');
+        const qint64 written = sock->write(frame);
+        if (written == frame.size()) {
+            sock->flush();
+            appendLog("TX: " + QString::fromLatin1(payload));
+            return;
+        }
+
+        appendLog(QString("NOTICE: MACH write %1/%2")
+                      .arg(written)
+                      .arg(frame.size()));
+        if (written > 0) {
+            /* A partial TCP frame corrupts later line framing. */
+            sock->abort();
+        }
     }
 
     bool submitSessionLocalRequest(uint8_t request,
@@ -2150,8 +2709,16 @@ private:
         }
         pcPlaysWhite_ = color == SESSION_COLOR_WHITE;
         hostPlaysWhite_ = pcIsHost_ ? pcPlaysWhite_ : !pcPlaysWhite_;
+        const bool oldWhiteAtBottom = boardWhiteAtBottom_;
         syncBoardOrientationWithPcSide();
-        refreshBoard();
+        if (boardPiecesVisible_ && !gameClockRunning_ && !gameOver_ &&
+            oldWhiteAtBottom != boardWhiteAtBottom_) {
+            boardPiecesVisible_ = false;
+            refreshBoard();
+            animateBoardPiecesIn();
+        } else {
+            refreshBoard();
+        }
         setConnectedUi(directSessionReady_);
     }
 
@@ -2197,12 +2764,20 @@ private:
             advanceMqttSubscriptionTransition();
             return;
         }
+        const bool oldWhiteAtBottom = boardWhiteAtBottom_;
         syncBoardOrientationWithPcSide();
-        refreshBoard();
+        if (boardPiecesVisible_ && !gameClockRunning_ && !gameOver_ &&
+            oldWhiteAtBottom != boardWhiteAtBottom_) {
+            boardPiecesVisible_ = false;
+            refreshBoard();
+            animateBoardPiecesIn();
+        } else {
+            refreshBoard();
+        }
         setConnectedUi(isConnected());
     }
 
-    void handleDirectSessionChanged(uint8_t status)
+    void handleDirectSessionChanged(uint8_t status, uint8_t endReason)
     {
         if (status == SESSION_CHANGED_READY) {
             cancelDirectConnectRetry();
@@ -2212,11 +2787,13 @@ private:
             setStatusText(pcIsHost_ ? NETCHESSZX_UI_NOTICE_OPPONENT_READY_START
                                     : NETCHESSZX_UI_NOTICE_OPPONENT_READY_WAIT_START);
             setConnectedUi(true);
+            sendLocalMachAnnouncement();
             return;
         }
         if (status == SESSION_CHANGED_BUSY) {
             cancelDirectConnectRetry();
             directSessionReady_ = false;
+            resetPeerMachineState();
             directEndStatus_ = QString::fromLatin1(kDirectHostBusyStatus);
             setStatusText(directEndStatus_);
             setConnectedUi(false);
@@ -2231,16 +2808,31 @@ private:
             return;
         }
         if (status == SESSION_CHANGED_ENDED) {
+            const bool hadPeer = directSessionReady_;
+
             directSessionReady_ = false;
+            resetPeerMachineState();
             directUiBusy_ = false;
             directStartTransitionApplied_ = false;
             directLocalResignPending_ = false;
             directResignRestartPending_ = false;
             directPrimaryLinkId_ = SESSION_LINK_NONE;
             closeDirectDecisionPrompt();
-            const QString ended = directEndStatus_.isEmpty()
-                                      ? QString::fromLatin1(NETCHESSZX_UI_ERROR_OPPONENT_DISCONNECTED)
-                                      : directEndStatus_;
+            QString ended = directEndStatus_;
+
+            if (endReason == SESSION_END_REASON_LOCAL_BYE) {
+                ended = QString::fromLatin1(NETCHESSZX_UI_PHASE_DISCONNECTED);
+            } else if (endReason == SESSION_END_REASON_REMOTE_BYE) {
+                ended = QString::fromLatin1(
+                    NETCHESSZX_UI_PC_EVENT_OPPONENT_LEFT);
+            } else if (endReason == SESSION_END_REASON_TRANSPORT_LOST &&
+                       (hadPeer || ended.isEmpty())) {
+                ended = QString::fromLatin1(
+                    NETCHESSZX_UI_PC_ERROR_CONNECTION_LOST);
+            } else if (ended.isEmpty()) {
+                ended = QString::fromLatin1(
+                    NETCHESSZX_UI_ERROR_OPPONENT_DISCONNECTED);
+            }
             directEndStatus_.clear();
             resetGame(ended);
             clearChatLog();
@@ -2260,6 +2852,13 @@ private:
     {
         if (result == SESSION_CONTROL_CANCELLED ||
             result == SESSION_CONTROL_EXPIRED) {
+            if (control == SESSION_REQUEST_RESTORE) {
+                directUiBusy_ = false;
+                closeDirectDecisionPrompt();
+                setStatusText(QStringLiteral("Load cancelled"));
+                setConnectedUi(directSessionReady_);
+                return;
+            }
             if (control == SESSION_REQUEST_RESET &&
                 directResignRestartPending_) {
                 directUiBusy_ = false;
@@ -2319,8 +2918,10 @@ private:
                 directUiBusy_ = false;
                 setStatusText(NETCHESSZX_UI_ERROR_DRAW_REJECTED);
             } else {
-                appendControlEvent(true, QStringLiteral("DRAW"));
-                endGameOver(QStringLiteral("DRAW"));
+                const QString result =
+                    QString::fromLatin1(NETCHESSZX_UI_EVENT_DRAW_AGREED);
+                appendControlEvent(true, result);
+                endGameOver(result);
             }
             break;
         case SESSION_REQUEST_RESIGN:
@@ -2383,13 +2984,18 @@ private:
                                                    : opponentChatName(),
                        QString::fromLatin1(payload));
             break;
+        case SESSION_DELIVER_PLATFORM:
+            setPeerPlatform(static_cast<uint8_t>(value));
+            break;
         case SESSION_DELIVER_CONTROL:
             if (value == SESSION_REQUEST_RESET) {
                 appendControlEvent(false, QStringLiteral("RESET"));
                 applyDirectStartTransition();
             } else if (value == SESSION_REQUEST_DRAW) {
-                appendControlEvent(false, QStringLiteral("DRAW"));
-                endGameOver(QStringLiteral("DRAW"));
+                const QString result =
+                    QString::fromLatin1(NETCHESSZX_UI_EVENT_DRAW_AGREED);
+                appendControlEvent(false, result);
+                endGameOver(result);
             } else if (value == SESSION_REQUEST_RESIGN) {
                 applyDirectResignTransition();
             }
@@ -2465,16 +3071,18 @@ private:
     void applyDirectResignTransition()
     {
         const bool local = directLocalResignPending_;
-        ++pieceFlashGeneration_;
-        ++pieceRevealGeneration_;
-        ++feedbackGeneration_;
+        const QString result = QString::fromLatin1(
+            local ? NETCHESSZX_UI_EVENT_RESIGNATION_LOST
+                  : NETCHESSZX_UI_EVENT_RESIGNATION_WON);
+        invalidatePieceFlash();
+        invalidatePieceReveal();
+        invalidateDestinationFeedback();
         closeDirectDecisionPrompt();
         directResignRestartPending_ = true;
         directUiBusy_ = local ? SESSION_REQUEST_RESIGN : SESSION_REQUEST_RESET;
-        appendControlEvent(local, QStringLiteral("RESIGN"));
-        endGameOver(QStringLiteral("RESIGN"));
-        setStatusText(local ? NETCHESSZX_UI_NOTICE_WAITING_RESIGN_ACK
-                            : NETCHESSZX_UI_EVENT_OPPONENT_RESIGN);
+        appendControlEvent(local, result);
+        endGameOver(result);
+        setStatusText(local ? NETCHESSZX_UI_NOTICE_WAITING_RESIGN_ACK : result);
     }
 
     void applyDirectStartTransition()
@@ -2512,7 +3120,7 @@ private:
         if (control == SESSION_REQUEST_DRAW) {
             title = NETCHESSZX_UI_CONFIRM_PC_DRAW_TITLE;
             message = NETCHESSZX_UI_CONFIRM_PC_ACCEPT_DRAW;
-            setStatusText(NETCHESSZX_UI_EVENT_DRAW);
+            setStatusText(NETCHESSZX_UI_NOTICE_DRAW_OFFERED);
         } else if (control == SESSION_REQUEST_RESET) {
             title = gameOver_ ? NETCHESSZX_UI_CONFIRM_PC_RESTART_TITLE
                               : NETCHESSZX_UI_CONFIRM_PC_RESET_TITLE;
@@ -2526,7 +3134,7 @@ private:
             setStatusText(NETCHESSZX_UI_CONFIRM_TAKEBACK_REQUEST);
         } else if (control == SESSION_REQUEST_RESTORE) {
             title = QStringLiteral("Load Game");
-            message = QStringLiteral("Host wants to load a saved game. Accept?");
+            message = QStringLiteral("Opponent wants to load a saved game. Accept?");
             setStatusText(QStringLiteral("Load requested"));
         } else {
             QTimer::singleShot(0, this, [this, requestId]() {
@@ -2688,9 +3296,13 @@ private:
                 return;
             }
             lastSocketError_ = socketError;
-            const QString status = socketError.contains("refused", Qt::CaseInsensitive) ?
-                                       "Connection refused - opponent not ready" :
-                                       "Connection failed - " + socketError;
+            const QString status = directSessionReady_
+                                       ? QString::fromLatin1(
+                                             NETCHESSZX_UI_PC_ERROR_CONNECTION_LOST)
+                                       : socketError.contains(
+                                             "refused", Qt::CaseInsensitive)
+                                             ? "Connection refused - opponent not ready"
+                                             : "Connection failed - " + socketError;
             directEndStatus_ = status;
             setStatusText(status);
             if (!directLinkUpSeen_.value(directLink, false) && sock == socket_) {
@@ -2750,9 +3362,13 @@ private:
             const bool primary = directLink == directPrimaryLinkId_ ||
                                  sock == socket_;
             if (primary && directEndStatus_.isEmpty()) {
-                directEndStatus_ = lastSocketError_.isEmpty()
-                                       ? QString::fromLatin1(NETCHESSZX_UI_ERROR_OPPONENT_DISCONNECTED)
-                                       : lastSocketError_;
+                directEndStatus_ = wasLinked
+                                       ? QString::fromLatin1(
+                                             NETCHESSZX_UI_PC_ERROR_CONNECTION_LOST)
+                                       : lastSocketError_.isEmpty()
+                                             ? QString::fromLatin1(
+                                                   NETCHESSZX_UI_PC_ERROR_CONNECTION_LOST)
+                                             : lastSocketError_;
             }
             if (wasLinked) {
                 (void)sessionController_.linkDown(directLink);
@@ -2777,9 +3393,9 @@ private:
             status = NETCHESSZX_UI_PHASE_DISCONNECTED;
             localDisconnectPending_ = false;
         } else if (!lastSocketError_.isEmpty()) {
-            status = lastSocketError_;
+            status = NETCHESSZX_UI_PC_ERROR_CONNECTION_LOST;
         } else {
-            status = NETCHESSZX_UI_ERROR_OPPONENT_DISCONNECTED;
+            status = NETCHESSZX_UI_PC_ERROR_CONNECTION_LOST;
         }
         clearMqttSubscriptionState();
         bool handled = false;
@@ -2895,7 +3511,8 @@ private:
 
     static QString squareStyle(int row, int col, bool selected, bool target,
                                bool legalTarget, bool feedback, bool hasPiece = false,
-                               bool showHints = true)
+                               bool showHints = true,
+                               PieceRenderer::SquareCorner corner = PieceRenderer::CornerNone)
     {
         const bool light = ((row + col) % 2) == 0;
         const bool texturedBoard = !PieceRenderer::boardTexture().isEmpty();
@@ -2903,62 +3520,65 @@ private:
         QString border;
 
         if (feedback) {
-            bg = "#f2dc54";
-            border = "4px solid #1f7a8c";
+            bg = SHZ_SQ_HIT;
+            border = "4px solid " SHZ_SQ_HIT_EDGE;
         } else if (selected) {
-            bg = "#c9b56b";
-            border = "3px solid #5d4b1d";
+            bg = SHZ_SQ_SEL;
+            border = "3px solid " SHZ_SQ_SEL_EDGE;
         } else if (target) {
             if (legalTarget && showHints && !hasPiece && !texturedBoard) {
                 const QString dotColor = "rgba(0, 0, 0, 0.28)";
-                bg = QString("qradialgradient(cx:0.5, cy:0.5, radius:0.12, fx:0.5, fy:0.5, stop:0 %1, stop:0.85 %1, stop:0.9 #9fb8d9, stop:1.0 #9fb8d9)").arg(dotColor);
+                bg = QString("qradialgradient(cx:0.5, cy:0.5, radius:0.12, fx:0.5, fy:0.5, stop:0 %1, stop:0.85 %1, stop:0.9 " SHZ_SQ_TGT ", stop:1.0 " SHZ_SQ_TGT ")").arg(dotColor);
             } else {
-                bg = "#9fb8d9";
+                bg = SHZ_SQ_TGT;
             }
-            border = "3px solid #2f5f9f";
+            border = "3px solid " SHZ_SQ_TGT_EDGE;
         } else if (legalTarget && showHints) {
             if (hasPiece) {
-                bg = light ? "#d5ebd5" : "#486648";
-                border = "2px solid #6fa86f";
+                bg = light ? SHZ_SQ_HINT_L : SHZ_SQ_HINT_D;
+                border = "2px solid " SHZ_SQ_HINT_EDGE;
             } else {
-                const QString baseBg = light ? "#f0f0ec" : "#5f6870";
+                const QString baseBg = light ? SHZ_SQ_LIGHT : SHZ_SQ_DARK;
                 const QString dotColor = "rgba(0, 0, 0, 0.25)";
                 bg = QString("qradialgradient(cx:0.5, cy:0.5, radius:0.12, fx:0.5, fy:0.5, stop:0 %1, stop:0.85 %1, stop:0.9 %2, stop:1.0 %2)").arg(dotColor, baseBg);
-                border = "1px solid #2c3034";
+                border = "1px solid " SHZ_SQ_EDGE;
             }
         } else {
-            bg = light ? "#f0f0ec" : "#5f6870";
-            border = "1px solid #2c3034";
+            bg = light ? SHZ_SQ_LIGHT : SHZ_SQ_DARK;
+            border = "1px solid " SHZ_SQ_EDGE;
         }
 
         const QString fg = light || selected || target || feedback ? "#1e1e1e" : "#ffffff";
-        return PieceRenderer::boardSquareStyle(row, col, kBoardSquareSize, bg, fg, border);
+        return PieceRenderer::boardSquareStyle(row, col, kBoardSquareSize, bg, fg, border,
+                                               corner);
+    }
+
+    void advanceDestinationFeedback()
+    {
+        ++feedbackStep_;
+        feedbackOn_ = (feedbackStep_ % 2) == 0;
+        refreshBoardSquareVisual(feedbackRow_, feedbackCol_);
+        if (feedbackStep_ < 5) {
+            feedbackTimer_->start(kPieceFlashStepMs);
+            return;
+        }
+        const int row = feedbackRow_;
+        const int col = feedbackCol_;
+        feedbackRow_ = -1;
+        feedbackCol_ = -1;
+        feedbackOn_ = false;
+        refreshBoardSquareVisual(row, col);
     }
 
     void showDestinationFeedback(int row, int col)
     {
-        ++feedbackGeneration_;
+        invalidateDestinationFeedback();
         feedbackRow_ = row;
         feedbackCol_ = col;
         feedbackOn_ = true;
+        feedbackStep_ = 0;
         refreshBoardSquareVisual(row, col);
-
-        const int generation = feedbackGeneration_;
-        for (int step = 1; step <= 5; ++step) {
-            QTimer::singleShot(step * 90, this, [this, generation, row, col, step]() {
-                if (generation != feedbackGeneration_) {
-                    return;
-                }
-                feedbackOn_ = (step % 2) == 0;
-                refreshBoardSquareVisual(row, col);
-                if (step == 5) {
-                    feedbackRow_ = -1;
-                    feedbackCol_ = -1;
-                    feedbackOn_ = false;
-                    refreshBoardSquareVisual(row, col);
-                }
-            });
-        }
+        feedbackTimer_->start(kPieceFlashStepMs);
     }
 
     QStringList legalTargetsFrom(const QString &from)
@@ -2987,6 +3607,18 @@ private:
         targetRow_ = -1;
         targetCol_ = -1;
         legalTargets_.clear();
+    }
+
+    void clearSelectionVisuals()
+    {
+        const int oldSelectedRow = selectedRow_;
+        const int oldSelectedCol = selectedCol_;
+        const int oldTargetRow = targetRow_;
+        const int oldTargetCol = targetCol_;
+        const QStringList oldLegalTargets = legalTargets_;
+        clearSelection();
+        refreshSelectionFootprint(oldSelectedRow, oldSelectedCol,
+                                  oldTargetRow, oldTargetCol, oldLegalTargets);
     }
 
     void squareClicked(int displayRow, int displayCol)
@@ -3141,7 +3773,8 @@ private:
         targetCol_ = col;
         selectedLabel_->setText(QString("Selected: %1 -> %2")
                                     .arg(ChessHelpers::squareName(selectedRow_, selectedCol_), clicked));
-        setStatusText(QString("Move ready: %1 - press SEND").arg(move));
+        setStatusBarText(QStringLiteral("Move ready"));
+        refreshChatButton();
         appendLog(QString("CLICK: move %1").arg(move));
         refreshSelectionFootprint(oldSelectedRow, oldSelectedCol,
                                   oldTargetRow, oldTargetCol,
@@ -3158,8 +3791,9 @@ private:
         dialog.setMinimumSize(240, 80);
         dialog.setStyleSheet(
             "QDialog { background:#1e1f2c; }"
-            "QPushButton { background:#292a36; color:#f2f2f0; border:1px solid #444654;"
-            " font:700 18px Segoe UI; padding:8px 12px; min-width:44px; }"
+            "QPushButton { background:#292a36; color:#f2f2f0;"
+            " border:1px solid #444654; border-radius:" SHZ_R ";"
+            " font-weight:700; font-size:18px; padding:8px 12px; min-width:44px; }"
             "QPushButton:hover { background:#343646; }");
 
         auto *layout = new QHBoxLayout(&dialog);
@@ -3210,7 +3844,7 @@ private:
             return;
         }
         if (isMqttMode() && !ChessHelpers::isMqttRoomSyntaxOk(room)) {
-            appendLog("ERROR: MQTT room must be A-Z or 0-9, max 8 chars");
+            appendLog("ERROR: MQTT room must be NC plus four hexadecimal characters");
             setStatusText(NETCHESSZX_UI_ERROR_INVALID_MQTT_ROOM);
             return;
         }
@@ -3299,9 +3933,9 @@ private:
     void resetGame(const QString &status)
     {
         ++gameGeneration_;
-        ++pieceFlashGeneration_;
-        ++pieceRevealGeneration_;
-        ++feedbackGeneration_;
+        invalidatePieceFlash();
+        invalidatePieceReveal();
+        invalidateDestinationFeedback();
         stopGameClock();
         clearTakebackState();
         closeControlPrompt();
@@ -3318,13 +3952,14 @@ private:
         clearMoveHistory();
         boardPiecesVisible_ = false;
         clearSelection();
-        resetBoard();
         netchesszx_rules_reset();
+        (void)syncBoardFromRules();
         nextPly_ = 1;
         moveEdit_->clear();
         selectedLabel_->setText("Selected: none");
         setStatusText(status);
         refreshBoard();
+        animateBoardPiecesIn();
         refreshTurnLabel();
     }
 
@@ -3353,17 +3988,13 @@ private:
             return false;
         }
         std::memset(state, 0, sizeof(*state));
-        for (int row = 0; row < 8; ++row) {
-            for (int col = 0; col < 8; ++col) {
-                state->cells[row * 8 + col] = board_[row][col];
-            }
-        }
-        state->ply = static_cast<uint16_t>(nextPly_ > 0 ? nextPly_ - 1 : 0);
-        state->side = static_cast<uint8_t>(state->ply & 1u);
         CompactRulesState rulesState = {};
         if (netchesszx_rules_save(&rulesState, sizeof(rulesState)) != NETCHESSZX_OK) {
             return false;
         }
+        ChessHelpers::asciiBoardFromCompact(rulesState.board, state->cells);
+        state->ply = static_cast<uint16_t>(nextPly_ > 0 ? nextPly_ - 1 : 0);
+        state->side = static_cast<uint8_t>(state->ply & 1u);
         state->castle = rulesState.castle;
         state->ep = rulesState.ep < 0 ? NETCHESSZX_SAVE_EP_NONE
                                     : static_cast<uint8_t>(rulesState.ep);
@@ -3440,7 +4071,7 @@ private:
 
     bool canLoadGameFile() const
     {
-        return pcIsHost_ && restorePeerReady() && !restoreBusy();
+        return restorePeerReady() && !restoreBusy();
     }
 
     uint8_t currentSaveHostColor() const
@@ -3484,7 +4115,7 @@ private:
     bool loadSaveFilePath(const QString &path)
     {
         if (!canLoadGameFile()) {
-            setStatusText(pcIsHost_ ? "Load failed" : "Host can load only");
+            setStatusText("Load failed");
             return false;
         }
         netchesszx_save_state_t state;
@@ -3578,10 +4209,14 @@ private:
         table->setEditTriggers(QAbstractItemView::NoEditTriggers);
         table->setShowGrid(false);
         table->setStyleSheet(QStringLiteral(
-            "QTableWidget { background: #101018; color: #e0e0e0;"
-            " selection-background-color: #2a6b8a; }"
-            "QHeaderView::section { background: #202030; color: #f0f0f0;"
-            " border: 0; padding: 4px; }"));
+            "QTableWidget { background:#101018; color:#e0e0e0;"
+            " border:1px solid " SHZ_BORDER "; border-radius:" SHZ_R ";"
+            " selection-background-color:#2a6b8a;"
+            " selection-color:" SHZ_TEXT "; }"
+            "QTableWidget::item { padding:2px 6px; }"
+            "QHeaderView::section { background:#202030; color:#f0f0f0;"
+            " font-weight:700; letter-spacing:1px; border:0;"
+            " border-bottom:1px solid " SHZ_BORDER "; padding:4px; }"));
         layout->addWidget(table);
 
         auto *buttons = new QHBoxLayout();
@@ -3769,53 +4404,16 @@ private:
             return;
         }
         if (cmd == "/draw") {
-            if (!gameClockRunning_ || restoreBusy()) {
-                setStatusText(NETCHESSZX_UI_ERROR_CANNOT_OFFER_DRAW);
-                return;
-            }
-            resetPromptOpen_ = true;
-            const QMessageBox::StandardButton answer =
-                askQuestion(this, NETCHESSZX_UI_CONFIRM_PC_DRAW_TITLE,
-                            NETCHESSZX_UI_CONFIRM_DRAW,
-                            QMessageBox::Yes | QMessageBox::No);
-            if (!resetPromptOpen_) {
-                return;
-            }
-            resetPromptOpen_ = false;
-            if (answer != QMessageBox::Yes) {
-                return;
-            }
-            if (submitSessionLocalRequest(SESSION_REQUEST_DRAW)) {
-                setStatusText(NETCHESSZX_UI_NOTICE_WAITING_DRAW_ACK);
+            if (requestDraw()) {
                 chatEdit_->clear();
             }
             return;
         }
         if (cmd == "/takeback") {
-            if (!canRequestTakeback()) {
-                appendLog("ERROR: No move to take back");
-                setStatusText("No move to take back");
-                chatEdit_->clear();
-                refreshChatButton();
-                return;
-            }
-            resetPromptOpen_ = true;
-            const QMessageBox::StandardButton answer =
-                askQuestion(this, NETCHESSZX_UI_CONFIRM_PC_TAKEBACK_TITLE,
-                            NETCHESSZX_UI_CONFIRM_PC_TAKEBACK_REQUEST,
-                            QMessageBox::Yes | QMessageBox::No);
-            if (!resetPromptOpen_) {
-                return;
-            }
-            resetPromptOpen_ = false;
-            if (answer != QMessageBox::Yes) {
-                return;
-            }
-            if (submitSessionLocalRequest(SESSION_REQUEST_TAKEBACK,
-                                          takebackSnapshot_.ply)) {
-                setStatusText(QStringLiteral("Takeback requested"));
+            if (requestTakeback()) {
                 chatEdit_->clear();
             }
+            refreshChatButton();
             return;
         }
         if (!submitSessionLocalRequest(SESSION_REQUEST_CHAT, 0u,
@@ -3824,6 +4422,86 @@ private:
         }
         chatEdit_->clear();
         refreshChatButton();
+    }
+
+    bool requestDraw()
+    {
+        if (directLocalResignPending_) {
+            setStatusText(NETCHESSZX_UI_NOTICE_WAITING_RESIGN_ACK);
+            return false;
+        }
+        if (directResignRestartPending_) {
+            setStatusText(NETCHESSZX_UI_NOTICE_RESIGN_ALREADY_APPLIED);
+            return false;
+        }
+        if (directUiBusy_ != 0u) {
+            setStatusText(NETCHESSZX_UI_NOTICE_WAITING_ACK);
+            return false;
+        }
+        if (!gameClockRunning_ || restoreBusy()) {
+            setStatusText(NETCHESSZX_UI_ERROR_CANNOT_OFFER_DRAW);
+            return false;
+        }
+        resetPromptOpen_ = true;
+        const QMessageBox::StandardButton answer =
+            askQuestion(this, NETCHESSZX_UI_CONFIRM_PC_DRAW_TITLE,
+                        NETCHESSZX_UI_CONFIRM_DRAW,
+                        QMessageBox::Yes | QMessageBox::No);
+        if (!resetPromptOpen_) {
+            return false;
+        }
+        resetPromptOpen_ = false;
+        if (answer != QMessageBox::Yes) {
+            return false;
+        }
+        if (submitSessionLocalRequest(SESSION_REQUEST_DRAW)) {
+            setStatusText(NETCHESSZX_UI_NOTICE_WAITING_DRAW_ACK);
+            return true;
+        }
+        return false;
+    }
+
+    bool requestTakeback()
+    {
+        if (directLocalResignPending_) {
+            setStatusText(NETCHESSZX_UI_NOTICE_WAITING_RESIGN_ACK);
+            return false;
+        }
+        if (directResignRestartPending_) {
+            setStatusText(NETCHESSZX_UI_NOTICE_RESIGN_ALREADY_APPLIED);
+            return false;
+        }
+        if (directUiBusy_ != 0u) {
+            setStatusText(NETCHESSZX_UI_NOTICE_WAITING_ACK);
+            return false;
+        }
+        if (!canRequestTakeback()) {
+            appendLog("ERROR: No move to take back");
+            setStatusText("No move to take back");
+            return false;
+        }
+        resetPromptOpen_ = true;
+        const QMessageBox::StandardButton answer =
+            askQuestion(this, NETCHESSZX_UI_CONFIRM_PC_TAKEBACK_TITLE,
+                        NETCHESSZX_UI_CONFIRM_PC_TAKEBACK_REQUEST,
+                        QMessageBox::Yes | QMessageBox::No);
+        if (!resetPromptOpen_) {
+            return false;
+        }
+        resetPromptOpen_ = false;
+        if (answer != QMessageBox::Yes) {
+            return false;
+        }
+        if (!canRequestTakeback()) {
+            setStatusText(QStringLiteral("No move to take back"));
+            return false;
+        }
+        if (submitSessionLocalRequest(SESSION_REQUEST_TAKEBACK,
+                                      takebackSnapshot_.ply)) {
+            setStatusText(QStringLiteral("Takeback requested"));
+            return true;
+        }
+        return false;
     }
 
     void sendGameStart()
@@ -3916,9 +4594,8 @@ private:
             appendLog(QString("WARN: move send prep took %1 ms").arg(prepMs));
         }
 
-        clearSelection();
+        clearSelectionVisuals();
         moveEdit_->clear();
-        refreshBoard();
         showDestinationFeedback(toRow, toCol);
         setStatusText(NETCHESSZX_UI_PHASE_WAITING_OPPONENT);
         setConnectedUi(true);
@@ -3949,7 +4626,7 @@ private:
         if (result.overflow) {
             appendLog("ERROR: direct RX line too long");
             if (directLink == directPrimaryLinkId_) {
-                directEndStatus_ = NETCHESSZX_UI_ERROR_OPPONENT_DISCONNECTED;
+                directEndStatus_ = NETCHESSZX_UI_PC_ERROR_CONNECTION_LOST;
             }
             if (sock != nullptr) {
                 sock->abort();
@@ -3978,7 +4655,9 @@ private:
         if (!isMqttMode()) {
             mqttSideReady_ = true;
         }
-        syncBoardOrientationWithPcSide();
+        if (isConnected() || isConnecting() || pcIsHost_) {
+            syncBoardOrientationWithPcSide();
+        }
     }
 
     void updateSessionControlsEnabled()
@@ -4345,8 +5024,11 @@ private:
         const bool subscriptionPending =
             !mqttSubackPending_.isEmpty() ||
             !mqttUnsubackPending_.isEmpty();
+        const bool sessionReady =
+            sessionController_.initialized() &&
+            sessionController_.mode() == DesktopSessionController::Mode::Mqtt;
 
-        if (exactTopic && mqttSessionInitialized_ && subscriptionPending &&
+        if (exactTopic && sessionReady && subscriptionPending &&
             mqttTargetSubscriptions_.contains(suffix)) {
             if (mqttBufferedPublishes_.size() >= kMqttBufferedPublishMax) {
                 failMqttConnection("MQTT subscription publish buffer full");
@@ -4359,12 +5041,13 @@ private:
         }
 
         if (!exactTopic || (!metaReady && !sideReady) ||
-            !mqttSessionInitialized_ ||
+            !sessionReady ||
             !sessionController_.receiveMqtt(kMqttLinkId, topic,
                                             retained, payload)) {
             appendLog("IGNORE MQTT topic " + QString::fromLatin1(topic));
             return;
         }
+
     }
 
     void endGameOver(const QString &message)
@@ -4404,14 +5087,12 @@ private:
         if (netchesszx_rules_restore(&rulesState, sizeof(rulesState)) != NETCHESSZX_OK) {
             return false;
         }
-        ++gameGeneration_;
-        ++pieceFlashGeneration_;
-        ++feedbackGeneration_;
-        for (int row = 0; row < 8; ++row) {
-            for (int col = 0; col < 8; ++col) {
-                board_[row][col] = st.cells[row * 8 + col];
-            }
+        if (!syncBoardFromRules()) {
+            return false;
         }
+        ++gameGeneration_;
+        invalidatePieceFlash();
+        invalidateDestinationFeedback();
         hostPlaysWhite_ = (st.host_color == NETCHESSZX_SAVE_HOST_WHITE);
         pcPlaysWhite_ = pcIsHost_ ? hostPlaysWhite_ : !hostPlaysWhite_;
         clearTakebackState();
@@ -4484,7 +5165,6 @@ private:
     {
         TakebackSnapshot snapshot;
 
-        std::memcpy(snapshot.board, board_, sizeof(board_));
         snapshot.rules.resize(static_cast<int>(netchesszx_rules_state_size()));
         if (snapshot.rules.isEmpty() ||
             netchesszx_rules_save(snapshot.rules.data(),
@@ -4509,9 +5189,11 @@ private:
         if (!takebackSnapshot_.valid) {
             return;
         }
-        std::memcpy(board_, takebackSnapshot_.board, sizeof(board_));
+        char previous[8][8];
+        std::memcpy(previous, board_, sizeof(board_));
         (void)netchesszx_rules_restore(takebackSnapshot_.rules.constData(),
                                        static_cast<size_t>(takebackSnapshot_.rules.size()));
+        (void)syncBoardFromRules();
         while (moveHistoryRecords_.size() > takebackSnapshot_.historyCount) {
             moveHistoryRecords_.removeLast();
         }
@@ -4520,10 +5202,10 @@ private:
         pcTurn_ = takebackSnapshot_.pcTurn;
         gameCheck_ = takebackSnapshot_.gameCheck;
         gameOver_ = false;
-        clearSelection();
         selectedLabel_->setText("Selected: none");
         clearTakebackState();
-        refreshBoard();
+        clearSelectionVisuals();
+        refreshChangedBoardSquares(previous);
         renderLogView();
         restartMoveClock();
         setConnectedUi(true);
@@ -4548,45 +5230,6 @@ private:
                takebackSnapshot_.ply == nextPly_ - 1;
     }
 
-    bool applyMoveToBoardCells(const QString &move)
-    {
-        const int fromCol = move[0].unicode() - 'a';
-        const int fromRow = '8' - move[1].unicode();
-        const int toCol = move[2].unicode() - 'a';
-        const int toRow = '8' - move[3].unicode();
-
-        char piece = board_[fromRow][fromCol];
-        if (piece == '.') {
-            return false;
-        }
-        const bool castle = ChessHelpers::lowerPiece(piece) == 'k' &&
-                            fromCol == 4 && (toCol == 6 || toCol == 2);
-        const bool enPassant = ChessHelpers::lowerPiece(piece) == 'p' &&
-                               fromCol != toCol &&
-                               board_[toRow][toCol] == '.';
-        if (move.size() == 5) {
-            const char promo = move[4].toLatin1();
-            piece = (piece >= 'A' && piece <= 'Z') ?
-                static_cast<char>(promo - 'a' + 'A') : promo;
-        }
-
-        board_[toRow][toCol] = piece;
-        board_[fromRow][fromCol] = '.';
-        if (enPassant) {
-            board_[fromRow][toCol] = '.';
-        }
-        if (castle) {
-            if (toCol == 6) {
-                board_[fromRow][5] = board_[fromRow][7];
-                board_[fromRow][7] = '.';
-            } else {
-                board_[fromRow][3] = board_[fromRow][0];
-                board_[fromRow][0] = '.';
-            }
-        }
-        return true;
-    }
-
     bool applyMoveToBoard(const QString &move, QString *checkSuffix = nullptr,
                           bool *stalemate = nullptr)
     {
@@ -4599,7 +5242,9 @@ private:
             return false;
         }
 
-        if (!applyMoveToBoardCells(move)) {
+        char previous[8][8];
+        std::memcpy(previous, board_, sizeof(board_));
+        if (!syncBoardFromRules()) {
             setStatusText(NETCHESSZX_UI_ERROR_BOARD_REJECTED_MOVE);
             return false;
         }
@@ -4608,9 +5253,9 @@ private:
         } else if (stalemate != nullptr) {
             (void)checkSuffixAfterMove(stalemate);
         }
-        clearSelection();
         selectedLabel_->setText("Selected: none");
-        refreshBoard();
+        clearSelectionVisuals();
+        refreshChangedBoardSquares(previous);
         return true;
     }
 
@@ -4668,8 +5313,7 @@ private:
         }
         const QString notation = notationBase + checkSuffix;
         finishAppliedMove(ply, move, notation, false,
-                          QString("Move %1 confirmed - opponent to move")
-                              .arg(notation),
+                          QString("Move %1 confirmed").arg(notation),
                           stalemate);
     }
 
@@ -4711,11 +5355,16 @@ private:
             return reject("ILLEGAL");
         }
         const QString notationBase = moveNotationBase(move);
+        const int moveGeneration = gameGeneration_;
 
-        ++pieceFlashGeneration_;
         flashPieceAt(fromRow, fromCol,
                      [this, deliveryId, plyValue, ply, move, toRow, toCol,
-                      notationBase]() {
+                      notationBase, moveGeneration](bool cancelled) {
+            if (cancelled || gameGeneration_ != moveGeneration) {
+                submitSessionGameResult(deliveryId, plyValue,
+                                        SESSION_GAME_REJECTED);
+                return;
+            }
             QString checkSuffix;
             bool stalemate = false;
             (void)saveTakebackSnapshot(ply, false);
@@ -4734,19 +5383,46 @@ private:
             submitSessionGameResult(deliveryId, plyValue,
                                     SESSION_GAME_ACCEPTED,
                                     notation.toLatin1());
-            flashPieceAt(toRow, toCol, []() {});
+            flashPieceAt(toRow, toCol, [](bool) {});
         });
+        return true;
+    }
+
+    bool isStartingBoard() const
+    {
+        static const char *const rows[8] = {
+            "rnbqkbnr",
+            "pppppppp",
+            "........",
+            "........",
+            "........",
+            "........",
+            "PPPPPPPP",
+            "RNBQKBNR"
+        };
+
+        for (int row = 0; row < 8; ++row) {
+            for (int col = 0; col < 8; ++col) {
+                if (board_[row][col] != rows[row][col]) {
+                    return false;
+                }
+            }
+        }
         return true;
     }
 
     void startGameFromAck()
     {
-        ++pieceFlashGeneration_;
-        ++feedbackGeneration_;
+        const bool oldWhiteAtBottom = boardWhiteAtBottom_;
+        const bool keepSetupPreview = boardPiecesVisible_ && !gameOver_ &&
+            !gameClockRunning_ && isStartingBoard();
+
+        invalidatePieceFlash();
+        invalidateDestinationFeedback();
         directLocalResignPending_ = false;
         directResignRestartPending_ = false;
-        resetBoard();
         netchesszx_rules_reset();
+        (void)syncBoardFromRules();
         clearTakebackState();
         nextPly_ = 1;
         gameOver_ = false;
@@ -4754,13 +5430,16 @@ private:
         pcTurn_ = pcPlaysWhite_;
         lastMove_.clear();
         clearMoveHistory();
-        boardPiecesVisible_ = false;
         clearSelection();
         moveEdit_->clear();
         selectedLabel_->setText("Selected: none");
-        refreshBoard();
+        syncBoardOrientationWithPcSide();
+        if (!keepSetupPreview || oldWhiteAtBottom != boardWhiteAtBottom_) {
+            boardPiecesVisible_ = false;
+            refreshBoard();
+            animateBoardPiecesIn();
+        }
         startGameClock();
-        animateBoardPiecesIn();
         setStatusText(NETCHESSZX_UI_NOTICE_GAME_STARTED_WHITE);
         setConnectedUi(true);
     }
@@ -4868,6 +5547,15 @@ private:
         linkWatch_.restart();
     }
 
+    static QString turnLabelStyle(const char *background, const char *foreground)
+    {
+        return QStringLiteral("QLabel { background:%1; color:%2;"
+                              " border:1px solid " SHZ_BORDER_SOFT ";"
+                              " border-radius:" SHZ_R "; font-weight:700;"
+                              " font-size:13px; letter-spacing:1px; padding:7px; }")
+            .arg(QLatin1String(background), QLatin1String(foreground));
+    }
+
     void refreshTurnLabel()
     {
         if (!turnLabel_) {
@@ -4880,27 +5568,20 @@ private:
         QString style;
         if (!connected && statusMessage_ == kDirectHostBusyStatus) {
             text = "HOST BUSY";
-            style = "QLabel { background:#743838; color:#fff0f0;"
-                    " font:700 14px Segoe UI; padding:6px; }";
+            style = turnLabelStyle(SHZ_ALERT, SHZ_ALERT_TEXT);
         } else if (!connected && isConnectionErrorStatus()) {
             text = "CONNECT FAILED";
-            style = "QLabel { background:#743838; color:#fff0f0;"
-                    " font:700 14px Segoe UI; padding:6px; }";
+            style = turnLabelStyle(SHZ_ALERT, SHZ_ALERT_TEXT);
         } else if (!connected) {
             text = isConnecting() ? "CONNECTING" : "OFFLINE";
-            style = isConnecting() ?
-                    "QLabel { background:#252532; color:#00d7ff;"
-                    " font:700 14px Segoe UI; padding:6px; }" :
-                    "QLabel { background:#303040; color:#c7c7d8;"
-                    " font:700 14px Segoe UI; padding:6px; }";
+            style = isConnecting() ? turnLabelStyle(SHZ_QUIET, SHZ_ACCENT)
+                                   : turnLabelStyle(SHZ_DISABLED, SHZ_TEXT_DIM);
         } else if (gameOver_) {
             text = statusMessage_;
-            style = "QLabel { background:#743838; color:#fff0f0;"
-                    " font:700 14px Segoe UI; padding:6px; }";
+            style = turnLabelStyle(SHZ_ALERT, SHZ_ALERT_TEXT);
         } else if (directUiBusy_) {
             text = "WAITING OPPONENT ACK";
-            style = "QLabel { background:#5f5534; color:#ffe99a;"
-                    " font:700 14px Segoe UI; padding:6px; }";
+            style = turnLabelStyle(SHZ_WAIT, SHZ_WAIT_TEXT);
         } else if (!gameClockRunning_) {
             if (pcIsHost_ && !directSessionReady_) {
                 text = "WAITING OPPONENT";
@@ -4909,23 +5590,17 @@ private:
             } else {
                 text = pcIsHost_ ? "PRESS START GAME" : "WAITING OPPONENT START";
             }
-            style = "QLabel { background:#252532; color:#00d7ff;"
-                    " font:700 14px Segoe UI; padding:6px; }";
+            style = turnLabelStyle(SHZ_QUIET, SHZ_ACCENT);
         } else if (gameCheck_) {
             text = pcTurn_ ? "YOUR KING IN CHECK" : "OPPONENT IN CHECK";
-            style = pcTurn_
-                    ? "QLabel { background:#252532; color:#ffe15a;"
-                      " font:700 14px Segoe UI; padding:6px; }"
-                    : "QLabel { background:#ffe15a; color:#101010;"
-                      " font:700 14px Segoe UI; padding:6px; }";
+            style = pcTurn_ ? turnLabelStyle(SHZ_QUIET, SHZ_CHECK)
+                            : turnLabelStyle(SHZ_CHECK, "#101010");
         } else if (pcTurn_) {
             text = QString("YOUR TURN - %1").arg(pcSideName());
-            style = "QLabel { background:#36556b; color:#ffffff;"
-                    " font:700 14px Segoe UI; padding:6px; }";
+            style = turnLabelStyle(SHZ_ACCENT_FILL, "#ffffff");
         } else {
             text = QString("%1 TO MOVE").arg(pcPlaysWhite_ ? "BLACK" : "WHITE");
-            style = "QLabel { background:#252532; color:#00d7ff;"
-                    " font:700 14px Segoe UI; padding:6px; }";
+            style = turnLabelStyle(SHZ_QUIET, SHZ_ACCENT);
         }
         setLabelText(turnLabel_, text);
         setWidgetStyle(turnLabel_, style);
@@ -4933,40 +5608,57 @@ private:
         refreshChatButton();
     }
 
+    // Emphasis buttons: filled when actionable, flat and muted when not.
+    static QString actionButtonStyle(const char *background, const char *hover,
+                                     const char *foreground, const char *edge)
+    {
+        return QStringLiteral(
+                   "QPushButton { background:%1; color:%3;"
+                   " border:1px solid %4; border-radius:" SHZ_R ";"
+                   " font-weight:700; font-size:9pt; padding:4px 12px;"
+                   " min-height:20px; }"
+                   "QPushButton:hover { background:%2; }")
+            .arg(QLatin1String(background), QLatin1String(hover),
+                 QLatin1String(foreground), QLatin1String(edge));
+    }
+
+    static QString idleButtonStyle()
+    {
+        return actionButtonStyle(SHZ_DISABLED, SHZ_DISABLED, SHZ_TEXT_MUTED,
+                                 SHZ_DISABLED);
+    }
+
     static QString moveButtonStyle(bool ready, bool destinationReady)
     {
         if (destinationReady) {
-            return "QPushButton { background:#1f9d47; color:#f4fff8;"
-                   " font:700 9pt Segoe UI; border:0; padding:3px 10px; }"
-                   " QPushButton:hover { background:#28b956; }";
+            return actionButtonStyle(SHZ_GO, SHZ_GO_HOVER, SHZ_GO_TEXT, SHZ_GO);
         }
         if (ready) {
-            return "QPushButton { background:#36556b; color:#ffffff;"
-                   " font:700 9pt Segoe UI; border:0; padding:3px 10px; }"
-                   " QPushButton:hover { background:#42657e; }";
+            return actionButtonStyle(SHZ_ACCENT_FILL, SHZ_ACCENT_FILL_HOVER,
+                                     "#ffffff", SHZ_ACCENT_FILL);
         }
-        return "QPushButton { background:#303040; color:#8a8aa0;"
-               " font:700 9pt Segoe UI; border:0; padding:3px 10px; }";
+        return idleButtonStyle();
     }
 
     static QString chatButtonStyle(bool ready)
     {
-        return ready
-            ? "QPushButton { background:#5aa7d8; color:#08131b;"
-              " font:700 9pt Segoe UI; border:0; padding:3px 10px; }"
-              " QPushButton:hover { background:#6db8e7; }"
-            : "QPushButton { background:#303040; color:#8a8aa0;"
-              " font:700 9pt Segoe UI; border:0; padding:3px 10px; }";
+        return ready ? actionButtonStyle(SHZ_SEND, SHZ_SEND_HOVER,
+                                         SHZ_SEND_TEXT, SHZ_SEND)
+                     : idleButtonStyle();
     }
 
     static QString startButtonStyle(bool ready)
     {
-        return ready
-            ? "QPushButton { background:#36556b; color:#ffffff;"
-              " font:700 9pt Segoe UI; border:0; padding:3px 10px; }"
-              " QPushButton:hover { background:#42657e; }"
-            : "QPushButton { background:#303040; color:#8a8aa0;"
-              " font:700 9pt Segoe UI; border:0; padding:3px 10px; }";
+        return ready ? actionButtonStyle(SHZ_ACCENT_FILL, SHZ_ACCENT_FILL_HOVER,
+                                         "#ffffff", SHZ_ACCENT_FILL)
+                     : idleButtonStyle();
+    }
+
+    static QString quietButtonStyle(bool ready)
+    {
+        return ready ? actionButtonStyle(SHZ_QUIET, SHZ_SURFACE_ALT, SHZ_TEXT_DIM,
+                                         SHZ_BORDER)
+                     : idleButtonStyle();
     }
 
     void setConnectedUi(bool connected)
@@ -4987,13 +5679,14 @@ private:
         setWidgetStyle(startGameButton_, startButtonStyle(startReady));
         const bool resetReady = connected && gameClockRunning_ && !restoreBusy();
         resetButton_->setEnabled(resetReady);
-        setWidgetStyle(resetButton_, startButtonStyle(resetReady));
+        setWidgetStyle(resetButton_, quietButtonStyle(resetReady));
         if (restoreButton_ != nullptr) {
             restoreButton_->setEnabled(false);
             setWidgetStyle(restoreButton_, startButtonStyle(false));
         }
         refreshSaveLoadButtons();
         refreshChatButton();
+        refreshSessionCommandButtons();
         hostEdit_->setEnabled(!connected && !connecting);
         portSpin_->setEnabled(!connected && !connecting);
         roomEdit_->setEnabled(!connected && !connecting);
@@ -5095,10 +5788,45 @@ private:
         const QString text = chatEdit_->text().trimmed().toLower();
         const bool moveText = ChessHelpers::isMoveSyntaxOk(text);
         const bool ready = canSendChat();
+        chatButton_->setText(QStringLiteral("SEND"));
         chatButton_->setEnabled(ready);
         setWidgetStyle(chatButton_, moveText
                                     ? moveButtonStyle(ready, ready && hasSelectedMoveTarget())
                                     : chatButtonStyle(ready));
+    }
+
+    void refreshSessionCommandButtons()
+    {
+        const bool inGame = isConnected() && gameClockRunning_ && !gameOver_;
+        const bool canControl = inGame && !restoreBusy() &&
+                                (directUiBusy_ == 0u || resignCanPreemptBusy());
+        if (drawButton_ != nullptr) {
+            drawButton_->setEnabled(canControl);
+        }
+        if (takebackButton_ != nullptr) {
+            takebackButton_->setEnabled(canControl && canRequestTakeback());
+        }
+        if (resetIconButton_ != nullptr) {
+            resetIconButton_->setEnabled(inGame && !restoreBusy());
+        }
+    }
+
+    void layoutChatCountLabel()
+    {
+        if (chatEdit_ == nullptr || chatCountLabel_ == nullptr) {
+            return;
+        }
+        chatCountLabel_->adjustSize();
+        const int clearGutter = 22;
+        const int pad = 8;
+        const QSize hint = chatCountLabel_->sizeHint();
+        const int x = chatEdit_->width() - hint.width() - clearGutter;
+        const int y = (chatEdit_->height() - hint.height()) / 2;
+        chatCountLabel_->move(qMax(pad, x), qMax(0, y));
+        const QFontMetrics metrics(chatEdit_->font());
+        const int textWidth = metrics.horizontalAdvance(chatEdit_->text());
+        const int textRight = chatEdit_->textMargins().left() + pad + textWidth;
+        chatCountLabel_->setVisible(textRight + 6 < chatCountLabel_->x());
     }
 
     void resizeToContent()
@@ -5109,6 +5837,32 @@ private:
             const QSize chromeSize(0, statusBar()->sizeHint().height());
             const QSize windowSize = contentSize + chromeSize;
             setFixedSize(windowSize);
+            QTimer::singleShot(0, this, [this]() {
+                alignStatusBarToControls();
+            });
+        }
+    }
+
+    void alignStatusBarToControls()
+    {
+        if (statusBarContents_ == nullptr || statusBarLayout_ == nullptr ||
+            flipBoardButton_ == nullptr || logToggleButton_ == nullptr) {
+            return;
+        }
+
+        const int leftMargin = statusBarContents_->mapFromGlobal(
+            flipBoardButton_->mapToGlobal(QPoint(0, 0))).x();
+        const int logRight = statusBarContents_->mapFromGlobal(
+            logToggleButton_->mapToGlobal(
+                QPoint(logToggleButton_->width(), 0))).x();
+        const int rightMargin = statusBarContents_->width() - logRight;
+        if (leftMargin < 0 || rightMargin < 0) {
+            return;
+        }
+
+        const QMargins alignedMargins(leftMargin, 0, rightMargin, 0);
+        if (statusBarLayout_->contentsMargins() != alignedMargins) {
+            statusBarLayout_->setContentsMargins(alignedMargins);
         }
     }
 
@@ -5118,7 +5872,9 @@ private:
         const bool directHost = !mqtt && pcIsHost_;
 
         if (hostCaptionLabel_ != nullptr) {
-            hostCaptionLabel_->setText(directHost ? "LOCAL IP" : "HOST");
+            hostCaptionLabel_->setText(mqtt ? QStringLiteral("HOST")
+                                            : (directHost ? QStringLiteral("LOCAL IP")
+                                                          : QStringLiteral("HOST IP")));
         }
         if (roomCaptionLabel_ != nullptr) {
             roomCaptionLabel_->setVisible(mqtt);
@@ -5159,11 +5915,19 @@ private:
             }
         }
         if (directIpHistoryAction_ != nullptr) {
-            directIpHistoryAction_->setVisible(!mqtt && !pcIsHost_);
-            directIpHistoryAction_->setEnabled(!directIpHistory_.isEmpty());
+            if (mqtt) {
+                directIpHistoryAction_->setVisible(false);
+            } else {
+                QPixmap spacer(16, 16);
+                spacer.fill(Qt::transparent);
+                const bool showHistory = !pcIsHost_;
+                directIpHistoryAction_->setVisible(true);
+                directIpHistoryAction_->setIcon(
+                    showHistory ? directIpHistoryIcon() : QIcon(spacer));
+                directIpHistoryAction_->setEnabled(
+                    showHistory && !directIpHistory_.isEmpty());
+            }
         }
-
-        resizeToContent();
     }
 
     static bool looksLikeMqttHost(const QString &host)
@@ -5277,9 +6041,11 @@ private:
     {
         if (text == NETCHESSZX_UI_PHASE_DISCONNECTED ||
             text == NETCHESSZX_UI_PHASE_CONNECTION_FAILED ||
+            text == NETCHESSZX_UI_PC_ERROR_CONNECTION_LOST ||
             text == NETCHESSZX_UI_ERROR_OPPONENT_DISCONNECTED ||
-            text.startsWith("CHECK MATE") ||
-            text.startsWith("STALE MATE") ||
+            text.startsWith("CHECKMATE") ||
+            text.startsWith("STALEMATE") ||
+            text.startsWith("RESIGNATION") ||
             text.startsWith("RESTART rejected") ||
             text.startsWith("Connection refused") ||
             text.startsWith(NETCHESSZX_UI_PHASE_CONNECTION_FAILED) ||
@@ -5314,17 +6080,20 @@ private:
 
     static QString statusBarLabelStyle(StatusSeverity severity)
     {
+#define SHZ_STATUS_SHAPE " font-weight:700; font-size:11px;" \
+                         " letter-spacing:0.5px; }"
         switch (severity) {
         case StatusSeverity::Error:
-            return "QLabel { color:#ff5a5a; font:700 11px Segoe UI; }";
+            return "QLabel { color:" SHZ_ALERT_BRIGHT ";" SHZ_STATUS_SHAPE;
         case StatusSeverity::Waiting:
-            return "QLabel { color:#ffd166; font:700 11px Segoe UI; }";
+            return "QLabel { color:" SHZ_WAIT_BRIGHT ";" SHZ_STATUS_SHAPE;
         case StatusSeverity::Success:
-            return "QLabel { color:#7dff8a; font:700 11px Segoe UI; }";
+            return "QLabel { color:" SHZ_ACCENT ";" SHZ_STATUS_SHAPE;
         case StatusSeverity::Info:
         default:
-            return "QLabel { color:#00d7ff; font:700 11px Segoe UI; }";
+            return "QLabel { color:" SHZ_ACCENT ";" SHZ_STATUS_SHAPE;
         }
+#undef SHZ_STATUS_SHAPE
     }
 
     bool isConnecting() const
@@ -5355,6 +6124,10 @@ private:
         if (isConnecting()) {
             return NETCHESSZX_UI_PHASE_CONNECTING;
         }
+        if (statusMessage_ == NETCHESSZX_UI_PC_EVENT_OPPONENT_LEFT ||
+            statusMessage_ == NETCHESSZX_UI_PC_ERROR_CONNECTION_LOST) {
+            return statusMessage_;
+        }
         if (!isConnected() && isConnectionErrorStatus()) {
             return NETCHESSZX_UI_PHASE_CONNECTION_FAILED;
         }
@@ -5378,10 +6151,24 @@ private:
         if (directUiBusy_) {
             return NETCHESSZX_UI_NOTICE_WAITING_ACK;
         }
-        if (pcTurn_) {
-            return NETCHESSZX_UI_PHASE_YOUR_TURN;
+        if (!statusMessage_.isEmpty() && !isTurnStatusMessage(statusMessage_)) {
+            return statusMessage_;
         }
-        return NETCHESSZX_UI_PHASE_OPPONENT_TURN;
+        return QStringLiteral("LIVE");
+    }
+
+    static bool isTurnStatusMessage(const QString &text)
+    {
+        const QString lower = text.toLower();
+        return text.compare(QLatin1String(NETCHESSZX_UI_PHASE_YOUR_TURN),
+                            Qt::CaseInsensitive) == 0 ||
+               text.compare(QLatin1String(NETCHESSZX_UI_PHASE_OPPONENT_TURN),
+                            Qt::CaseInsensitive) == 0 ||
+               lower.contains(QStringLiteral("to move")) ||
+               lower.contains(QStringLiteral("your move")) ||
+               lower.contains(QStringLiteral("your turn")) ||
+               lower.contains(QStringLiteral("opponent turn")) ||
+               lower.startsWith(QStringLiteral("move ready"));
     }
 
     QString statusContextText() const
@@ -5413,14 +6200,19 @@ private:
 
         if (!gameClockRunning_) {
             if (gameOver_) {
+                QStringList parts;
+                parts << QString("Side %1").arg(pcSideName());
                 if (directResignRestartPending_) {
-                    return QString("Side %1 | %2 | %3")
-                        .arg(pcSideName(),
-                             QString(NETCHESSZX_UI_NOTICE_RESTARTING_GAME),
-                             endpointText());
+                    parts << QString(NETCHESSZX_UI_NOTICE_RESTARTING_GAME);
+                } else {
+                    parts << QString(NETCHESSZX_UI_CONTEXT_PRESS_RESTART);
                 }
-                return QString("Side %1 | %2 | %3")
-                    .arg(pcSideName(), QString(NETCHESSZX_UI_CONTEXT_PRESS_RESTART), endpointText());
+                parts << endpointText();
+                const QString peer = peerMachineStatusText();
+                if (!peer.isEmpty()) {
+                    parts << peer;
+                }
+                return parts.join(" | ");
             }
             QString action = pcIsHost_ ? QString(NETCHESSZX_UI_CONTEXT_PRESS_START) :
                                          QString(NETCHESSZX_UI_PHASE_WAITING_OPPONENT_START);
@@ -5429,12 +6221,17 @@ private:
                                    : QString(NETCHESSZX_UI_PHASE_WAITING_HOST);
             }
 
-            QString text = QString("Side %1 | %2 | %3")
-                               .arg(pcSideName(), action, endpointText());
+            QStringList parts;
+            parts << QString("Side %1").arg(pcSideName());
+            parts << action << endpointText();
             if (!statusMessage_.isEmpty() && statusMessage_ != statusStateText()) {
-                text += " | " + statusMessage_;
+                parts << statusMessage_;
             }
-            return text;
+            const QString peer = peerMachineStatusText();
+            if (!peer.isEmpty()) {
+                parts << peer;
+            }
+            return parts.join(" | ");
         }
 
         QStringList parts;
@@ -5444,10 +6241,24 @@ private:
             parts << QString("Last %1").arg(lastMove_.toUpper());
         }
         if (!statusMessage_.isEmpty() && statusMessage_ != statusStateText() &&
-            statusMessage_ != NETCHESSZX_UI_PHASE_WAITING_OPPONENT) {
+            statusMessage_ != NETCHESSZX_UI_PHASE_WAITING_OPPONENT &&
+            !isTurnStatusMessage(statusMessage_)) {
             parts << statusMessage_;
         }
+        const QString peer = peerMachineStatusText();
+        if (!peer.isEmpty()) {
+            parts << peer;
+        }
         return parts.join(" | ");
+    }
+
+    QString peerMachineStatusText() const
+    {
+        if (!directSessionReady_) {
+            return QString();
+        }
+        const char *code = netchess_proto_mach_code(peerPlatform_);
+        return QString("VS %1").arg(code == nullptr ? "?" : code);
     }
 
     void refreshStatusBar()
@@ -5465,31 +6276,9 @@ private:
         }
     }
 
-    static QString sideStatusText(const QString &text)
-    {
-        if (text.isEmpty() || text == NETCHESSZX_UI_PHASE_DISCONNECTED ||
-            text.startsWith(NETCHESSZX_UI_PHASE_DISCONNECTED)) {
-            return NETCHESSZX_UI_SIDE_CONNECT_READY;
-        }
-        if (text == NETCHESSZX_UI_PHASE_OPPONENT_LINKED) {
-            return NETCHESSZX_UI_SIDE_LINK_OK;
-        }
-
-        QString compact = text.toUpper();
-        compact.replace(" - ", " | ");
-        constexpr int kMaxSideStatusChars = 72;
-        if (compact.size() > kMaxSideStatusChars) {
-            compact = compact.left(kMaxSideStatusChars - 3) + "...";
-        }
-        return compact;
-    }
-
     void setStatusText(const QString &text)
     {
         statusMessage_ = text;
-        if (statusLabel_) {
-            setLabelText(statusLabel_, sideStatusText(text));
-        }
         refreshStatusBar();
         refreshTurnLabel();
     }
@@ -5502,8 +6291,11 @@ private:
 
     void appendLog(const QString &text)
     {
-        const QString now = QLocale::system().toString(QTime::currentTime(), QLocale::LongFormat);
-        const QString line = QString("[%1] %2").arg(now, text);
+        static const QLocale locale = QLocale::system();
+        const QString line = QLatin1Char('[')
+            + locale.toString(QTime::currentTime(), QLocale::LongFormat)
+            + QStringLiteral("] ")
+            + text;
         logLines_.append(line);
         trimLines(logLines_);
         if (!showingMoveHistory_ && logEdit_ != nullptr) {
@@ -5522,20 +6314,22 @@ private:
         }
     }
 
-    static void trimMoveRecords(QVector<MoveRecord> &records)
-    {
-        constexpr int kMaxRecords = 400;
-        while (records.size() > kMaxRecords) {
-            records.removeFirst();
-        }
-    }
-
     void appendMoveRecord(int ply, const QString &move, const QString &notation)
     {
-        moveHistoryRecords_.append(MoveRecord{ply, move, notation});
-        trimMoveRecords(moveHistoryRecords_);
+        constexpr int kMaxRecords = 400;
+        const MoveRecord record{ply, move, notation};
+        MoveRecord trimmedRecord;
+        bool trimmed = false;
+
+        moveHistoryRecords_.append(record);
+        if (moveHistoryRecords_.size() > kMaxRecords) {
+            trimmedRecord = moveHistoryRecords_.first();
+            moveHistoryRecords_.removeFirst();
+            trimmed = true;
+        }
         if (showingMoveHistory_ && logEdit_ != nullptr) {
-            renderLogView();
+            updateMoveHistoryTable(record,
+                                   trimmed ? &trimmedRecord : nullptr);
         }
     }
 
@@ -5593,6 +6387,128 @@ private:
         return QStringLiteral("%1 (%2)").arg(uci, record.notation);
     }
 
+    static int moveNumberForPly(int ply)
+    {
+        return (ply + 1) / 2;
+    }
+
+    void setMoveTableItem(int row, int column, const QString &text,
+                          Qt::Alignment alignment)
+    {
+        QTableWidgetItem *item = moveTable_->item(row, column);
+        if (item == nullptr) {
+            item = new QTableWidgetItem();
+            item->setFlags(Qt::ItemIsEnabled);
+            item->setTextAlignment(alignment);
+            moveTable_->setItem(row, column, item);
+        }
+        item->setText(text);
+    }
+
+    void initializeMoveHistoryRow(int row, int moveNumber)
+    {
+        const QString number = moveNumber == 0
+            ? QString() : QStringLiteral("%1.").arg(moveNumber);
+
+        setMoveTableItem(row, 0, number,
+                         Qt::AlignRight | Qt::AlignVCenter);
+        setMoveTableItem(row, 1, QString(),
+                         Qt::AlignLeft | Qt::AlignVCenter);
+        setMoveTableItem(row, 2, QString(),
+                         Qt::AlignLeft | Qt::AlignVCenter);
+        moveTable_->setRowHeight(row, 18);
+    }
+
+    void syncMoveHistoryRow(int moveNumber)
+    {
+        const int row = moveNumber - moveTableFirstMoveNumber_;
+        if (row < 0 || row >= moveTable_->rowCount()) {
+            return;
+        }
+        const MoveRecord *whiteMove = nullptr;
+        const MoveRecord *blackMove = nullptr;
+        for (const MoveRecord &record : moveHistoryRecords_) {
+            if (moveNumberForPly(record.ply) != moveNumber) {
+                continue;
+            }
+            if ((record.ply % 2) == 1) {
+                whiteMove = &record;
+            } else {
+                blackMove = &record;
+            }
+        }
+        setMoveTableItem(row, 1,
+                         whiteMove == nullptr
+                             ? QString() : moveCellText(*whiteMove),
+                         Qt::AlignLeft | Qt::AlignVCenter);
+        setMoveTableItem(row, 2,
+                         blackMove == nullptr
+                             ? QString() : moveCellText(*blackMove),
+                         Qt::AlignLeft | Qt::AlignVCenter);
+    }
+
+    void setMoveHistoryRecord(const MoveRecord &record)
+    {
+        const int moveNumber = moveNumberForPly(record.ply);
+        const int row = moveNumber - moveTableFirstMoveNumber_;
+        if (row < 0 || row >= moveTable_->rowCount()) {
+            return;
+        }
+        setMoveTableItem(row, (record.ply % 2) == 1 ? 1 : 2,
+                         moveCellText(record),
+                         Qt::AlignLeft | Qt::AlignVCenter);
+    }
+
+    void scrollMoveHistoryToEnd()
+    {
+        if (QScrollBar *bar = moveTable_->verticalScrollBar()) {
+            bar->setValue(bar->maximum());
+        }
+    }
+
+    void updateMoveHistoryTable(const MoveRecord &record,
+                                const MoveRecord *trimmedRecord)
+    {
+        if (moveTable_ == nullptr || moveHistoryRecords_.isEmpty()) {
+            return;
+        }
+        const int firstMoveNumber =
+            moveNumberForPly(moveHistoryRecords_.first().ply);
+        const int appendedMoveNumber = moveNumberForPly(record.ply);
+
+        if (moveTable_->rowCount() == 0) {
+            moveTableFirstMoveNumber_ = firstMoveNumber;
+        } else if (moveTableFirstMoveNumber_ > firstMoveNumber ||
+                   appendedMoveNumber < moveTableFirstMoveNumber_) {
+            renderMoveHistoryTable();
+            return;
+        }
+
+        while (moveTable_->rowCount() != 0 &&
+               moveTableFirstMoveNumber_ < firstMoveNumber) {
+            moveTable_->removeRow(0);
+            ++moveTableFirstMoveNumber_;
+        }
+        if (moveTable_->rowCount() == 0) {
+            moveTableFirstMoveNumber_ = firstMoveNumber;
+        }
+
+        const int requiredRows =
+            appendedMoveNumber - moveTableFirstMoveNumber_ + 1;
+        while (moveTable_->rowCount() < requiredRows) {
+            const int row = moveTable_->rowCount();
+
+            moveTable_->insertRow(row);
+            initializeMoveHistoryRow(row,
+                                     moveTableFirstMoveNumber_ + row);
+        }
+        if (trimmedRecord != nullptr) {
+            syncMoveHistoryRow(moveNumberForPly(trimmedRecord->ply));
+        }
+        setMoveHistoryRecord(record);
+        scrollMoveHistoryToEnd();
+    }
+
     void renderMoveHistoryTable()
     {
         if (moveTable_ == nullptr) {
@@ -5600,53 +6516,33 @@ private:
         }
         if (moveHistoryRecords_.isEmpty()) {
             moveTable_->setRowCount(0);
+            moveTableFirstMoveNumber_ = 0;
             return;
         }
 
-        QHash<int, MoveRecord> whiteMoves;
-        QHash<int, MoveRecord> blackMoves;
-        int firstMoveNumber = (moveHistoryRecords_.first().ply + 1) / 2;
+        int firstMoveNumber = moveNumberForPly(moveHistoryRecords_.first().ply);
         int lastMoveNumber = firstMoveNumber;
 
         for (const MoveRecord &record : moveHistoryRecords_) {
-            const int moveNumber = (record.ply + 1) / 2;
+            const int moveNumber = moveNumberForPly(record.ply);
             if (moveNumber < firstMoveNumber) {
                 firstMoveNumber = moveNumber;
             }
             if (moveNumber > lastMoveNumber) {
                 lastMoveNumber = moveNumber;
             }
-            if ((record.ply % 2) == 1) {
-                whiteMoves.insert(moveNumber, record);
-            } else {
-                blackMoves.insert(moveNumber, record);
-            }
         }
 
+        moveTableFirstMoveNumber_ = firstMoveNumber;
         moveTable_->setRowCount(lastMoveNumber - firstMoveNumber + 1);
-        const auto setItem = [this](int row, int col, const QString &text, Qt::Alignment align) {
-            auto *item = new QTableWidgetItem(text);
-            item->setFlags(Qt::ItemIsEnabled);
-            item->setTextAlignment(align);
-            moveTable_->setItem(row, col, item);
-        };
 
-        for (int moveNumber = firstMoveNumber;
-             moveNumber <= lastMoveNumber;
-             ++moveNumber) {
-            const MoveRecord whiteMove = whiteMoves.value(moveNumber);
-            const MoveRecord blackMove = blackMoves.value(moveNumber);
-            const int row = moveNumber - firstMoveNumber;
-            const QString number = moveNumber == 0
-                ? QString() : QStringLiteral("%1.").arg(moveNumber);
-            setItem(row, 0, number, Qt::AlignRight | Qt::AlignVCenter);
-            setItem(row, 1, moveCellText(whiteMove), Qt::AlignLeft | Qt::AlignVCenter);
-            setItem(row, 2, moveCellText(blackMove), Qt::AlignLeft | Qt::AlignVCenter);
-            moveTable_->setRowHeight(row, 18);
+        for (int row = 0; row < moveTable_->rowCount(); ++row) {
+            initializeMoveHistoryRow(row, firstMoveNumber + row);
         }
-        if (QScrollBar *bar = moveTable_->verticalScrollBar()) {
-            bar->setValue(bar->maximum());
+        for (const MoveRecord &record : moveHistoryRecords_) {
+            setMoveHistoryRecord(record);
         }
+        scrollMoveHistoryToEnd();
     }
 
     void appendChat(const QString &sender, const QString &text,
@@ -5665,8 +6561,12 @@ private:
 
     void appendControlEvent(bool local, const QString &event)
     {
+        const bool terminal =
+            event == QString::fromLatin1(NETCHESSZX_UI_EVENT_DRAW_AGREED) ||
+            event == QString::fromLatin1(NETCHESSZX_UI_EVENT_RESIGNATION_WON) ||
+            event == QString::fromLatin1(NETCHESSZX_UI_EVENT_RESIGNATION_LOST);
         appendChat(local ? pcChatName() : opponentChatName(), event,
-                   event == QStringLiteral("DRAW") ||
+                   terminal || event == QStringLiteral("DRAW") ||
                        event == QStringLiteral("RESIGN"));
     }
 
@@ -5697,6 +6597,10 @@ private:
     QRadioButton *hostBlackRadio_ = nullptr;
     QLabel *hostCaptionLabel_ = nullptr;
     QLabel *roomCaptionLabel_ = nullptr;
+    QLabel *chatCountLabel_ = nullptr;
+    QPushButton *drawButton_ = nullptr;
+    QPushButton *takebackButton_ = nullptr;
+    QPushButton *resetIconButton_ = nullptr;
     QLineEdit *hostEdit_ = nullptr;
     QAction *directIpHistoryAction_ = nullptr;
     QMenu *directIpHistoryMenu_ = nullptr;
@@ -5714,12 +6618,13 @@ private:
     QPushButton *chatButton_ = nullptr;
     QPlainTextEdit *chatLogEdit_ = nullptr;
     QLabel *turnLabel_ = nullptr;
-    QLabel *statusLabel_ = nullptr;
     QLabel *selectedLabel_ = nullptr;
     QLabel *statusStateLabel_ = nullptr;
     QLabel *statusContextLabel_ = nullptr;
     QLabel *gameClockLabel_ = nullptr;
     QLabel *moveClockLabel_ = nullptr;
+    QWidget *statusBarContents_ = nullptr;
+    QHBoxLayout *statusBarLayout_ = nullptr;
     QLabel *logTitleLabel_ = nullptr;
     QStackedWidget *logStack_ = nullptr;
     QTableWidget *moveTable_ = nullptr;
@@ -5729,6 +6634,20 @@ private:
     QTextEdit *logEdit_ = nullptr;
     QTimer *clockTimer_ = nullptr;
     QTimer *directConnectRetryTimer_ = nullptr;
+    QTimer *revealTimer_ = nullptr;
+    QTimer *flashTimer_ = nullptr;
+    QTimer *feedbackTimer_ = nullptr;
+    QVector<QPoint> morphSquares_;
+    std::function<void(bool)> flashDone_;
+    int revealStep_ = 0;
+    int revealStepMs_ = 0;
+    int revealPauseMs_ = 0;
+    int morphMid_ = 0;
+    int flashStep_ = 0;
+    int flashRow_ = -1;
+    int flashCol_ = -1;
+    int feedbackStep_ = 0;
+    bool revealIsMorph_ = false;
     QLabel *fileLabelsTop_[8] = {};
     QLabel *fileLabelsBottom_[8] = {};
     QLabel *rankLabelsLeft_[8] = {};
@@ -5752,6 +6671,7 @@ private:
     qint64 gameTimerOffsetMs_ = 0;
     qint64 moveTimerOffsetMs_ = 0;
     int nextPly_ = 1;
+    int moveTableFirstMoveNumber_ = 0;
     int selectedRow_ = -1;
     int selectedCol_ = -1;
     int chatInputHistoryIndex_ = 0;
@@ -5759,24 +6679,21 @@ private:
     int targetCol_ = -1;
     int feedbackRow_ = -1;
     int feedbackCol_ = -1;
-    int feedbackGeneration_ = 0;
-    int pieceFlashGeneration_ = 0;
-    int pieceRevealGeneration_ = 0;
     int gameGeneration_ = 0;
     int directConnectRetryCount_ = 0;
     uint8_t directNextLinkId_ = 0u;
     uint8_t directPrimaryLinkId_ = SESSION_LINK_NONE;
     uint8_t directDecisionRequestId_ = 0u;
     uint8_t directDecisionControl_ = 0u;
+    uint8_t peerPlatform_ = NETCHESS_PLAT_UNKNOWN;
     quint16 mqttSessionId_ = 0;
     quint64 mqttClientNonce_ = QRandomGenerator::global()->generate64();
     bool feedbackOn_ = false;
     bool mqttSubscribed_ = false;
     bool mqttSideReady_ = false;
-    bool directSessionInitialized_ = false;
-    bool mqttSessionInitialized_ = false;
     bool mqttSessionLinked_ = false;
     bool directSessionReady_ = false;
+    bool localMachSent_ = false;
     uint8_t directUiBusy_ = 0u;
     bool directStartTransitionApplied_ = false;
     bool directLocalResignPending_ = false;
@@ -5797,8 +6714,12 @@ private:
         QSettings s;
         s.setValue("appearance/board", tex);
         if (boardFrame_) {
-            boardFrame_->setStyleSheet(
-                "QWidget#boardFrame { background:#101010; border:1px solid #e6e6e2; }");
+            boardFrame_->setStyleSheet(boardFrameStyle());
+            // A second setStyleSheet on an unshown widget keeps the rules parsed
+            // for the first one, so the new well colour needs an explicit repolish.
+            boardFrame_->style()->unpolish(boardFrame_);
+            boardFrame_->style()->polish(boardFrame_);
+            boardFrame_->update();
         }
         refreshBoard();
     }
@@ -5808,14 +6729,17 @@ private:
         PieceRenderer::setPieceSet(set);
         QSettings s;
         s.setValue("appearance/pieces", set);
-        refreshBoard();
+        if (boardPiecesVisible_) {
+            animateBoardPiecesMorph();
+        } else {
+            refreshBoard();
+        }
     }
 
     QWidget *boardFrame_ = nullptr;
     QComboBox *boardCombo_ = nullptr;
     QComboBox *pieceCombo_ = nullptr;
     bool boardWhiteAtBottom_ = false;
-    bool boardOrientationManual_ = false;
     bool boardPiecesVisible_ = false;
     bool showingMoveHistory_ = true;
     bool gameOver_ = false;
@@ -5854,9 +6778,6 @@ void MainWindow::setWindowIcon(const QIcon &icon)
 void MainWindow::showNormal()
 {
     impl_->showNormal();
-#ifdef Q_OS_MACOS
-    applyMacWindowChrome(impl_.get(), QColor(QStringLiteral("#1b1b25")));
-#endif
 }
 
 #ifdef NETCHESSZX_PC_MQTT_TX_FAILURE_TEST
@@ -5882,11 +6803,27 @@ void MainWindow::testFeedMqtt(const QByteArray &suffix,
 {
     impl_->testFeedMqtt(suffix, payload, retained);
 }
+bool MainWindow::testBeginMqttRestore()
+{
+    return impl_->testBeginMqttRestore();
+}
+bool MainWindow::testRestoreUiIdle() const
+{
+    return impl_->testRestoreUiIdle();
+}
 void MainWindow::testSetMqttWriteFailure(bool enabled)
 {
     impl_->testSetMqttWriteFailure(enabled);
 }
 bool MainWindow::testSessionReady() const { return impl_->testSessionReady(); }
+QString MainWindow::testStatusContextText() const
+{
+    return impl_->testStatusContextText();
+}
+bool MainWindow::testStatusBarAligned()
+{
+    return impl_->testStatusBarAligned();
+}
 bool MainWindow::testDisconnectButtonAvailable() const
 {
     return impl_->testDisconnectButtonAvailable();
@@ -5946,5 +6883,13 @@ bool MainWindow::testResignRestartUiProjection()
 bool MainWindow::testRestoredMoveProjection()
 {
     return impl_->testRestoredMoveProjection();
+}
+bool MainWindow::testSessionEndPresentation()
+{
+    return impl_->testSessionEndPresentation();
+}
+bool MainWindow::testCancelPendingPieceFlash()
+{
+    return impl_->testCancelPendingPieceFlash();
 }
 #endif

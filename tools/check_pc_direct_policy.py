@@ -10,8 +10,7 @@ from pathlib import Path
 
 PC_SOURCE_DIR = "src/pc/client"
 ADAPTER_SOURCES = {
-    f"{PC_SOURCE_DIR}/direct_session_adapter.cpp",
-    f"{PC_SOURCE_DIR}/mqtt_session_adapter.cpp",
+    f"{PC_SOURCE_DIR}/desktop_session_adapter.cpp",
 }
 SOURCE_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
 SESSION_STEP = re.compile(r"\bsession_step\s*\(")
@@ -19,7 +18,7 @@ SESSION_WIRE_LITERAL = re.compile(r'"[HJOF](?:[ \t][^"\r\n]*)?"')
 LWT_PATH = f"{PC_SOURCE_DIR}/main_window.cpp"
 LWT_CODEC_PATH = f"{PC_SOURCE_DIR}/desktop_transport_codec.cpp"
 LWT_LITERAL = '"F %1 %2"'
-MQTT_ADAPTER_PATH = f"{PC_SOURCE_DIR}/mqtt_session_adapter.cpp"
+MQTT_ADAPTER_PATH = f"{PC_SOURCE_DIR}/desktop_session_adapter.cpp"
 MQTT_TOPIC_LITERALS = {
     "meta", "pres_w", "pres_b", "w2b", "b2w", "ack_w", "ack_b"
 }
@@ -148,9 +147,11 @@ def check_mqtt_route_contract(sources: dict[str, str]) -> list[str]:
     if source is None:
         return [f"{MQTT_ADAPTER_PATH}: missing PC MQTT adapter"]
 
-    inbound = function_body(source, "bool MqttSessionAdapter::routeForTopic")
+    inbound = function_body(
+        source, "bool DesktopSessionAdapter::mqttRouteForTopic"
+    )
     outbound = function_body(
-        source, "QByteArray MqttSessionAdapter::topicSuffixForRoute"
+        source, "QByteArray DesktopSessionAdapter::mqttTopicSuffixForRoute"
     )
     if inbound is None or outbound is None:
         return ["PC MQTT route/topic mapping functions missing"]
@@ -249,7 +250,7 @@ def self_test() -> None:
     })
     clean[MQTT_ADAPTER_PATH] = (
         "void step() { session_step(state, event); }\n"
-        "bool MqttSessionAdapter::routeForTopic(const QByteArray &topic, "
+        "bool DesktopSessionAdapter::mqttRouteForTopic(const QByteArray &topic, "
         "uint8_t *route) {\n"
         "  if (suffix == \"meta\") { *route = SESSION_ROUTE_META; }\n"
         "  else if (suffix == \"pres_w\" || suffix == \"pres_b\") "
@@ -259,7 +260,7 @@ def self_test() -> None:
         "  else if (suffix == \"ack_w\" || suffix == \"ack_b\") "
         "{ *route = SESSION_ROUTE_ACK; }\n"
         "}\n"
-        "QByteArray MqttSessionAdapter::topicSuffixForRoute(uint8_t route) "
+        "QByteArray DesktopSessionAdapter::mqttTopicSuffixForRoute(uint8_t route) "
         "const {\n"
         "  if (route == SESSION_ROUTE_META) { return \"meta\"; }\n"
         "  if (state_.local_color == SESSION_COLOR_UNKNOWN) { return {}; }\n"

@@ -18,12 +18,23 @@ PUBLIC _netchesszx_asm_net_move
 PUBLIC _netchesszx_session_send_ack_move
 PUBLIC _netchesszx_session_send_nack_move
 PUBLIC _netchesszx_asm_restore_chunk_step
+PUBLIC _netchesszx_asm_push_frame_arg
 
 EXTERN _line_buf
 EXTERN _NETCHESS_PROTO_ACK_PREFIX
 EXTERN _NETCHESS_PROTO_NACK_PREFIX
 EXTERN _spectrum_net_payload_scratch
 EXTERN _spectrum_net_send_text
+
+; Custom COPT replaces "ld hl,(ix+4); push hl" before a normal C stack-ABI
+; call with CALL here. DE is caller-scratch under sdcc_iy --no-reg-params.
+_netchesszx_asm_push_frame_arg:
+    pop de
+    ld l, (ix + 4)
+    ld h, (ix + 5)
+    push hl
+    push de
+    ret
 
 ; Fixed RESTORE RS state kernel. The event classifier has already proved
 ; frame[3] is '0' or '1' and the frame is 35 bytes. Normal SDCC/IY ABI:
@@ -229,6 +240,14 @@ dpro_guest:
     ret
 
 _netchesszx_asm_proto_copy_token:
+    scf
+    jr cpb_load_args
+
+_netchess_proto_copy_digits:
+    or a
+
+cpb_load_args:
+    ex af, af'
     ld hl, 2
     add hl, sp
     ld e, (hl)
@@ -254,10 +273,12 @@ _netchesszx_asm_proto_copy_token:
     ld b, a
     dec b
     ld c, 0
-cpb_token_loop:
+    ex af, af'
+    jr nc, cpb_digit_loop
     ld a, b
     or a
     jr z, cpb_done
+cpb_token_loop:
     ld a, (hl)
     or a
     jr z, cpb_done
@@ -268,33 +289,8 @@ cpb_token_loop:
     inc hl
     inc c
     djnz cpb_token_loop
+    jr cpb_done
 
-_netchess_proto_copy_digits:
-    ld hl, 2
-    add hl, sp
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
-    inc hl
-    ld a, (hl)
-    or a
-    jr z, cpb_ret0
-    push de
-    push af
-    ld a, (de)
-    ld l, a
-    inc de
-    ld h, (de)
-    ld d, b
-    ld e, c
-    pop af
-    ld b, a
-    dec b
-    ld c, 0
 cpb_digit_loop:
     ld a, b
     or a
@@ -673,28 +669,8 @@ after_prefix_fail:
     ret
 
 _netchesszx_asm_net_copy:
-    ld hl, 2
-    add hl, sp
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
-    inc hl
-    push bc
-    push de
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
-    pop de
-    pop hl
-    ld a, b
-    or c
-    ret z
-    ldir
-    ret
+    ; Memmove semantics are valid for every net_copy caller.
+    jr _netchesszx_asm_net_move
 
 _netchesszx_asm_net_move:
     ld hl, 2

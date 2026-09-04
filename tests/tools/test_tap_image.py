@@ -4,12 +4,21 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from tools.check_tap_image import TapImageError, validate_image  # noqa: E402
+from tools.gen_overlay_atlas import (  # noqa: E402
+    FINGERPRINT_LEN,
+    FINGERPRINT_OFFSET,
+    atlas_fingerprint,
+    binding_digest,
+    build_header,
+    write_table,
+)
 
 
 ORG = 0x7000
@@ -30,12 +39,12 @@ def tap_block(flag: int, payload: bytes) -> bytes:
     return len(block).to_bytes(2, "little") + block
 
 
-def code_tap(code: bytes) -> bytes:
+def code_tap(code: bytes, org: int = ORG) -> bytes:
     header = (
         bytes((3,))
         + b"SHATRANJ  "
         + len(code).to_bytes(2, "little")
-        + ORG.to_bytes(2, "little")
+        + org.to_bytes(2, "little")
         + bytes(2)
     )
     return tap_block(0, header) + tap_block(0xFF, code)
@@ -56,6 +65,25 @@ def main() -> int:
     assert image.initialized_bytes == 3
     assert image.bss_bytes == 2
     assert image.data_after_compiler == 1
+
+    low_org = ORG - 8
+    low_code = bytes((0x11, 0x22, 0x33))
+    combined = low_code + bytes(5) + code
+    low_image = validate_image(
+        SYMBOLS, code, code_tap(combined, low_org), ORG, low_org, low_code
+    )
+    assert low_image.load_address == low_org
+    assert low_image.payload == combined
+
+    split_bss_symbols = dict(SYMBOLS)
+    split_bss_symbols.update({
+        "__BSS_END_tail": 0x5B4B,
+        "__bss_compiler_tail": ORG + 5,
+        "__bss_user_tail": 0x5B49,
+    })
+    split_image = validate_image(
+        split_bss_symbols, code, code_tap(code), ORG)
+    assert split_image.bss_bytes == 2
 
     expect_rejected(
         code,
@@ -78,6 +106,32 @@ def main() -> int:
         code_tap(bytes(dirty_bss)),
         "non-zero BSS was accepted",
     )
+
+    entries = [(100, 20), (120, 30)]
+    with tempfile.TemporaryDirectory() as tmp_name:
+        tmp = Path(tmp_name)
+        source = tmp / "source.c"
+        source.write_text("first\n", encoding="ascii")
+        binding = binding_digest([source], ["NET_BACKEND=spectranext"])
+        fingerprint = atlas_fingerprint(entries, binding)
+        header = build_header(entries, binding)
+        assert int.from_bytes(
+            header[FINGERPRINT_OFFSET:FINGERPRINT_OFFSET + FINGERPRINT_LEN],
+            "little",
+        ) == fingerprint
+
+        table = tmp / "overlay_atlas_table.asm"
+        assert write_table(table, entries, binding)
+        table_text = table.read_text(encoding="ascii")
+        for index, value in enumerate(fingerprint.to_bytes(4, "little")):
+            assert f"ovl_atlas_fingerprint_{index} EQU {value}" in table_text
+
+        source.write_text("second\n", encoding="ascii")
+        changed_binding = binding_digest(
+            [source], ["NET_BACKEND=spectranext"]
+        )
+        assert atlas_fingerprint(entries, changed_binding) != fingerprint
+        assert atlas_fingerprint([(100, 21), (121, 29)], binding) != fingerprint
 
     print("TAP image guard tests ok")
     return 0

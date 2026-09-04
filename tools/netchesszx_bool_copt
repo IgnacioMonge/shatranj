@@ -8,3 +8,11 @@
 	inc	a
 	or	a,a
 	; peephole netchess-bool-nonzero
+
+	ld	l,(ix+4)
+	ld	h,(ix+5)
+	push	hl
+=
+	EXTERN	_netchesszx_asm_push_frame_arg
+	call	_netchesszx_asm_push_frame_arg
+	; peephole netchess-push-frame-arg

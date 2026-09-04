@@ -61,6 +61,7 @@ extern "C" {
 #define DIRECT_PARITY_GAME_REMOTE_MOVE 2u
 #define DIRECT_PARITY_GAME_TAKEBACK 3u
 #define DIRECT_PARITY_GAME_RESTORE 4u
+#define DIRECT_PARITY_GAME_PLATFORM 5u
 
 #define DIRECT_PARITY_CHAT_REMOTE 1u
 #define DIRECT_PARITY_CHAT_LOCAL 2u
@@ -112,58 +113,8 @@ typedef struct DirectParityTrace {
     uint8_t count;
 } DirectParityTrace;
 
-extern const DirectParityScenario direct_parity_host_smoke;
-extern const DirectParityScenario direct_parity_guest_smoke;
-extern const DirectParityScenario direct_parity_guest_hello_conflict;
-extern const DirectParityScenario direct_parity_link_zero;
-extern const DirectParityScenario direct_parity_intruder_active;
-extern const DirectParityScenario direct_parity_intruder_handshake;
-extern const DirectParityScenario direct_parity_intruder_teardown;
-extern const DirectParityScenario direct_parity_bye_local_handshake;
-extern const DirectParityScenario direct_parity_bye_local_send_fail;
-extern const DirectParityScenario direct_parity_bye_local_restore_prompt;
-extern const DirectParityScenario direct_parity_bye_remote_active;
-extern const DirectParityScenario direct_parity_duplicate_hello;
-extern const DirectParityScenario direct_parity_start_host;
-extern const DirectParityScenario direct_parity_start_guest;
-extern const DirectParityScenario direct_parity_move_local_ack;
-extern const DirectParityScenario direct_parity_move_local_stale_results;
-extern const DirectParityScenario direct_parity_move_remote_duplicate;
-extern const DirectParityScenario direct_parity_move_ply_sync;
-extern const DirectParityScenario direct_parity_takeback_local_ack;
-extern const DirectParityScenario direct_parity_takeback_remote_accept;
-extern const DirectParityScenario direct_parity_takeback_reject_retry;
-extern const DirectParityScenario direct_parity_takeback_move_inflight;
-extern const DirectParityScenario direct_parity_takeback_latch_next_move;
-extern const DirectParityScenario direct_parity_restore_local_active;
-extern const DirectParityScenario direct_parity_restore_remote_fresh;
-extern const DirectParityScenario direct_parity_restore_cancel_early;
-extern const DirectParityScenario direct_parity_restore_cancel_late;
-extern const DirectParityScenario direct_parity_restore_remote_rn;
-extern const DirectParityScenario direct_parity_restore_reject_retry;
-extern const DirectParityScenario direct_parity_restore_crossed_rq;
-extern const DirectParityScenario direct_parity_restore_reack_send_fail;
-extern const DirectParityScenario direct_parity_intruder_restore_receive;
-extern const DirectParityScenario direct_parity_restore_partial_reconnect;
-extern const DirectParityScenario direct_parity_liveness_ack;
-extern const DirectParityScenario direct_parity_liveness_pending_window;
-extern const DirectParityScenario direct_parity_liveness_guest_loss;
-extern const DirectParityScenario direct_parity_liveness_host_loss;
-extern const DirectParityScenario direct_parity_liveness_prompt_loss;
-extern const DirectParityScenario direct_parity_ping_send_fail;
-extern const DirectParityScenario direct_parity_ack_ping_send_fail;
-extern const DirectParityScenario direct_parity_ack_ping_send_timeout;
-extern const DirectParityScenario direct_parity_ack_ping_stale_tx_result;
-extern const DirectParityScenario direct_parity_draw_rematch_guest;
-extern const DirectParityScenario direct_parity_reset_after_reset;
-extern const DirectParityScenario direct_parity_reset_crossed_active;
-extern const DirectParityScenario direct_parity_move_pending_controls_busy;
-extern const DirectParityScenario direct_parity_takeback_pending_controls_busy;
-extern const DirectParityScenario direct_parity_draw_crossed;
-extern const DirectParityScenario direct_parity_resign_remote_duplicate;
-extern const DirectParityScenario direct_parity_resign_crossed;
-extern const DirectParityScenario direct_parity_cancel_local_reset;
-extern const DirectParityScenario direct_parity_cancel_remote_draw;
+extern const DirectParityScenario direct_parity_scenarios[];
+extern const uint8_t direct_parity_scenario_count;
 
 uint8_t direct_reference_run(const DirectParityScenario *scenario,
                              DirectParityTrace *trace);

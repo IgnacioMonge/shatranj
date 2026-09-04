@@ -2,6 +2,7 @@
 #include "spectrum/lowram_map.h"
 #include "spectrum/ui/layout.h"
 #include "common/ui_messages.h"
+#include "common/chess/move_coords.h"
 
 
 #define move_lines ((char *)NETCHESSZX_LOWRAM_MOVE_LOG_ADDR)
@@ -10,48 +11,17 @@
 extern uint16_t last_ply_seen;
 extern uint8_t move_line_count;
 extern uint8_t chat_line_count;
+#ifdef NETCHESSZX_SPECTRANEXT
+void spectrum_uart_background_pump(void);
+void spectrum_gui_sync_board_coords(void);
+void spectrum_gui_set_board_pieces_visible(uint8_t visible) __z88dk_fastcall;
+void spectrum_gui_hide_board_pieces(void);
+void spectrum_gui_flash_square(uint8_t row, uint8_t col);
+extern uint8_t spectrum_gui_board_pieces_visible;
+extern uint8_t spectrum_gui_about_visible_state;
+extern uint8_t spectrum_gui_side_panels_visible_state;
+#endif
 
-static const char gui_msg_blob[] =
-    NETCHESSZX_UI_PHASE_CONNECTING "\0"
-    NETCHESSZX_UI_PHASE_CONNECTED "\0"
-    NETCHESSZX_UI_NOTICE_SELECT_OPTIONS "\0"
-    NETCHESSZX_UI_PHASE_WAITING_OPPONENT_SHORT "\0"
-    NETCHESSZX_UI_SPECTRUM_NOTICE_OPPONENT_READY_GO "\0"
-    NETCHESSZX_UI_SPECTRUM_NOTICE_OPPONENT_READY_WAIT "\0"
-    NETCHESSZX_UI_PHASE_OPPONENT_TURN "\0"
-    NETCHESSZX_UI_NOTICE_GAME_NOT_STARTED "\0"
-    NETCHESSZX_UI_SPECTRUM_CONFIRM_DISCONNECT "\0"
-    NETCHESSZX_UI_SPECTRUM_CONFIRM_RESET "\0"
-    NETCHESSZX_UI_SPECTRUM_CONFIRM_RESET_REQUEST "\0"
-    NETCHESSZX_UI_SPECTRUM_CONFIRM_RESTART_REQUEST "\0"
-    NETCHESSZX_UI_ERROR_RESET_REJECTED "\0"
-    NETCHESSZX_UI_SPECTRUM_NOTICE_WAITING_ACK "\0"
-    NETCHESSZX_UI_EVENT_GAME_STARTED "\0"
-    NETCHESSZX_UI_ERROR_DRAW_REJECTED "\0"
-    NETCHESSZX_UI_SPECTRUM_CONFIRM_DRAW "\0"
-    NETCHESSZX_UI_SPECTRUM_CONFIRM_OPPONENT_DRAW "\0"
-    NETCHESSZX_UI_SPECTRUM_CONFIRM_RESIGN "\0"
-    NETCHESSZX_UI_SPECTRUM_CONFIRM_RESTART_GAME "\0"
-    NETCHESSZX_UI_ERROR_ROOM_CONFLICT "\0"
-    NETCHESSZX_UI_SPECTRUM_CONFIRM_TAKEBACK "\0"
-    NETCHESSZX_UI_SPECTRUM_CONFIRM_TAKEBACK_REQUEST "\0"
-    NETCHESSZX_UI_SPECTRUM_NOTICE_TAKEBACK_SENT "\0"
-    NETCHESSZX_UI_SPECTRUM_NOTICE_TAKEBACK_DONE "\0"
-    NETCHESSZX_UI_SPECTRUM_ERROR_TAKEBACK_REJECTED "\0"
-    NETCHESSZX_UI_SPECTRUM_ERROR_NO_TAKEBACK "\0"
-    NETCHESSZX_UI_SPECTRUM_EVENT_SAVE_OK "\0"
-    NETCHESSZX_UI_SPECTRUM_EVENT_LOAD_OK "\0"
-    NETCHESSZX_UI_SPECTRUM_ERROR_SAVE_FAIL "\0"
-    NETCHESSZX_UI_SPECTRUM_ERROR_LOAD_FAIL "\0"
-    NETCHESSZX_UI_SPECTRUM_ERROR_HOST_ONLY "\0"
-    NETCHESSZX_UI_SPECTRUM_CONFIRM_RESTORE_LOAD "\0"
-    NETCHESSZX_UI_SPECTRUM_NOTICE_LOAD_WAITING "\0"
-    NETCHESSZX_UI_SPECTRUM_NOTICE_LOADING "\0"
-    NETCHESSZX_UI_SPECTRUM_NOTICE_LOAD_DECLINED "\0"
-    NETCHESSZX_UI_SPECTRUM_ERROR_MOVE_REJECTED "\0"
-    NETCHESSZX_UI_SPECTRUM_NOTICE_OPPONENT_STARTS "\0"
-    NETCHESSZX_UI_SPECTRUM_NOTICE_STARTING "\0"
-    NETCHESSZX_UI_SPECTRUM_ERROR_HOST_BUSY;
 char chat_clean_char(uint8_t c) __z88dk_fastcall;
 uint8_t chat_word_len(const char *text) __z88dk_fastcall;
 void chat_copy_clock_line(char *line) __z88dk_fastcall;
@@ -62,6 +32,115 @@ void scroll_move_lines(char *base) __z88dk_fastcall;
 void scroll_chat_lines(char *base) __z88dk_fastcall;
 char *move_line_at(char *line, uint8_t index);
 char *log_line_at(char *line, uint8_t index);
+
+#ifdef NETCHESSZX_SPECTRANEXT
+static void gui_log_animation_wait(uint8_t frames)
+{
+    while (frames-- != 0u) {
+        spectrum_frame_wait();
+        spectrum_uart_background_pump();
+        spectrum_gui_tick();
+        spectrum_uart_background_pump();
+    }
+}
+
+static void gui_log_reveal_board(uint8_t step)
+{
+    uint8_t i;
+
+    for (i = 0u; i < 8u; ++i) {
+        spectrum_gui_redraw_square(0u, i);
+        spectrum_gui_redraw_square(7u, (uint8_t)(7u - i));
+        gui_log_animation_wait(step);
+    }
+    for (i = 0u; i < 8u; ++i) {
+        spectrum_gui_redraw_square(1u, (uint8_t)(7u - i));
+        spectrum_gui_redraw_square(6u, i);
+        gui_log_animation_wait(step);
+    }
+}
+
+uint8_t gui_log_animate_board_ovl(uint8_t *ctx) __z88dk_fastcall
+{
+    (void)ctx;
+    spectrum_gui_sync_board_coords();
+    if (spectrum_gui_board_pieces_visible) {
+        spectrum_gui_hide_board_pieces();
+    }
+    spectrum_gui_set_board_pieces_visible(1u);
+    gui_log_reveal_board(1u);
+    return 1u;
+}
+
+uint8_t gui_log_morph_board_ovl(uint8_t *ctx) __z88dk_fastcall
+{
+    (void)ctx;
+    if (!spectrum_gui_board_pieces_visible) {
+        return gui_log_animate_board_ovl(ctx);
+    }
+    spectrum_gui_sync_board_coords();
+    gui_log_reveal_board(0u);
+    return 1u;
+}
+
+uint8_t gui_log_restore_side_panels_ovl(uint8_t *ctx) __z88dk_fastcall
+{
+    (void)ctx;
+    spectrum_gui_about_visible_state = 0u;
+    spectrum_gui_side_panels_visible_state = 1u;
+    spectrum_info_show_game();
+    spectrum_render_moves(move_lines);
+    spectrum_render_chat(chat_lines);
+    return 1u;
+}
+
+uint8_t gui_log_apply_move_ovl(uint8_t *ctx) __z88dk_fastcall
+{
+    const char *move = (const char *)((uint16_t)ctx[0] |
+                                      ((uint16_t)ctx[1] << 8));
+    const char *board = (const char *)NETCHESSZX_LOWRAM_CHESS_BOARD_ADDR;
+    uint16_t coords;
+    uint8_t from_col;
+    uint8_t from_row;
+    uint8_t to_col;
+    uint8_t to_row;
+    char piece;
+
+    if (spectrum_gui_about_visible_state) {
+        return 1u;
+    }
+    coords = netchesszx_move_parse_coords(move);
+    if (coords == NETCHESSZX_MOVE_COORDS_INVALID) {
+        return 1u;
+    }
+    from_col = NETCHESSZX_MOVE_FROM_INDEX(coords);
+    to_col = NETCHESSZX_MOVE_TO_INDEX(coords);
+    from_row = (uint8_t)(from_col >> 3);
+    to_row = (uint8_t)(to_col >> 3);
+    from_col &= 7u;
+    to_col &= 7u;
+
+    spectrum_gui_redraw_square(from_row, from_col);
+    spectrum_gui_redraw_square(to_row, to_col);
+    spectrum_gui_flash_square(to_row, to_col);
+
+    piece = board[(uint8_t)((to_row << 3) + to_col)];
+    if ((piece == 'P' || piece == 'p') && from_col != to_col) {
+        spectrum_gui_redraw_square(from_row, to_col);
+    }
+    if ((piece == 'K' || piece == 'k') &&
+        from_row == to_row && from_col == 4u) {
+        if (to_col == 6u) {
+            spectrum_gui_redraw_square(from_row, 7u);
+            spectrum_gui_redraw_square(from_row, 5u);
+        } else if (to_col == 2u) {
+            spectrum_gui_redraw_square(from_row, 0u);
+            spectrum_gui_redraw_square(from_row, 3u);
+        }
+    }
+    return 1u;
+}
+#endif
 
 static char *new_move_line(uint8_t index, uint8_t render)
 {
@@ -77,6 +156,20 @@ static char *new_move_line(uint8_t index, uint8_t render)
     base = move_line_at(base, index);
     clear_move_line(base);
     return base;
+}
+
+static void gui_log_reserve_next_move_line(uint8_t render)
+{
+    char *line;
+
+    if (move_line_count < NETCHESSZX_MOVE_ROWS) {
+        return;
+    }
+    line = new_move_line(move_line_count, render);
+    --move_line_count;
+    if (render) {
+        spectrum_render_move_at(line);
+    }
 }
 
 static char *new_chat_line(uint8_t index, uint8_t render)
@@ -138,6 +231,7 @@ static void gui_log_add_move(const char *ply, const char *move, uint8_t render)
     if (is_black) {
         if (move_line_count == 0u) {
             line = new_move_line(0u, render);
+            line[0] = '\0';
             move_line_count = 1u;
         } else {
             line = move_line_at(move_lines, (uint8_t)(move_line_count - 1u));
@@ -221,41 +315,24 @@ static void gui_log_add_chat(char who, const char *text, uint8_t render)
     } while (*text != '\0');
 }
 
-uint8_t gui_log_notify_msg_ovl(uint8_t *ctx) __z88dk_fastcall
-{
-    const char *msg;
-    uint8_t id = ctx[SPECTRUM_OVL_CTX_GUI_MSG_ID];
-
-    if (id >= SPECTRUM_GUI_MSG_COUNT) {
-        return 0u;
-    }
-    msg = gui_msg_blob;
-    while (id-- != 0u) {
-        while (*msg++ != '\0') {
-        }
-    }
-    id = ctx[SPECTRUM_OVL_CTX_GUI_MSG_KIND];
-    if (id == SPECTRUM_GUI_MSG_KIND_WAIT) {
-        spectrum_gui_notify_persistent(msg);
-    } else if (id == SPECTRUM_GUI_MSG_KIND_SUCCESS) {
-        spectrum_gui_notify_success(msg);
-    } else {
-        spectrum_gui_notify(
-            msg, (uint8_t)(id == SPECTRUM_GUI_MSG_KIND_ERROR));
-    }
-    return 1u;
-}
 uint8_t gui_log_add_move_ovl(uint8_t *ctx) __z88dk_fastcall
 {
-    const char *ply =
+    uint8_t render = ctx[SPECTRUM_OVL_CTX_GUI_RENDER];
+    const char *ply;
+    const char *move;
+
+    if (render & 0x80u) {
+        gui_log_reserve_next_move_line((uint8_t)(render & 1u));
+        return 1u;
+    }
+    ply =
         (const char *)((uint16_t)ctx[SPECTRUM_OVL_CTX_GUI_MOVE_PLY_LO] |
                        ((uint16_t)ctx[SPECTRUM_OVL_CTX_GUI_MOVE_PLY_HI] << 8));
-    const char *move =
+    move =
         (const char *)((uint16_t)ctx[SPECTRUM_OVL_CTX_GUI_MOVE_TEXT_LO] |
                        ((uint16_t)ctx[SPECTRUM_OVL_CTX_GUI_MOVE_TEXT_HI] << 8));
 
-    gui_log_add_move(ply, move,
-                     (uint8_t)(ctx[SPECTRUM_OVL_CTX_GUI_RENDER] != 0u));
+    gui_log_add_move(ply, move, render);
     return 1u;
 }
 

@@ -1,9 +1,11 @@
 #include "chess_helpers.h"
 #include "common/chess/rules_compact.h"
 #include <QHostAddress>
-#include <QNetworkInterface>
 
 namespace ChessHelpers {
+
+static constexpr char kWhitePieces[] = ".PNBRQK";
+static constexpr char kBlackPieces[] = ".pnbrqk";
 
 static bool isMoveFile(QChar ch)
 {
@@ -30,20 +32,34 @@ static bool moveCoreSyntaxOk(const QString &move)
 
 int8_t compactPieceFromAscii(char piece)
 {
-    switch (piece) {
-    case 'P': return NETCHESSZX_RULE_WP;
-    case 'N': return NETCHESSZX_RULE_WN;
-    case 'B': return NETCHESSZX_RULE_WB;
-    case 'R': return NETCHESSZX_RULE_WR;
-    case 'Q': return NETCHESSZX_RULE_WQ;
-    case 'K': return NETCHESSZX_RULE_WK;
-    case 'p': return NETCHESSZX_RULE_BP;
-    case 'n': return NETCHESSZX_RULE_BN;
-    case 'b': return NETCHESSZX_RULE_BB;
-    case 'r': return NETCHESSZX_RULE_BR;
-    case 'q': return NETCHESSZX_RULE_BQ;
-    case 'k': return NETCHESSZX_RULE_BK;
-    default: return NETCHESSZX_RULE_EMPTY;
+    for (int8_t value = NETCHESSZX_RULE_PAWN;
+         value <= NETCHESSZX_RULE_KING;
+         ++value) {
+        if (piece == kWhitePieces[value]) {
+            return value;
+        }
+        if (piece == kBlackPieces[value]) {
+            return static_cast<int8_t>(-value);
+        }
+    }
+    return NETCHESSZX_RULE_EMPTY;
+}
+
+char asciiPieceFromCompact(int8_t piece)
+{
+    if (piece >= NETCHESSZX_RULE_PAWN && piece <= NETCHESSZX_RULE_KING) {
+        return kWhitePieces[piece];
+    }
+    if (piece <= NETCHESSZX_RULE_BP && piece >= NETCHESSZX_RULE_BK) {
+        return kBlackPieces[-piece];
+    }
+    return '.';
+}
+
+void asciiBoardFromCompact(const int8_t compact[64], char ascii[64])
+{
+    for (int index = 0; index < 64; ++index) {
+        ascii[index] = asciiPieceFromCompact(compact[index]);
     }
 }
 
@@ -91,10 +107,10 @@ bool isMoveSyntaxOk(const QString &move)
 
 bool isMqttRoomSyntaxOk(const QString &room)
 {
-    if (room.isEmpty() || room.size() > 8) return false;
-    for (const QChar ch : room) {
+    if (room.size() != 6 || !room.startsWith(QStringLiteral("NC"))) return false;
+    for (const QChar ch : room.sliced(2)) {
         const ushort c = ch.unicode();
-        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) continue;
+        if ((c >= 'A' && c <= 'F') || (c >= '0' && c <= '9')) continue;
         return false;
     }
     return true;

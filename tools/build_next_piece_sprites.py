@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -23,12 +24,12 @@ def image_pixels(image: Image.Image):
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ASSET_ROOT = ROOT / "assets/lichess"
-SVG_ROOT = ASSET_ROOT / "piece"
-BOARD_ROOT = ASSET_ROOT / "board"
-PC_BOARD_ROOT = ROOT / "assets/pc-client/boards"
-SELECTED = ASSET_ROOT / "selected_next_sets.json"
-SELECTED_BOARDS = ASSET_ROOT / "selected_next_boards.json"
+CATALOG_ROOT = ROOT / "assets/lichess"
+PC_ASSET_ROOT = ROOT / "assets/pc-client"
+SVG_ROOT = PC_ASSET_ROOT / "piece_sets"
+BOARD_ROOT = PC_ASSET_ROOT / "boards"
+SELECTED = CATALOG_ROOT / "selected_next_sets.json"
+SELECTED_BOARDS = CATALOG_ROOT / "selected_next_boards.json"
 OUT_DIR = ROOT / "assets/next"
 OUT_BIN = OUT_DIR / "lichess_piece_sprites.bin"
 OUT_PALETTE = OUT_DIR / "lichess_sprite_palette.asm"
@@ -46,26 +47,128 @@ OUTLINE_LUMA = 96
 OUTLINE_RGB = (216, 216, 216)
 TRANSPARENT = 0xE3
 PALETTE_LIMIT = 160
-STANDARD_ULA_PALETTE = bytes((
-    0x00,0x00, 0x02,0x01, 0xA0,0x00, 0xA2,0x01,
-    0x14,0x00, 0x16,0x01, 0xB4,0x00, 0xB6,0x01,
-    0x00,0x00, 0x02,0x01, 0xA0,0x00, 0xA2,0x01,
-    0x14,0x00, 0x16,0x01, 0xB4,0x00, 0xB6,0x01,
-    0x00,0x00, 0x03,0x01, 0xE0,0x00, 0xE3,0x01,
-    0x1C,0x00, 0x1F,0x01, 0xFC,0x00, 0xFF,0x01,
-    0x00,0x00, 0x03,0x01, 0xE0,0x00, 0xE3,0x01,
-    0x1C,0x00, 0x1F,0x01, 0xFC,0x00, 0xFF,0x01,
-    0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,
-    0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,
-    0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,
-    0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,
-    # ULA+ group 3: wood preview, normal and focused ink/paper pairs.
-    0xD1,0x00, 0x88,0x01,
-    0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00,
-    0x00,0x00, 0x00,0x00,
-    0xD1,0x00, 0x88,0x01,
-))
-PIPELINE_VERSION = 2
+STANDARD_ULA_PALETTE = bytes(
+    (
+        0x00,
+        0x00,
+        0x02,
+        0x01,
+        0xA0,
+        0x00,
+        0xA2,
+        0x01,
+        0x14,
+        0x00,
+        0x16,
+        0x01,
+        0xB4,
+        0x00,
+        0xB6,
+        0x01,
+        0x00,
+        0x00,
+        0x02,
+        0x01,
+        0xA0,
+        0x00,
+        0xA2,
+        0x01,
+        0x14,
+        0x00,
+        0x16,
+        0x01,
+        0xB4,
+        0x00,
+        0xB6,
+        0x01,
+        0x00,
+        0x00,
+        0x03,
+        0x01,
+        0xE0,
+        0x00,
+        0xE3,
+        0x01,
+        0x1C,
+        0x00,
+        0x1F,
+        0x01,
+        0xFC,
+        0x00,
+        0xFF,
+        0x01,
+        0x00,
+        0x00,
+        0x03,
+        0x01,
+        0xE0,
+        0x00,
+        0xE3,
+        0x01,
+        0x1C,
+        0x00,
+        0x1F,
+        0x01,
+        0xFC,
+        0x00,
+        0xFF,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        # ULA+ group 3: wood preview, normal and focused ink/paper pairs.
+        0xD1,
+        0x00,
+        0x88,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0xD1,
+        0x00,
+        0x88,
+        0x01,
+    )
+)
+PIPELINE_VERSION = 3
 PIECE_SETS = 3
 PIECES_PER_SET = 12
 BOARD_THEMES = 5
@@ -74,6 +177,9 @@ MARKER_PATTERNS = 4
 PIECE_PATTERN_BASE = 0
 BOARD_PATTERN_BASE = PIECES_PER_SET
 MARKER_PATTERN_BASE = BOARD_PATTERN_BASE + BOARD_THEMES * BOARD_TILES_PER_THEME
+SOURCE_MARKER_PATTERN_BASE = (
+    PIECE_SETS * PIECES_PER_SET + BOARD_THEMES * BOARD_TILES_PER_THEME
+)
 EDGE_CANDIDATES = [
     Path(os.environ.get("EDGE", "")) if os.environ.get("EDGE") else None,
     Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
@@ -86,6 +192,11 @@ MARKER_RGB = [
     (40, 240, 255),
     (255, 90, 230),
 ]
+# Hint dots only: same yellow/cyan hue, one step darker so they read on
+# light Next boards. Cursor and move-mark colours stay as MARKER_RGB.
+HINT_RGB = (204, 186, 48)
+HINT_CORE_RGB = (32, 188, 200)
+MARKER_HINT_KEY = "hint-dark-1"
 
 
 def find_edge() -> Path:
@@ -211,12 +322,34 @@ def load_selected_boards() -> list[str]:
 
 
 def board_path(name: str) -> Path:
-    for root in (BOARD_ROOT, PC_BOARD_ROOT):
-        for ext in BOARD_EXTS:
-            path = root / f"{name}{ext}"
-            if path.exists():
-                return path
+    for ext in BOARD_EXTS:
+        path = BOARD_ROOT / f"{name}{ext}"
+        if path.exists():
+            return path
     raise SystemExit(f"missing board image: {name}")
+
+
+def selected_source_paths(sets: list[str], boards: list[str]) -> list[Path]:
+    paths = [
+        SVG_ROOT / set_name / f"{side}{piece}.svg"
+        for set_name in sets
+        for side in ("w", "b")
+        for piece in PIECES
+    ]
+    paths.extend(board_path(name) for name in boards if name != "bw")
+    missing = next((path for path in paths if not path.is_file()), None)
+    if missing is not None:
+        raise SystemExit(f"missing sprite source: {missing}")
+    return paths
+
+
+def source_digest(paths: list[Path]) -> str:
+    digest = hashlib.sha256()
+    for path in paths:
+        data = path.read_bytes()
+        digest.update(len(data).to_bytes(8, "little"))
+        digest.update(data)
+    return digest.hexdigest()
 
 
 def collect_piece_images(
@@ -266,8 +399,8 @@ def build_marker_patterns() -> list[Image.Image]:
         image = Image.new("RGBA", (SPRITE_SIZE, SPRITE_SIZE), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
         if kind == 0:
-            draw.ellipse((5, 5, 10, 10), fill=MARKER_RGB[0] + (255,))
-            draw.ellipse((7, 7, 8, 8), fill=MARKER_RGB[2] + (255,))
+            draw.ellipse((5, 5, 10, 10), fill=HINT_RGB + (255,))
+            draw.ellipse((7, 7, 8, 8), fill=HINT_CORE_RGB + (255,))
         elif kind == 1:
             draw.rectangle((0, 0, 15, 15), outline=MARKER_RGB[1] + (255,))
             draw.rectangle((1, 1, 14, 14), outline=MARKER_RGB[2] + (255,))
@@ -319,6 +452,20 @@ def nearest_index(
     return best_i
 
 
+def darken_hint_indices(
+    pattern: bytearray, palette: list[tuple[int, int, int]]
+) -> None:
+    for i, idx in enumerate(pattern):
+        if idx == TRANSPARENT or idx >= len(palette):
+            continue
+        r, g, b = palette[idx]
+        if (r * 3 + g * 6 + b) // 10 < 180:
+            continue
+        pattern[i] = nearest_index(
+            (max(0, r - 56), max(0, g - 56), max(0, b - 40)), palette
+        )
+
+
 def encode_pattern(image: Image.Image, palette: list[tuple[int, int, int]]) -> bytes:
     out = bytearray()
     for r, g, b, a in image_pixels(image):
@@ -336,7 +483,7 @@ def rgb333_pair(rgb: tuple[int, int, int]) -> tuple[int, int]:
     return ((r << 5) | (g << 2) | (b >> 1), b & 1)
 
 
-def cache_valid(sets: list[str], boards: list[str]) -> bool:
+def cache_valid(sets: list[str], boards: list[str], sources_sha256: str) -> bool:
     if (
         not OUT_BIN.exists()
         or not OUT_PALETTE.exists()
@@ -361,11 +508,43 @@ def cache_valid(sets: list[str], boards: list[str]) -> bool:
         meta.get("pipeline") == PIPELINE_VERSION
         and meta.get("sets") == sets
         and meta.get("boards") == boards
+        and meta.get("sources_sha256") == sources_sha256
         and meta.get("total_bytes") == expected
         and OUT_BIN.stat().st_size == expected
         and OUT_PALETTE_BIN.stat().st_size
         == PALETTE_LIMIT * 2 + len(STANDARD_ULA_PALETTE)
     )
+
+
+def load_sprite_palette_rgb() -> list[tuple[int, int, int]]:
+    raw = OUT_PALETTE_BIN.read_bytes()
+    colours: list[tuple[int, int, int]] = []
+    for i in range(PALETTE_LIMIT):
+        lo = raw[i * 2]
+        hi = raw[i * 2 + 1]
+        r = lo >> 5
+        g = (lo >> 2) & 7
+        b = ((lo & 3) << 1) | (hi & 1)
+        colours.append((round(r * 255 / 7), round(g * 255 / 7), round(b * 255 / 7)))
+    return colours
+
+
+def refresh_marker_patterns() -> None:
+    palette = load_sprite_palette_rgb()
+    chunks: list[bytes] = []
+    for i, image in enumerate(build_marker_patterns()):
+        encoded = bytearray(encode_pattern(image, palette))
+        if i == 0:
+            darken_hint_indices(encoded, palette)
+        chunks.append(bytes(encoded))
+    encoded = b"".join(chunks)
+    data = bytearray(OUT_BIN.read_bytes())
+    offset = SOURCE_MARKER_PATTERN_BASE * SPRITE_SIZE * SPRITE_SIZE
+    data[offset : offset + len(encoded)] = encoded
+    OUT_BIN.write_bytes(data)
+    meta = json.loads(OUT_META.read_text(encoding="utf-8"))
+    meta["marker_hint_key"] = MARKER_HINT_KEY
+    OUT_META.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
 
 
 def touch_outputs() -> None:
@@ -403,9 +582,15 @@ def emit_palette(
 def main() -> int:
     sets = load_selected()
     boards = load_selected_boards()
-    if cache_valid(sets, boards):
-        touch_outputs()
-        print(f"[OK] {OUT_BIN}: cached {OUT_BIN.stat().st_size} bytes")
+    sources_sha256 = source_digest(selected_source_paths(sets, boards))
+    if cache_valid(sets, boards, sources_sha256):
+        meta = json.loads(OUT_META.read_text(encoding="utf-8"))
+        if meta.get("marker_hint_key") != MARKER_HINT_KEY:
+            refresh_marker_patterns()
+            print(f"[OK] {OUT_BIN}: refreshed hint markers")
+        else:
+            touch_outputs()
+            print(f"[OK] {OUT_BIN}: cached {OUT_BIN.stat().st_size} bytes")
         return 0
     edge = find_edge()
     piece_images = collect_piece_images(edge, sets)
@@ -427,8 +612,11 @@ def main() -> int:
     for board in boards:
         for parity in (0, 1):
             data.extend(encode_pattern(board_tiles[(board, parity)], palette))
-    for image in marker_images:
-        data.extend(encode_pattern(image, palette))
+    for i, image in enumerate(marker_images):
+        encoded = bytearray(encode_pattern(image, palette))
+        if i == 0:
+            darken_hint_indices(encoded, palette)
+        data.extend(encoded)
     OUT_BIN.write_bytes(data)
     emit_palette(palette, sets, boards)
     OUT_META.write_text(
@@ -437,6 +625,7 @@ def main() -> int:
                 "pipeline": PIPELINE_VERSION,
                 "sets": sets,
                 "boards": boards,
+                "sources_sha256": sources_sha256,
                 "pieces_per_set": PIECES_PER_SET,
                 "bytes_per_pattern": SPRITE_SIZE * SPRITE_SIZE,
                 "piece_draw_size": PIECE_DRAW_SIZE,
@@ -449,6 +638,7 @@ def main() -> int:
                 "total_bytes": len(data),
                 "transparent_index": TRANSPARENT,
                 "palette_entries": len(palette),
+                "marker_hint_key": MARKER_HINT_KEY,
                 "browser": str(edge),
             },
             indent=2,

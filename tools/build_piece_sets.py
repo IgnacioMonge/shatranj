@@ -4,30 +4,21 @@ from pathlib import Path
 
 from PIL import Image
 
+if __package__:
+    from .asm_data import parse_defb_data as parse_defb
+else:
+    from asm_data import parse_defb_data as parse_defb
+
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "assets/spectrum/chess_pieces_16x16.asm"
 PIECE_DIR = ROOT / "assets/spectrum/piece_sets"
 
 PIECES = [("k", "K"), ("q", "Q"), ("r", "R"), ("b", "B"), ("n", "N"), ("p", "P")]
-SETS = [("STD", None), ("SPCY", "spicy"), ("PIXL", "pixel")]
 SPRITE_BYTES = 32
 SET_BYTES = 384
 SPICY_SOURCE = {"R": "N", "B": "R", "N": "B"}
 PIXEL_Y_SHIFT = {"P": -2}
 PIXEL_RAISE_TOP = {"R"}
-
-
-def parse_defb(text):
-    data = bytearray()
-    for raw in text.splitlines():
-        line = raw.split(";", 1)[0].strip()
-        if not line.upper().startswith("DEFB"):
-            continue
-        for token in line[4:].split(","):
-            token = token.strip()
-            if token:
-                data.append(int(token, 0) & 0xFF)
-    return bytes(data)
 
 
 def mask_from_png(path):
@@ -114,7 +105,7 @@ def load_current_set():
 
 def load_spicy_set():
     data = bytearray()
-    for lower, upper in PIECES:
+    for _, upper in PIECES:
         source = SPICY_SOURCE.get(upper, upper)
         fill = mask_from_png(PIECE_DIR / "spicy" / f"b{source}.png")
         data.extend(sprite_bytes(edge_mask(fill)))
@@ -124,7 +115,7 @@ def load_spicy_set():
 
 def load_pixel_set():
     data = bytearray()
-    for lower, upper in PIECES:
+    for _, upper in PIECES:
         black = mask_from_png(PIECE_DIR / "pixel" / f"b{upper}.png")
         white = mask_from_png(PIECE_DIR / "pixel" / f"w{upper}.png")
         if black != white:

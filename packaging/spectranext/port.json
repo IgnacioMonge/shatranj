@@ -1,0 +1,136 @@
+{
+  "schema": 2,
+  "product": {
+    "name": "Shatranj",
+    "slug": "shatranj",
+    "stem": "SHATRANJ"
+  },
+  "repository": {
+    "path": "../..",
+    "base": "main",
+    "branch": "port/shatranj-spectranext",
+    "worktree": "shatranj-spectranext"
+  },
+  "capabilities": {
+    "network": true,
+    "configuration": true,
+    "mutable_storage": true,
+    "clock": true
+  },
+  "installer": {
+    "manifest": "installer.json",
+    "output": "../../build/spectranext-resource",
+    "preview": "../../build/installer-preview.png"
+  },
+  "allowed_changes": [
+    ".mex/context/spectrum-runtime.md",
+    "Makefile",
+    "packaging/spectranext/**",
+    "assets/spectrum/about_classic.scr",
+    "assets/spectrum/installer.scr",
+    "assets/spectrum/about_board.bin",
+    "src/spectrum/lowram_map.h",
+    "src/spectrum/platform/platform.c",
+    "src/spectrum/transport/net.c",
+    "src/spectrum/overlay/direct_ovl.c",
+    "src/spectrum/overlay/mqtt_connect_ovl.c",
+    "src/spectrum/overlay/mqtt_tx_ovl.c",
+    "src/spectrum/overlay/time_ovl.c",
+    "src/spectrum/overlay/config_ovl.c",
+    "src/spectrum/overlay/fileui_ovl.c",
+    "src/spectrum/overlay/saveload_ovl.c",
+    "asm/esxdos/overlay_loader.asm",
+    "asm/overlay/about/entry_about.asm",
+    "asm/overlay/time_config/entry_time_config.asm",
+    "asm/overlay/time/entry_time.asm",
+    "docs/overlay_state_allowlist.json",
+    "docs/overlay_capabilities.json",
+    "tools/check_lowmem_layout.py",
+    "tools/check_tap_image.py",
+    "tools/check_layering.py",
+    "tools/check_overlay_caps.py",
+    "tools/check_overlay_entry_abi.py",
+    "tools/build_overlays.py",
+    "tools/gen_overlay_atlas.py",
+    "tools/gen_overlay_defs.py",
+    "tools/gen_size_report.py",
+    "tools/overlay_atlas_seeds.json",
+    "tests/spectrum/test_spectranext_link.c",
+    "tests/spectrum/test_config_xfs.c",
+    "tests/spectrum/test_saveload_xfs.c",
+    "tests/tools/test_spectranext_build.py",
+    "tests/tools/test_build_overlays.py",
+    "tests/tools/test_spectrum_asm_vectors.py",
+    "tests/tools/test_tap_image.py"
+  ],
+  "protected_changes": [
+    "src/common/**",
+    "src/spectrum/app/**",
+    "src/spectrum/session/**",
+    "src/spectrum/board/**",
+    "src/spectrum/ui/**",
+    "src/spectrum/config/**",
+    "src/spectrum/transport/link.h",
+    "src/spectrum/overlay/overlay.h",
+    "src/spectrum/overlay/overlay_api.h",
+    "asm/next/**",
+    "asm/uart/**",
+    "docs/wire-contract.md",
+    "docs/session-core-contract.md",
+    "src/pc/**",
+    "client/**"
+  ],
+  "checks": {
+    "host": [
+      ["make", "test"]
+    ],
+    "classic": [
+      ["make", "tap"]
+    ],
+    "spectranext": [
+      ["make", "tap-spectranext", "SPXN_DIR={spectranext}/driver"]
+    ],
+    "configuration": [
+      ["make", "spectranext-config-test"]
+    ],
+    "mutable_storage": [
+      ["make", "spectranext-storage-test"]
+    ],
+    "network": [
+      ["make", "spectranext-network-test"]
+    ],
+    "clock": [
+      ["make", "spectranext-clock-test"]
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "release/Spectranext/SHATRANJ.tap",
+      "role": "TAPE"
+    },
+    {
+      "path": "release/Spectranext/SHATRANJ.OVL",
+      "role": "OVLY"
+    },
+    {
+      "path": "release/Spectranext/SHATRANJ.DAT",
+      "role": "DATA"
+    },
+    {
+      "path": "build/spectranext-resource/boot.zx",
+      "role": "BOOT"
+    },
+    {
+      "path": "build/spectranext-resource/package.json",
+      "role": "MANIFEST"
+    },
+    {
+      "path": "build/spectranext-resource/SHATRANJ.PKG",
+      "role": "PKG"
+    },
+    {
+      "path": "build/spectranext-resource/SHATRANJ.SCR",
+      "role": "SCR"
+    }
+  ]
+}

@@ -1,8 +1,6 @@
 #include "common/protocol/game_protocol.h"
 #include "common/protocol/game_protocol_internal.h"
 
-#include <string.h>
-
 static uint8_t proto_parse_ply_tail_after_prefix(const char *p,
                                                  char *ply,
                                                  uint8_t ply_cap,

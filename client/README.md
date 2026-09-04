@@ -2,7 +2,7 @@
 
 [Español](README.es.md) · [Project documentation](../docs/README.md)
 
-Qt desktop client for Shatranj 1.1. Windows, macOS, and Linux use the same
+Qt desktop client for Shatranj 1.2. Windows, macOS, and Linux use the same
 implementation and support both transports:
 
 - **Direct TCP**: a host listens for one guest; the guest connects to the
@@ -31,25 +31,30 @@ adapter.
    /load [name] load a local position and request peer restore
    ```
 
-   Restore is an explicit host-led exchange; MQTT retained state is not a
+   Either linked peer may initiate the explicit restore exchange; the other
+   peer must accept before the snapshot is sent or applied, and the save's host
+   colour must match the current seating. MQTT retained state is not a
    substitute for the restore protocol. The Qt client asks for a promotion
    piece; Spectrum clients currently auto-promote to a queen.
 
 The client remembers connection settings and recent Direct guest addresses,
-shows turn/game/move clocks, and exposes an RX/TX log. A hardware Spectrum host
-can be tested with the steps in [Test Direct TCP with hardware](#test-direct-tcp-with-hardware).
+shows turn/game/move clocks, and exposes an RX/TX log. Once a Direct or MQTT
+peer is ready, the bottom context ends in `VS ZX|NXT|MAC|LNX|PC|SPCX`; legacy peers
+appear as `VS ?`. A hardware Spectrum host can be tested with the steps in
+[Test Direct TCP with hardware](#test-direct-tcp-with-hardware).
 
 ## Architecture
 
 ```text
-portable common C -> desktop core -> Qt Widgets application
+portable common C -> desktop core -> shared Widgets UI -> application/package
 ```
 
 The common layer owns chess rules, protocol parsing/building, MQTT grammar,
 session reducers, and the save-game wire format. The desktop core adapts those
-contracts to TCP/MQTT, timing, persistence, and Qt helpers. The Qt application
-owns presentation and packaging. CMake target boundaries prevent a
-platform-specific client fork.
+contracts to TCP/MQTT, timing, persistence, and Qt helpers. The shared Widgets
+target owns presentation and is compiled once for the application and its
+integration test; the final executable owns the entrypoint and OS packaging.
+CMake target boundaries prevent a platform-specific client fork.
 
 ## Build and test
 
@@ -65,9 +70,21 @@ make full-check    # host, Spectrum, ABI, and size guards
 
 `make client-test` is the supported desktop development loop on Windows,
 macOS, and Linux. On Windows, `client\build-pc.cmd` is an equivalent
-interactive wrapper; the MSVC CMake presets keep the build tree outside the
-repository and provide Qt DLLs to CTest. Do not use a qmake fallback or an
-ad-hoc in-tree/raw CMake build.
+interactive wrapper; the MSVC CMake presets keep the build tree under the root
+`build` directory and provide Qt DLLs to CTest. Do not use a qmake fallback or
+an ad-hoc raw CMake build.
+
+On Windows, `make client` keeps its incremental MSVC tree in `build\pc-dist`,
+separate from the `build\pc-build` tree used by `make client-test`. Use
+`client\build-msvc.ps1 -CleanBuild` only when a genuinely clean CMake
+configuration is required.
+
+Both Windows entry points launch CMake, MSBuild, the compiler, and CTest with
+normal inherited standard handles. Do not put these tools behind managed output
+pipes, heartbeat loops, or wrapper timeouts: their native progress must flow
+directly to the invoking terminal or agent. The shared launcher also disables
+MSBuild file-access tracking because its injected tracker can leave compiler and
+linker children suspended under process-managed agent hosts.
 
 `make client` produces the Windows executable, deploys a macOS application
 bundle, or builds the supported and tested Linux executable against the system

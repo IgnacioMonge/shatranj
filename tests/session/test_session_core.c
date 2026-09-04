@@ -11,7 +11,8 @@ typedef char session_action_capacity_check[(SESSION_ACTION_CAPACITY >= 4u)
                                                : -1];
 typedef char session_payload_bound_check[(SESSION_PAYLOAD_MAX <= 255u) ? 1 : -1];
 typedef char session_restore_workspace_check[
-    (sizeof(SessionWorkspace) == SESSION_RESTORE_BYTES) ? 1 : -1];
+    (sizeof(SessionWorkspace) == SESSION_RESTORE_BYTES +
+                                SESSION_CHAT_TEXT_MAX + 1u + 12u) ? 1 : -1];
 
 static int failures;
 

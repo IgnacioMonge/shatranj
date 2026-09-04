@@ -4,31 +4,69 @@
 
 static uint8_t restore_wire[NETCHESSZX_SAVE_WIRE_SIZE];
 
-static const char restore_piece_table[] = ".PNBRQK?pnbrqk";
-static const char restore_b64_table[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+static const char restore_piece_table[] = NETCHESSZX_SAVE_PIECE_TABLE;
+static const uint8_t restore_timer_max[6] = {99u, 59u, 59u, 99u, 59u, 59u};
 
-static uint8_t restore_find_char(const char *table, uint8_t len,
-                                 char ch, uint8_t *out)
+/* Returns the piece-table nibble for ch, or -1 for '?'/unknown. */
+static int8_t restore_find_piece(char ch)
 {
     uint8_t i;
 
-    for (i = 0u; i < len; ++i) {
-        if (table[i] == ch) {
-            *out = i;
-            return 1u;
+    for (i = 0u; i < NETCHESSZX_SAVE_PIECE_COUNT; ++i) {
+        if (restore_piece_table[i] == ch) {
+            return i == NETCHESSZX_SAVE_PIECE_RESERVED ? -1 : (int8_t)i;
         }
+    }
+    return -1;
+}
+
+/* Returns the piece char for a nibble, or -1 for '?'/invalid. */
+static int8_t restore_nibble_to_piece(uint8_t nibble) __z88dk_fastcall
+{
+    if (nibble >= NETCHESSZX_SAVE_PIECE_COUNT ||
+        restore_piece_table[nibble] == '?') {
+        return -1;
+    }
+    return (int8_t)restore_piece_table[nibble];
+}
+
+static uint8_t restore_b64_value(char ch, uint8_t *out)
+{
+    if (ch >= 'A' && ch <= 'Z') {
+        *out = (uint8_t)(ch - 'A');
+        return 1u;
+    }
+    if (ch >= 'a' && ch <= 'z') {
+        *out = (uint8_t)(26u + (uint8_t)(ch - 'a'));
+        return 1u;
+    }
+    if (ch >= '0' && ch <= '9') {
+        *out = (uint8_t)(52u + (uint8_t)(ch - '0'));
+        return 1u;
+    }
+    if (ch == '-') {
+        *out = 62u;
+        return 1u;
+    }
+    if (ch == '_') {
+        *out = 63u;
+        return 1u;
     }
     return 0u;
 }
 
-static uint8_t restore_nibble_to_piece(uint8_t nibble, char *out)
+static char restore_b64_char(uint8_t value)
 {
-    if (nibble >= 14u || restore_piece_table[nibble] == '?') {
-        return 0u;
+    if (value < 26u) {
+        return (char)('A' + value);
     }
-    *out = restore_piece_table[nibble];
-    return 1u;
+    if (value < 52u) {
+        return (char)('a' + (value - 26u));
+    }
+    if (value < 62u) {
+        return (char)('0' + (value - 52u));
+    }
+    return value == 62u ? '-' : '_';
 }
 
 static uint8_t restore_crc8(const uint8_t *data, uint8_t len)
@@ -47,26 +85,17 @@ static uint8_t restore_crc8(const uint8_t *data, uint8_t len)
     return crc;
 }
 
-static uint8_t restore_b64_value(char ch, uint8_t *out)
-{
-    return restore_find_char(restore_b64_table, 64u, ch, out);
-}
-
 static uint8_t restore_pack_wire(const spectrum_board_snapshot_t *snap,
                                  const netchesszx_save_meta_t *meta)
 {
     uint8_t i;
-    uint8_t hi;
-    uint8_t lo;
-
+    int8_t hi;
+    int8_t lo;
 
     for (i = 0u; i < 32u; ++i) {
-        if (!restore_find_char(restore_piece_table, 14u,
-                               snap->cells[(uint8_t)(i * 2u)], &hi) ||
-            hi == 7u ||
-            !restore_find_char(restore_piece_table, 14u,
-                               snap->cells[(uint8_t)(i * 2u + 1u)], &lo) ||
-            lo == 7u) {
+        hi = restore_find_piece(snap->cells[(uint8_t)(i * 2u)]);
+        lo = restore_find_piece(snap->cells[(uint8_t)(i * 2u + 1u)]);
+        if (hi < 0 || lo < 0) {
             return 0u;
         }
         restore_wire[i] = (uint8_t)((hi << 4) | lo);
@@ -79,12 +108,9 @@ static uint8_t restore_pack_wire(const spectrum_board_snapshot_t *snap,
     restore_wire[34] = (uint8_t)meta->ply;
     restore_wire[35] = (uint8_t)(meta->ply >> 8);
     restore_wire[36] = meta->flags;
-    restore_wire[37] = meta->timers[0];
-    restore_wire[38] = meta->timers[1];
-    restore_wire[39] = meta->timers[2];
-    restore_wire[40] = meta->timers[3];
-    restore_wire[41] = meta->timers[4];
-    restore_wire[42] = meta->timers[5];
+    for (i = 0u; i < 6u; ++i) {
+        restore_wire[(uint8_t)(37u + i)] = meta->timers[i];
+    }
     restore_wire[43] = NETCHESSZX_SAVE_WIRE_VERSION;
     restore_wire[44] = restore_crc8(restore_wire, 44u);
     return 1u;
@@ -100,20 +126,26 @@ static uint8_t restore_unpack_wire(spectrum_board_snapshot_t *snap,
     char piece;
 
     if (snap == 0 || meta == 0 || restore_wire[43] != NETCHESSZX_SAVE_WIRE_VERSION ||
-        restore_crc8(restore_wire, 44u) != restore_wire[44] ||
-        restore_wire[37] > 99u || restore_wire[38] >= 60u ||
-        restore_wire[39] >= 60u || restore_wire[40] > 99u ||
-        restore_wire[41] >= 60u || restore_wire[42] >= 60u) {
+        restore_crc8(restore_wire, 44u) != restore_wire[44]) {
         return 0u;
     }
-    for (i = 0u; i < 32u; ++i) {
-        packed = restore_wire[i];
-        if (!restore_nibble_to_piece((uint8_t)(packed >> 4),
-                                     &snap->cells[(uint8_t)(i * 2u)]) ||
-            !restore_nibble_to_piece((uint8_t)(packed & 0x0fu),
-                                     &snap->cells[(uint8_t)(i * 2u + 1u)])) {
+    for (i = 0u; i < 6u; ++i) {
+        if (restore_wire[(uint8_t)(37u + i)] > restore_timer_max[i]) {
             return 0u;
         }
+    }
+    for (i = 0u; i < 32u; ++i) {
+        int8_t hi;
+        int8_t lo;
+
+        packed = restore_wire[i];
+        hi = restore_nibble_to_piece((uint8_t)(packed >> 4));
+        lo = restore_nibble_to_piece((uint8_t)(packed & 0x0fu));
+        if (hi < 0 || lo < 0) {
+            return 0u;
+        }
+        snap->cells[(uint8_t)(i * 2u)] = (char)hi;
+        snap->cells[(uint8_t)(i * 2u + 1u)] = (char)lo;
     }
     for (i = 0u; i < 64u; ++i) {
         piece = snap->cells[i];
@@ -148,12 +180,9 @@ static uint8_t restore_unpack_wire(spectrum_board_snapshot_t *snap,
         return 0u;
     }
     meta->flags = restore_wire[36];
-    meta->timers[0] = restore_wire[37];
-    meta->timers[1] = restore_wire[38];
-    meta->timers[2] = restore_wire[39];
-    meta->timers[3] = restore_wire[40];
-    meta->timers[4] = restore_wire[41];
-    meta->timers[5] = restore_wire[42];
+    for (i = 0u; i < 6u; ++i) {
+        meta->timers[i] = restore_wire[(uint8_t)(37u + i)];
+    }
     return 1u;
 }
 
@@ -169,10 +198,10 @@ static void restore_b64_encode(char *out) __z88dk_fastcall
         a = restore_wire[i];
         b = restore_wire[(uint8_t)(i + 1u)];
         c = restore_wire[(uint8_t)(i + 2u)];
-        out[j++] = restore_b64_table[(uint8_t)(a >> 2)];
-        out[j++] = restore_b64_table[(uint8_t)(((a & 0x03u) << 4) | (b >> 4))];
-        out[j++] = restore_b64_table[(uint8_t)(((b & 0x0fu) << 2) | (c >> 6))];
-        out[j++] = restore_b64_table[(uint8_t)(c & 0x3fu)];
+        out[j++] = restore_b64_char((uint8_t)(a >> 2));
+        out[j++] = restore_b64_char((uint8_t)(((a & 0x03u) << 4) | (b >> 4)));
+        out[j++] = restore_b64_char((uint8_t)(((b & 0x0fu) << 2) | (c >> 6)));
+        out[j++] = restore_b64_char((uint8_t)(c & 0x3fu));
     }
 }
 

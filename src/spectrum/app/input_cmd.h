@@ -3,12 +3,6 @@
 
 #include <stdint.h>
 
-#define SPECTRUM_INPUT_CMD_NONE 0u
-#define SPECTRUM_INPUT_CMD_SAVE 1u
-#define SPECTRUM_INPUT_CMD_LOAD 2u
-#define SPECTRUM_INPUT_CMD_RESIGN 3u
-#define SPECTRUM_INPUT_CMD_DRAW 4u
-#define SPECTRUM_INPUT_CMD_TAKEBACK 5u
 
 void netchesszx_input_edit_render_overlay(void);
 void netchesszx_input_edit_begin_empty_overlay(void);

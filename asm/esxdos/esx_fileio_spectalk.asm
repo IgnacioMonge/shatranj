@@ -1,6 +1,10 @@
 ; esxDOS FILE I/O - copied from SpectalkZX 60_protocol_storage.asm method.
 ; Parameter passing via globals; callers set esx_buf/esx_count before I/O.
 
+IFDEF NETCHESSZX_NEXT_BANKING
+INCLUDE "asm/next/extension_bank_layout.asm"
+ENDIF
+
 IFDEF ESX_FILEUI
 PUBLIC _esx_fclose
 PUBLIC _esx_opendir
@@ -10,8 +14,10 @@ PUBLIC _esx_fopen
 PUBLIC _esx_fread
 PUBLIC _esx_fclose
 PUBLIC _esx_fcreate
+PUBLIC _esx_fcreate_new
 PUBLIC _esx_fwrite
 PUBLIC _esx_funlink
+PUBLIC _esx_mkdir
 ENDIF
 
 PUBLIC _esx_handle
@@ -38,8 +44,14 @@ _esx_fclose:
     push iy
     push ix
     ld a, (_esx_handle)
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, 0xff
+ENDIF
     rst 8
     defb 0x9B           ; F_CLOSE
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, next_extension_page
+ENDIF
     sbc a, a
     ld l, a
     jr esx_pop_ix_iy_ret
@@ -53,8 +65,14 @@ _esx_opendir:
     pop ix
     ld b, 0x00          ; short-name entries only
     ld a, '*'
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, 0xff
+ENDIF
     rst 8
     defb 0xA3           ; F_OPENDIR
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, next_extension_page
+ENDIF
     jr nc, esx_open_ok
     xor a
 esx_open_ok:
@@ -69,8 +87,14 @@ _esx_readdir:
     push ix
     ld a, (_esx_handle)
     ld ix, (_esx_buf)
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, 0xff
+ENDIF
     rst 8
     defb 0xA4           ; F_READDIR
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, next_extension_page
+ENDIF
     jr c, esx_rd_none
     ld c, a
     ld b, 0
@@ -96,6 +120,10 @@ _esx_fopen:
 
 _esx_fcreate:
     ld b, 0x0E          ; FA_WRITE | FA_CREATE_AL (0x02 write + 0x0C create/trunc)
+    jr esx_open_common
+
+_esx_fcreate_new:
+    ld b, 0x06          ; FA_WRITE | FA_CREATE_NEW: never truncate an old file
 
 esx_open_common:
     push iy
@@ -103,8 +131,14 @@ esx_open_common:
     push hl
     pop ix              ; IX = HL = path (esxDOS wants both)
     ld a, '*'           ; default drive
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, 0xff
+ENDIF
     rst 8
     defb 0x9A           ; F_OPEN
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, next_extension_page
+ENDIF
     jr nc, esx_open_ok
     xor a               ; error -> handle = 0
 esx_open_ok:
@@ -121,8 +155,14 @@ _esx_fread:
     ld a, (_esx_handle)
     ld ix, (_esx_buf)
     ld bc, (_esx_count)
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, 0xff
+ENDIF
     rst 8
     defb 0x9D           ; F_READ
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, next_extension_page
+ENDIF
     jr esx_io_epilogue
 
 ; uint8_t esx_fclose(void)
@@ -133,8 +173,14 @@ _esx_fclose:
     push iy
     push ix
     ld a, (_esx_handle)
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, 0xff
+ENDIF
     rst 8
     defb 0x9B           ; F_CLOSE
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, next_extension_page
+ENDIF
     sbc a, a
     ld l, a
     jr esx_pop_ix_iy_ret
@@ -149,8 +195,14 @@ _esx_fwrite:
     ld a, (_esx_handle)
     ld ix, (_esx_buf)
     ld bc, (_esx_count)
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, 0xff
+ENDIF
     rst 8
     defb 0x9E           ; F_WRITE
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, next_extension_page
+ENDIF
 
 esx_io_epilogue:
     jr nc, esx_io_ok
@@ -170,11 +222,36 @@ _esx_funlink:
     push hl
     pop ix
     ld a, '*'
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, 0xff
+ENDIF
     rst 8
     defb 0xAD           ; F_UNLINK
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, next_extension_page
+ENDIF
     ld bc, 1
     jr nc, esx_io_ok
     ld bc, 0
     jr esx_io_ok
+
+; void esx_mkdir(const char *path) __z88dk_fastcall
+; Existing-directory errors are intentionally left to the following F_OPEN.
+; Preserves IY and IX.
+_esx_mkdir:
+    push iy
+    push ix
+    push hl
+    pop ix
+    ld a, '*'
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, 0xff
+ENDIF
+    rst 8
+    defb 0xAA           ; F_MKDIR
+IFDEF NETCHESSZX_NEXT_BANKING
+    DEFB 0xed, 0x91, 0x51, next_extension_page
+ENDIF
+    jr esx_pop_ix_iy_ret
 
 ENDIF

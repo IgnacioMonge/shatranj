@@ -1,88 +1,101 @@
 #!/usr/bin/env python3
-"""Build the left-board About payload from the Shatranj logo."""
+"""Build the Classic About ULA band from a SCREEN$ plus credit lines."""
 
 from __future__ import annotations
 
 import argparse
-import re
 from pathlib import Path
 
-from PIL import Image
+if __package__:
+    from .asm_data import parse_defb_block
+else:
+    from asm_data import parse_defb_block
+
+try:
+    from PIL import Image
+except ModuleNotFoundError:
+    Image = None
 
 
-AREA_W_BYTES = 18
-AREA_W = AREA_W_BYTES * 8
-AREA_H = 144
-ATTR_ROWS = AREA_H // 8
-ABOUT_BYTES = (AREA_W_BYTES * AREA_H) + (AREA_W_BYTES * ATTR_ROWS)
+SCREEN_W_BYTES = 32
+SCREEN_W = SCREEN_W_BYTES * 8
+SCREEN_H = 192
+# One attribute row above the previous crop so the scene sits tighter
+# under the live banner. Turban tips in source y=16-23 are clipped.
+SOURCE_TOP = 24
+BAND_TOP = 32
+BAND_H = 144
+ATTR_ROWS = BAND_H // 8
+ABOUT_BYTES = (SCREEN_W_BYTES * BAND_H) + (SCREEN_W_BYTES * ATTR_ROWS)
 ATTR_WHITE = 0x07
 ATTR_YELLOW = 0x06
-ATTR_BLACK = 0x00
-LOGO_W = 109
-LOGO_Y = 22
+# Inclusive columns of the black gap between the two players. 13 cells = 104px.
+TEXT_COL0 = 10
+TEXT_COL1 = 22
+TEXT_X0 = TEXT_COL0 * 8
+TEXT_W = (TEXT_COL1 - TEXT_COL0 + 1) * 8
+# (text, attr, band_y, scale_x, scale_y)
 TEXT_LINES = [
-    ("A CHESS GAME FOR SPECTRUM ZX", ATTR_WHITE),
-    ("(C) 2026 M.I. MONGE GARCIA", ATTR_WHITE),
-    ("GH: IGNACIOMONGE/SHATRANJ", ATTR_YELLOW),
-    ("LICENSE: GNU GPL V2.0", ATTR_YELLOW),
+    ("SHATRANJ", ATTR_WHITE, 16, 2, 2),
+    ("A CHESS GAME FOR ZX", ATTR_WHITE, 32, 1, 1),
+    ("(C) 2026 M.I. MONGE", ATTR_WHITE, 40, 1, 1),
+    ("GH: IGNACIOMONGE/SHATRANJ", ATTR_YELLOW, 48, 1, 1),
+    ("LICENSE: GNU GPL V2.0", ATTR_YELLOW, 56, 1, 1),
 ]
-TEXT_Y = [90, 98, 106, 114]
-# Board restore redraws the frame without clearing every border byte. Keep the
-# right frame on bit 7 and the bottom frame on scanline 0 of the last row.
-FRAME_LEFT = 7
-FRAME_TOP = 7
-FRAME_RIGHT = 136
-FRAME_BOTTOM = 136
 
 
-def parse_defb_block(text: str, label: str, end_label: str) -> bytes:
-    start = re.search(rf"(?m)^{re.escape(label)}:\s*$", text)
-    if not start:
-        raise SystemExit(f"label not found: {label}")
-    end = re.search(rf"(?m)^{re.escape(end_label)}:\s*$", text[start.end():])
-    if not end:
-        raise SystemExit(f"end label not found: {end_label}")
-    block = text[start.end():start.end() + end.start()]
-    data = bytearray()
-    for raw in block.splitlines():
-        line = raw.split(";", 1)[0].strip()
-        if not line.upper().startswith("DEFB"):
-            continue
-        for token in line[4:].split(","):
-            token = token.strip()
-            if token:
-                data.append(int(token, 0) & 0xff)
-    return bytes(data)
+def scr_bitmap_offset(y: int, col: int) -> int:
+    third = y // 64
+    y8 = y % 8
+    row = (y // 8) % 8
+    return (third * 2048) + (y8 * 256) + (row * 32) + col
 
 
-def crop_logo(img: Image.Image) -> Image.Image:
-    gray = img.convert("L")
-    pixels = gray.load()
-    min_x = img.width
-    min_y = img.height
-    max_x = -1
-    max_y = -1
-    for y in range(img.height):
-        for x in range(img.width):
-            if pixels[x, y] > 24:
-                min_x = min(min_x, x)
-                min_y = min(min_y, y)
-                max_x = max(max_x, x)
-                max_y = max(max_y, y)
-    if max_x < min_x or max_y < min_y:
-        raise SystemExit("logo image has no bright pixels")
-    pad_x = max(4, (max_x - min_x + 1) // 40)
-    pad_y = max(4, (max_y - min_y + 1) // 30)
-    min_x = max(0, min_x - pad_x)
-    min_y = max(0, min_y - pad_y)
-    max_x = min(img.width - 1, max_x + pad_x)
-    max_y = min(img.height - 1, max_y + pad_y)
-    return img.crop((min_x, min_y, max_x + 1, max_y + 1))
+def extract_band(scr: bytes) -> tuple[bytearray, bytearray]:
+    if len(scr) != 6912:
+        raise SystemExit(f"SCREEN$ must be 6912 bytes, got {len(scr)}")
+    pixels = bytearray()
+    for y in range(SOURCE_TOP, SOURCE_TOP + BAND_H):
+        for col in range(SCREEN_W_BYTES):
+            pixels.append(scr[scr_bitmap_offset(y, col)])
+    attr_top = SOURCE_TOP // 8
+    attrs = bytearray(
+        scr[6144 + (attr_top * SCREEN_W_BYTES) : 6144 + ((attr_top + ATTR_ROWS) * SCREEN_W_BYTES)]
+    )
+    return pixels, attrs
 
 
-def put_ikkle_text(base: Image.Image, font: bytes, y: int, text: str) -> None:
-    x = (AREA_W - (len(text) * 4)) // 2
-    pix = base.load()
+def line_width(text: str, scale_x: int) -> int:
+    return len(text) * 4 * scale_x
+
+
+def text_origin_x(text: str, scale_x: int) -> int:
+    width = line_width(text, scale_x)
+    if width > TEXT_W:
+        raise SystemExit(f"credit line '{text}' is {width}px, gap is {TEXT_W}px")
+    return TEXT_X0 + (TEXT_W - width) // 2
+
+
+def clear_text_cells(pixels: bytearray, y: int, x: int, width: int) -> None:
+    row = y // 8
+    col0 = x // 8
+    col1 = (x + width - 1) // 8
+    for col in range(col0, col1 + 1):
+        if col < TEXT_COL0 or col > TEXT_COL1:
+            raise SystemExit(f"credit glyphs left the player gap at col {col}")
+        for scan in range(8):
+            pixels[(row * 8 + scan) * SCREEN_W_BYTES + col] = 0
+
+
+def put_ikkle_text(
+    pixels: bytearray,
+    font: bytes,
+    y: int,
+    x: int,
+    text: str,
+    scale_x: int = 1,
+    scale_y: int = 1,
+) -> None:
     for ch in text.upper():
         code = ord(ch)
         if 33 <= code < 128:
@@ -92,84 +105,90 @@ def put_ikkle_text(base: Image.Image, font: bytes, y: int, text: str) -> None:
             if index + 1 < len(font):
                 rows = (
                     font[index] >> 4,
-                    font[index] & 0x0f,
+                    font[index] & 0x0F,
                     font[index + 1] >> 4,
-                    font[index + 1] & 0x0f,
+                    font[index + 1] & 0x0F,
                 )
                 for row, bits in enumerate(rows):
-                    for bit in range(4):
-                        if bits & (0x08 >> bit):
-                            px = x + bit
-                            py = y + row
-                            if 0 <= px < AREA_W and 0 <= py < AREA_H:
-                                pix[px, py] = 1
-        x += 4
+                    for yoff in range(scale_y):
+                        py = y + row * scale_y + yoff
+                        if py < 0 or py >= BAND_H:
+                            continue
+                        for bit in range(4):
+                            if bits & (0x08 >> bit):
+                                for xoff in range(scale_x):
+                                    px = x + bit * scale_x + xoff
+                                    if 0 <= px < SCREEN_W:
+                                        offset = py * SCREEN_W_BYTES + (px // 8)
+                                        pixels[offset] |= 0x80 >> (px & 7)
+        x += 4 * scale_x
 
 
-def draw_board_frame(base: Image.Image) -> None:
-    pix = base.load()
-    for x in range(FRAME_LEFT, FRAME_RIGHT + 1):
-        pix[x, FRAME_TOP] = 1
-        pix[x, FRAME_BOTTOM] = 1
-    for y in range(FRAME_TOP + 1, FRAME_BOTTOM):
-        pix[FRAME_LEFT, y] = 1
-        pix[FRAME_RIGHT, y] = 1
+def apply_text_attrs(attrs: bytearray, y: int, x: int, width: int, color: int) -> None:
+    row = y // 8
+    if row < 0 or row >= ATTR_ROWS:
+        raise SystemExit(f"credit row {row} is outside the About band")
+    col0 = x // 8
+    col1 = (x + width - 1) // 8
+    start = row * SCREEN_W_BYTES
+    for col in range(col0, col1 + 1):
+        if col < TEXT_COL0 or col > TEXT_COL1:
+            raise SystemExit(f"credit attribute left the player gap at col {col}")
+        attrs[start + col] = color
 
 
 def build_board(source: Path, ui_assets: Path) -> bytes:
-    base = Image.new("1", (AREA_W, AREA_H), 0)
-    src = Image.open(source)
-    logo = crop_logo(src)
-
-    target_w = LOGO_W
-    target_h = max(1, round(logo.height * target_w / logo.width))
-    if target_h > 72:
-        target_h = 72
-        target_w = max(1, round(logo.width * target_h / logo.height))
-    logo = logo.resize((target_w, target_h), Image.Resampling.LANCZOS)
-    logo = logo.convert("L").convert("1", dither=Image.Dither.FLOYDSTEINBERG)
-    base.paste(logo, ((AREA_W - target_w) // 2, LOGO_Y))
-
+    pixels, attrs = extract_band(source.read_bytes())
     font = parse_defb_block(
         ui_assets.read_text(encoding="ascii"),
         "timer_ikkle_packed",
         "font_packed",
     )
-    for (line, _attr), y in zip(TEXT_LINES, TEXT_Y):
-        put_ikkle_text(base, font, y, line)
-    draw_board_frame(base)
-
-    pixels = bytearray()
-    pix = base.load()
-    for y in range(AREA_H):
-        for x_byte in range(AREA_W_BYTES):
-            value = 0
-            for bit in range(8):
-                if pix[x_byte * 8 + bit, y]:
-                    value |= 0x80 >> bit
-            pixels.append(value)
-
-    attrs = bytearray([ATTR_BLACK] * (AREA_W_BYTES * ATTR_ROWS))
-    logo_attr_top = LOGO_Y // 8
-    logo_attr_bottom = (LOGO_Y + target_h + 7) // 8
-    for row in range(logo_attr_top, min(ATTR_ROWS, logo_attr_bottom)):
-        for col in range(AREA_W_BYTES):
-            attrs[row * AREA_W_BYTES + col] = ATTR_WHITE
-    for (_line, attr), y in zip(TEXT_LINES, TEXT_Y):
-        for row in range(y // 8, ((y + 3) // 8) + 1):
-            for col in range(AREA_W_BYTES):
-                attrs[row * AREA_W_BYTES + col] = attr
-    for col in range(AREA_W_BYTES):
-        attrs[col] = ATTR_WHITE
-        attrs[(ATTR_ROWS - 1) * AREA_W_BYTES + col] = ATTR_WHITE
-    for row in range(1, ATTR_ROWS - 1):
-        attrs[row * AREA_W_BYTES] = ATTR_WHITE
-        attrs[row * AREA_W_BYTES + AREA_W_BYTES - 1] = ATTR_WHITE
-
+    for line, color, y, scale_x, scale_y in TEXT_LINES:
+        x = text_origin_x(line, scale_x)
+        width = line_width(line, scale_x)
+        clear_text_cells(pixels, y, x, width)
+        put_ikkle_text(pixels, font, y, x, line, scale_x, scale_y)
+        apply_text_attrs(attrs, y, x, width, color)
     out = bytes(pixels + attrs)
     if len(out) != ABOUT_BYTES:
         raise SystemExit(f"bad board payload size: {len(out)}")
     return out
+
+
+def band_preview(raw: bytes) -> Image.Image:
+    pixels = raw[: SCREEN_W_BYTES * BAND_H]
+    attrs = raw[SCREEN_W_BYTES * BAND_H :]
+    colors = [
+        (0, 0, 0),
+        (0, 0, 192),
+        (192, 0, 0),
+        (192, 0, 192),
+        (0, 192, 0),
+        (0, 192, 192),
+        (192, 192, 0),
+        (192, 192, 192),
+        (0, 0, 0),
+        (0, 0, 255),
+        (255, 0, 0),
+        (255, 0, 255),
+        (0, 255, 0),
+        (0, 255, 255),
+        (255, 255, 0),
+        (255, 255, 255),
+    ]
+    img = Image.new("RGB", (SCREEN_W, BAND_H))
+    pix = img.load()
+    for y in range(BAND_H):
+        attr_row = y // 8
+        for col in range(SCREEN_W_BYTES):
+            bits = pixels[y * SCREEN_W_BYTES + col]
+            attr = attrs[attr_row * SCREEN_W_BYTES + col]
+            ink = colors[(attr & 7) + (8 if attr & 0x40 else 0)]
+            paper = colors[((attr >> 3) & 7) + (8 if attr & 0x40 else 0)]
+            for bit in range(8):
+                pix[col * 8 + bit, y] = ink if bits & (0x80 >> bit) else paper
+    return img
 
 
 def main() -> int:
@@ -177,11 +196,28 @@ def main() -> int:
     parser.add_argument("source", type=Path)
     parser.add_argument("ui_assets", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--preview", type=Path)
     args = parser.parse_args()
 
+    payload = build_board(args.source, args.ui_assets)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_bytes(build_board(args.source, args.ui_assets))
+    args.output.write_bytes(payload)
     print(f"[OK] {args.output}: {ABOUT_BYTES} bytes")
+    if args.preview:
+        if Image is None:
+            raise SystemExit("--preview requires Pillow")
+        args.preview.parent.mkdir(parents=True, exist_ok=True)
+        band = band_preview(payload)
+        preview = band.resize((SCREEN_W * 2, BAND_H * 2), Image.Resampling.NEAREST)
+        preview.save(args.preview)
+        print(f"[OK] {args.preview}")
+        screen = Image.new("RGB", (SCREEN_W, SCREEN_H), (0, 0, 0))
+        screen.paste(band, (0, BAND_TOP))
+        screen_path = args.preview.with_name(args.preview.stem + "_screen.png")
+        screen.resize((SCREEN_W * 2, SCREEN_H * 2), Image.Resampling.NEAREST).save(
+            screen_path
+        )
+        print(f"[OK] {screen_path}")
     return 0
 
 

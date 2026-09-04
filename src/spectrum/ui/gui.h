@@ -23,6 +23,7 @@
 #define SPECTRUM_GUI_TURN_WHITE_CHECK 2u
 #define SPECTRUM_GUI_TURN_BLACK_CHECK 3u
 #define SPECTRUM_GUI_TURN_CLEAR 4u
+#define SPECTRUM_GUI_TURN_MARKER_CLEAR 5u
 
 #define SPECTRUM_GUI_MSG_PACK(id, kind) \
     ((uint16_t)(uint8_t)(id) | ((uint16_t)(uint8_t)(kind) << 8))
@@ -33,9 +34,12 @@ void spectrum_gui_set_status(const char *text) NETCHESSZX_FASTCALL;
 void spectrum_gui_status_phase(uint8_t phase) NETCHESSZX_FASTCALL;
 void spectrum_gui_set_status_error(const char *text) NETCHESSZX_FASTCALL;
 void spectrum_gui_set_clock(uint8_t hour, uint8_t minute, uint8_t second);
+void spectrum_gui_shift_clock(int8_t hour_delta) NETCHESSZX_FASTCALL;
 void spectrum_gui_game_timer_start(void);
 void spectrum_gui_game_timer_stop(void);
 void spectrum_gui_move_timer_reset(void);
+void spectrum_gui_game_timer_save(uint8_t *timers) NETCHESSZX_FASTCALL;
+void spectrum_gui_game_timer_restore(const uint8_t *timers) NETCHESSZX_FASTCALL;
 void spectrum_gui_set_turn_label(uint8_t mode) NETCHESSZX_FASTCALL;
 void spectrum_gui_set_connected(uint8_t connected) NETCHESSZX_FASTCALL;
 void spectrum_gui_notify(const char *text, uint8_t is_error);
@@ -53,11 +57,19 @@ void spectrum_gui_set_board_snapshot(const char *cells) NETCHESSZX_FASTCALL;
 #define spectrum_gui_set_board_snapshot(cells) ((void)0)
 #endif
 void spectrum_gui_set_board_pieces_visible(uint8_t visible) NETCHESSZX_FASTCALL;
+extern uint8_t spectrum_gui_board_pieces_visible;
 void spectrum_gui_hide_board_pieces(void);
 void spectrum_gui_draw_board(void);
 void spectrum_gui_redraw_board_view(void);
 void spectrum_gui_restore_board_area(void);
+#ifndef NETCHESSZX_NEXT_BANKING
+void spectrum_gui_restore_game_center(void);
+#endif
 void spectrum_gui_animate_board_pieces(void);
+void spectrum_gui_morph_board_pieces(void);
+#ifdef NETCHESSZX_SPECTRANEXT
+void spectrum_gui_sync_board_coords(void);
+#endif
 void spectrum_gui_draw_status(void);
 void spectrum_gui_restore_side_panels(void);
 uint8_t spectrum_gui_side_panels_visible(void);
@@ -65,6 +77,7 @@ void spectrum_gui_redraw_board_squares(void);
 void spectrum_gui_reset_moves(void);
 void spectrum_gui_reset_logs(void);
 void spectrum_gui_add_move(const char *ply, const char *move);
+void spectrum_gui_prepare_move_row(void);
 void spectrum_gui_remove_last_move(uint16_t ply);
 void spectrum_gui_add_chat(char who, const char *text);
 void spectrum_gui_prepare_move(const char *move) NETCHESSZX_FASTCALL;

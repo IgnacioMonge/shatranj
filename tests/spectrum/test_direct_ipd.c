@@ -251,6 +251,92 @@ static void test_split_line(void)
           "split: reassembled payload");
 }
 
+static void test_split_line_different_link(void)
+{
+    char out[SPECTRUM_NET_PAYLOAD_MAX];
+
+    reset_state();
+    active_link = 0xffu;
+    feed_str("+IPD,0,13:HELLO DIRECT ");
+    check(direct_rx_count == 0u, "cross-link split: partial not queued");
+
+    feed_str("+IPD,1,6:GUEST\n");
+    check(direct_rx_count == 1u,
+          "cross-link split: second link remains independently queued");
+    check(dequeue(out, sizeof(out)) == 1u,
+          "cross-link split: queued payload keeps second link id");
+    check(strcmp(out, "GUEST") == 0,
+          "cross-link split: fragments never splice");
+
+    reset_state();
+    active_link = 0u;
+    feed_str("+IPD,0,5:PART1");
+    feed_str("+IPD,1,6:GUEST\n");
+    feed_str("+IPD,0,1:\n");
+    check(direct_rx_count == 1u,
+          "cross-link split: intruder preserves active partial");
+    check(dequeue(out, sizeof(out)) == 0u && strcmp(out, "PART1") == 0,
+          "cross-link split: active continuation keeps its link");
+}
+
+static void test_embedded_nul_discards_block(void)
+{
+    static const uint8_t malformed_ping[] = {
+        'P', 'I', 'N', 'G', 0u, 'J', 'U', 'N', 'K', '\n'
+    };
+    static const uint8_t malformed_restore_tail[] = {
+        0u, 'X', 'X', 'X', 'X', '\n'
+    };
+    char out[SPECTRUM_NET_PAYLOAD_MAX];
+    const char *restore_prefix = "RS00 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    reset_state();
+    feed_str("+IPD,0,10:");
+    feed((const char *)malformed_ping, sizeof(malformed_ping));
+    check(direct_rx_count == 0u && direct_rx_payload_len == 0u,
+          "embedded NUL: malformed PING discarded");
+
+    feed_str("+IPD,0,5:PONG\n");
+    check(direct_rx_count == 1u,
+          "embedded NUL: next block queued");
+    check(dequeue(out, sizeof(out)) == 0u && strcmp(out, "PONG") == 0,
+          "embedded NUL: next block delivered");
+
+    reset_state();
+    feed_str("+IPD,0,41:");
+    feed(restore_prefix, strlen(restore_prefix));
+    feed((const char *)malformed_restore_tail,
+         sizeof(malformed_restore_tail));
+    check(direct_rx_count == 0u && direct_rx_payload_len == 0u,
+          "embedded NUL: malformed RESTORE discarded");
+}
+
+static void test_invalid_line_state_crosses_ipd_blocks(void)
+{
+    static const uint8_t nul_block[] = { 'B', 'A', 'D', 0u };
+    char overflow[SPECTRUM_NET_PAYLOAD_MAX];
+    char out[SPECTRUM_NET_PAYLOAD_MAX];
+
+    reset_state();
+    feed_str("+IPD,0,4:");
+    feed((const char *)nul_block, sizeof(nul_block));
+    feed_str("+IPD,0,8:DROP\nOK\n");
+    check(direct_rx_count == 1u,
+          "split invalid NUL: resumes after LF inside next block");
+    check(dequeue(out, sizeof(out)) == 0u && strcmp(out, "OK") == 0,
+          "split invalid NUL: prefix and invalid tail discarded");
+
+    reset_state();
+    memset(overflow, 'X', sizeof(overflow));
+    feed_str("+IPD,0,48:");
+    feed(overflow, sizeof(overflow));
+    feed_str("+IPD,0,5:Y\nOK\n");
+    check(direct_rx_count == 1u,
+          "split overflow: resumes after LF inside next block");
+    check(dequeue(out, sizeof(out)) == 0u && strcmp(out, "OK") == 0,
+          "split overflow: whole oversized line discarded");
+}
+
 static void test_large_block_header(void)
 {
     reset_state();
@@ -502,6 +588,9 @@ int main(void)
     test_three_lines_during_send_wait();
     test_max_payload_in_spill();
     test_split_line();
+    test_split_line_different_link();
+    test_embedded_nul_discards_block();
+    test_invalid_line_state_crosses_ipd_blocks();
     test_large_block_header();
     test_two_frame_read_cadence();
     test_impossible_block_does_not_swallow_prompt();

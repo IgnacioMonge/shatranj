@@ -60,16 +60,14 @@ set_target_properties(shatranj-common PROPERTIES
 
 set(SHATRANJ_DESKTOP_CORE_SOURCES
     ../src/pc/client/chess_helpers.cpp
+    ../src/pc/client/desktop_session_adapter.cpp
     ../src/pc/client/desktop_session_controller.cpp
     ../src/pc/client/desktop_transport_codec.cpp
-    ../src/pc/client/direct_session_adapter.cpp
-    ../src/pc/client/mqtt_session_adapter.cpp
     ../src/pc/client/save_game_store.cpp
     ../src/pc/client/chess_helpers.h
+    ../src/pc/client/desktop_session_adapter.h
     ../src/pc/client/desktop_session_controller.h
     ../src/pc/client/desktop_transport_codec.h
-    ../src/pc/client/direct_session_adapter.h
-    ../src/pc/client/mqtt_session_adapter.h
     ../src/pc/client/save_game_store.h
 )
 
@@ -89,34 +87,60 @@ set_target_properties(shatranj-desktop-core PROPERTIES
 )
 
 set(SHATRANJ_CLIENT_UI_SOURCES
-    ../src/pc/client/main.cpp
     ../src/pc/client/main_window.cpp
     ../src/pc/client/app_banner.cpp
     ../src/pc/client/piece_renderer.cpp
     ../src/pc/client/main_window.h
     ../src/pc/client/app_banner.h
     ../src/pc/client/piece_renderer.h
+    ../src/pc/client/ui_theme.h
+    ../src/pc/client/window_chrome.cpp
+    ../src/pc/client/window_chrome.h
+)
+set(SHATRANJ_CLIENT_APP_SOURCES
+    ../src/pc/client/main.cpp
 )
 
 if(WIN32)
-    list(APPEND SHATRANJ_CLIENT_UI_SOURCES "${SHATRANJ_WINDOWS_RESOURCE}")
+    list(APPEND SHATRANJ_CLIENT_APP_SOURCES "${SHATRANJ_WINDOWS_RESOURCE}")
 elseif(APPLE)
     enable_language(OBJCXX)
     list(APPEND SHATRANJ_CLIENT_UI_SOURCES
-        ../src/pc/client/mac_window_chrome.h
         ../src/pc/client/mac_window_chrome.mm
     )
-    list(APPEND SHATRANJ_CLIENT_UI_SOURCES shatranj.icns)
+    list(APPEND SHATRANJ_CLIENT_APP_SOURCES shatranj.icns)
     set_source_files_properties(shatranj.icns PROPERTIES
         MACOSX_PACKAGE_LOCATION Resources
     )
 endif()
 
+# Keep the integration seam in this shared concrete target: main_window.cpp is
+# compiled once, then linked by both the application and the lifecycle test.
+add_library(shatranj-client-ui STATIC ${SHATRANJ_CLIENT_UI_SOURCES})
+target_include_directories(shatranj-client-ui PUBLIC ../src)
+target_compile_definitions(shatranj-client-ui
+    PRIVATE
+        NETCHESSZX_PC_MQTT_TX_FAILURE_TEST=1
+        NETCHESSZX_APP_VERSION="${SHATRANJ_DISPLAY_VERSION}"
+)
+target_link_libraries(shatranj-client-ui
+    PUBLIC
+        shatranj-desktop-core
+        Qt${QT_VERSION_MAJOR}::Widgets
+        Qt${QT_VERSION_MAJOR}::Network
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Svg
+)
+if(WIN32)
+    target_link_libraries(shatranj-client-ui PRIVATE dwmapi)
+endif()
+set_target_properties(shatranj-client-ui PROPERTIES AUTOUIC OFF)
+
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_standard_project_setup()
-    qt_add_executable(shatranj-client ${SHATRANJ_CLIENT_UI_SOURCES})
+    qt_add_executable(shatranj-client ${SHATRANJ_CLIENT_APP_SOURCES})
 else()
-    add_executable(shatranj-client ${SHATRANJ_CLIENT_UI_SOURCES})
+    add_executable(shatranj-client ${SHATRANJ_CLIENT_APP_SOURCES})
 endif()
 
 # No .ui files in this project; AUTOUIC would misread src/common/ui_messages.h
@@ -126,16 +150,34 @@ set_target_properties(shatranj-client PROPERTIES AUTOUIC OFF)
 target_include_directories(shatranj-client PRIVATE
     ../src
 )
-target_compile_definitions(shatranj-client PRIVATE
-    NETCHESSZX_APP_VERSION="${SHATRANJ_DISPLAY_VERSION}"
+target_link_libraries(shatranj-client PRIVATE
+    shatranj-client-ui
 )
 
-target_link_libraries(shatranj-client PRIVATE
-    shatranj-desktop-core
-    Qt${QT_VERSION_MAJOR}::Widgets
-    Qt${QT_VERSION_MAJOR}::Network
-    Qt${QT_VERSION_MAJOR}::Svg
-)
+# The shared UI object carries inert integration hooks. Release linkers discard
+# them from the application while the lifecycle test keeps the referenced seam.
+if(APPLE)
+    target_link_options(shatranj-client PRIVATE
+        "$<$<CONFIG:Release>:-Wl,-dead_strip>"
+    )
+elseif(MSVC)
+    target_compile_options(shatranj-client-ui PRIVATE
+        "$<$<CONFIG:Release>:/Gy>"
+        "$<$<CONFIG:Release>:/Gw>"
+    )
+    target_link_options(shatranj-client PRIVATE
+        "$<$<CONFIG:Release>:/OPT:REF>"
+        "$<$<CONFIG:Release>:/OPT:ICF>"
+    )
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(shatranj-client-ui PRIVATE
+        "$<$<CONFIG:Release>:-ffunction-sections>"
+        "$<$<CONFIG:Release>:-fdata-sections>"
+    )
+    target_link_options(shatranj-client PRIVATE
+        "$<$<CONFIG:Release>:-Wl,--gc-sections>"
+    )
+endif()
 
 set(SHATRANJ_DESKTOP_ASSET_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/../assets/pc-client")
 set(SHATRANJ_DESKTOP_PIECE_SETS california gioco kiwen-suwi merida mpchess)
@@ -156,9 +198,6 @@ add_custom_command(TARGET shatranj-client POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${SHATRANJ_DESKTOP_ASSET_SOURCE}/about"
             "${SHATRANJ_DESKTOP_ASSET_DEST}/about"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${SHATRANJ_DESKTOP_ASSET_SOURCE}/pieces"
-            "${SHATRANJ_DESKTOP_ASSET_DEST}/pieces"
     COMMENT "Staging shared desktop assets"
     VERBATIM
 )
@@ -181,121 +220,93 @@ endforeach()
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(shatranj-desktop-transport-codec-test
+    function(shatranj_add_desktop_test target test_name source)
+        add_executable(${target} ${source})
+        target_include_directories(${target} PRIVATE ../src)
+        target_link_libraries(${target} PRIVATE shatranj-desktop-core ${ARGN})
+        set_target_properties(${target} PROPERTIES
+            AUTOMOC OFF
+            AUTOUIC OFF
+            AUTORCC OFF
+        )
+        add_test(NAME ${test_name} COMMAND ${target})
+    endfunction()
+
+    shatranj_add_desktop_test(
+        shatranj-desktop-transport-codec-test
+        pc-desktop-transport-codec
         ../tests/pc/test_desktop_transport_codec.cpp
     )
-    target_include_directories(shatranj-desktop-transport-codec-test PRIVATE ../src)
-    target_link_libraries(shatranj-desktop-transport-codec-test PRIVATE
-        shatranj-desktop-core
-    )
-    set_target_properties(shatranj-desktop-transport-codec-test PROPERTIES
-        AUTOMOC OFF
-        AUTOUIC OFF
-        AUTORCC OFF
-    )
-    add_test(NAME pc-desktop-transport-codec
-             COMMAND shatranj-desktop-transport-codec-test)
-
-    add_executable(shatranj-desktop-session-controller-test
+    shatranj_add_desktop_test(
+        shatranj-desktop-session-controller-test
+        pc-desktop-session-controller
         ../tests/pc/test_desktop_session_controller.cpp
     )
-    target_include_directories(shatranj-desktop-session-controller-test PRIVATE ../src)
-    target_link_libraries(shatranj-desktop-session-controller-test PRIVATE
-        shatranj-desktop-core
-    )
-    set_target_properties(shatranj-desktop-session-controller-test PROPERTIES
-        AUTOMOC OFF
-        AUTOUIC OFF
-        AUTORCC OFF
-    )
-    add_test(NAME pc-desktop-session-controller
-             COMMAND shatranj-desktop-session-controller-test)
-
-    add_executable(shatranj-save-game-store-test
+    shatranj_add_desktop_test(
+        shatranj-save-game-store-test
+        pc-save-game-store
         ../tests/pc/test_save_game_store.cpp
     )
-    target_include_directories(shatranj-save-game-store-test PRIVATE ../src)
-    target_link_libraries(shatranj-save-game-store-test PRIVATE
-        shatranj-desktop-core
-    )
-    set_target_properties(shatranj-save-game-store-test PROPERTIES
-        AUTOMOC OFF
-        AUTOUIC OFF
-        AUTORCC OFF
-    )
-    add_test(NAME pc-save-game-store COMMAND shatranj-save-game-store-test)
-
-    add_executable(shatranj-chess-helpers-test
+    shatranj_add_desktop_test(
+        shatranj-chess-helpers-test
+        pc-chess-helpers
         ../tests/pc/test_chess_helpers.cpp
     )
-    target_include_directories(shatranj-chess-helpers-test PRIVATE ../src)
-    target_link_libraries(shatranj-chess-helpers-test PRIVATE
-        shatranj-desktop-core
-    )
-    set_target_properties(shatranj-chess-helpers-test PROPERTIES
-        AUTOMOC OFF
-        AUTOUIC OFF
-        AUTORCC OFF
-    )
-    add_test(NAME pc-chess-helpers COMMAND shatranj-chess-helpers-test)
-
-    add_executable(shatranj-direct-adapter-test
+    shatranj_add_desktop_test(
+        shatranj-direct-adapter-test
+        pc-direct-adapter
         ../tests/pc/test_direct_session_adapter.cpp
-    )
-    target_include_directories(shatranj-direct-adapter-test PRIVATE ../src)
-    target_link_libraries(shatranj-direct-adapter-test PRIVATE
-        shatranj-desktop-core
         Qt${QT_VERSION_MAJOR}::Network
     )
-    set_target_properties(shatranj-direct-adapter-test PROPERTIES
-        AUTOMOC OFF
-        AUTOUIC OFF
-        AUTORCC OFF
-    )
-    add_test(NAME pc-direct-adapter COMMAND shatranj-direct-adapter-test)
-
-    add_executable(shatranj-mqtt-adapter-test
+    shatranj_add_desktop_test(
+        shatranj-mqtt-adapter-test
+        pc-mqtt-adapter
         ../tests/pc/test_mqtt_session_adapter.cpp
     )
-    target_include_directories(shatranj-mqtt-adapter-test PRIVATE ../src)
-    target_link_libraries(shatranj-mqtt-adapter-test PRIVATE
-        shatranj-desktop-core
-    )
-    set_target_properties(shatranj-mqtt-adapter-test PROPERTIES
-        AUTOMOC OFF
-        AUTOUIC OFF
-        AUTORCC OFF
-    )
-    add_test(NAME pc-mqtt-adapter COMMAND shatranj-mqtt-adapter-test)
 
-    set(SHATRANJ_MQTT_TX_FAILURE_SOURCES ${SHATRANJ_CLIENT_UI_SOURCES})
-    list(REMOVE_ITEM SHATRANJ_MQTT_TX_FAILURE_SOURCES
-        ../src/pc/client/main.cpp
-        "${SHATRANJ_WINDOWS_RESOURCE}"
-        shatranj.icns
-    )
     add_executable(shatranj-mqtt-tx-failure-test
         ../tests/pc/test_mqtt_tx_failure.cpp
-        ${SHATRANJ_MQTT_TX_FAILURE_SOURCES}
     )
     target_include_directories(shatranj-mqtt-tx-failure-test PRIVATE ../src)
     target_link_libraries(shatranj-mqtt-tx-failure-test PRIVATE
-        shatranj-desktop-core
-        Qt${QT_VERSION_MAJOR}::Widgets
-        Qt${QT_VERSION_MAJOR}::Network
-        Qt${QT_VERSION_MAJOR}::Svg
-    )
-    target_compile_definitions(shatranj-mqtt-tx-failure-test PRIVATE
-        NETCHESSZX_APP_VERSION="${SHATRANJ_DISPLAY_VERSION}"
-        NETCHESSZX_PC_MQTT_TX_FAILURE_TEST=1
+        shatranj-client-ui
     )
     set_target_properties(shatranj-mqtt-tx-failure-test PROPERTIES AUTOUIC OFF)
     add_test(NAME pc-mqtt-tx-failure COMMAND shatranj-mqtt-tx-failure-test)
+
+    add_executable(shatranj-piece-renderer-test
+        ../tests/pc/test_piece_renderer.cpp
+    )
+    target_include_directories(shatranj-piece-renderer-test PRIVATE ../src)
+    target_link_libraries(shatranj-piece-renderer-test PRIVATE
+        shatranj-client-ui
+    )
+    set_target_properties(shatranj-piece-renderer-test PROPERTIES
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+    )
+    add_test(NAME pc-piece-renderer COMMAND shatranj-piece-renderer-test)
 
     add_test(NAME pc-client-assets
         COMMAND ${CMAKE_COMMAND} -E compare_files
                 "${SHATRANJ_DESKTOP_ASSET_SOURCE}/piece_sets/merida/wK.svg"
                 "${SHATRANJ_DESKTOP_ASSET_DEST}/piece_sets/merida/wK.svg"
+    )
+    add_test(NAME pc-client-banner-asset
+        COMMAND ${CMAKE_COMMAND} -E compare_files
+                "${SHATRANJ_DESKTOP_ASSET_SOURCE}/about/banner-mosaic.png"
+                "${SHATRANJ_DESKTOP_ASSET_DEST}/about/banner-mosaic.png"
+    )
+    add_test(NAME pc-client-banner-wordmark-asset
+        COMMAND ${CMAKE_COMMAND} -E compare_files
+                "${SHATRANJ_DESKTOP_ASSET_SOURCE}/about/banner-wordmark.png"
+                "${SHATRANJ_DESKTOP_ASSET_DEST}/about/banner-wordmark.png"
+    )
+    add_test(NAME pc-client-banner-board-asset
+        COMMAND ${CMAKE_COMMAND} -E compare_files
+                "${SHATRANJ_DESKTOP_ASSET_SOURCE}/about/banner-board.png"
+                "${SHATRANJ_DESKTOP_ASSET_DEST}/about/banner-board.png"
     )
 
     if(WIN32)
@@ -307,7 +318,8 @@ if(BUILD_TESTING)
                              pc-chess-helpers
                              pc-direct-adapter
                              pc-mqtt-adapter
-                             pc-mqtt-tx-failure PROPERTIES
+                             pc-mqtt-tx-failure
+                             pc-piece-renderer PROPERTIES
             ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>"
         )

@@ -1,0 +1,56 @@
+SECTION code_user
+
+INCLUDE "next_graphics_defs.asm"
+
+; Stable entry table used by resident screen stubs.
+    jp _spectrum_render_board
+    jp _spectrum_render_board_area
+    jp _spectrum_render_board_coords
+    jp _spectrum_render_board_coord_mark
+    jp _spectrum_render_status
+    jp _spectrum_render_status_error
+    jp _spectrum_render_clock
+    jp _spectrum_render_game_timer_clear
+    jp _spectrum_render_game_timer_char
+    jp _spectrum_render_menu_timer_char
+    jp _spectrum_render_turn_label
+    jp _spectrum_render_notice
+    jp _spectrum_render_notice_error
+    jp _spectrum_render_notice_success
+    jp _spectrum_render_connection
+    jp _spectrum_render_menu
+    jp _spectrum_info_show_game
+    jp _spectrum_info_show_setup
+    jp _spectrum_info_show_game_setup
+    jp _spectrum_render_ikkle_at
+    jp _spectrum_render_ikkle_abs_at
+    jp _spectrum_render_fileui_select
+    jp _spectrum_render_fileui_frame
+    jp _spectrum_info_show_preflight
+    jp _spectrum_info_clear_tail
+    jp _spectrum_info_line
+    jp set_square_attr_2x2
+    jp _spectrum_next_sprites_hide_all
+    jp draw_char64_pixels_at_tmp
+    jp _spectrum_key_edit_pressed
+    jp _spectrum_input_flush_until_release
+    jp _spectrum_input_suppress_until_release
+    jp _spectrum_input_frame_tick
+    jp _netchesszx_board_theme_apply
+    jp compute_screen_base
+    jp compute_attr_base
+    jp draw_one_board_square
+    jp next_marker_set_hint_current_square
+    jp next_marker_set_mark_current_square
+    jp draw_square_mark
+    jp next_draw_legal_hints
+    jp clear_right_pixel_band_abs
+    jp draw_ikkle_text_abs_y
+    jp compute_pixel_base
+    jp pixel_down_hl
+    jp clear_text_row
+    jp draw_text64_line_attr_fast
+    jp draw_char64_at_tmp
+    jp draw_input_cursor_at_tmp
+
+INCLUDE "asm/spectrum/screen.asm"

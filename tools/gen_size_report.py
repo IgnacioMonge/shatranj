@@ -5,28 +5,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
 sys.dont_write_bytecode = True
+
+from gen_overlay_defs import parse_map
 
 
 ZX_ORG = 28672
 MIN_SP_GAP = 512
 MIN_SP_GAP_WARN = 768
 STACK_GUARD = 0xFE00  # retained for report compat; hard floor uses SP gap
-
-
-def parse_map(path: Path) -> dict[str, int]:
-    symbols: dict[str, int] = {}
-    pattern = re.compile(r"^(\w+)\s+=\s+\$([0-9A-Fa-f]+)\s+;")
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
-        for line in handle:
-            match = pattern.match(line)
-            if match:
-                symbols[match.group(1)] = int(match.group(2), 16)
-    return symbols
 
 
 def hex_addr(value: int | None) -> str | None:
@@ -48,17 +38,41 @@ def read_overlay_sizes(path: Path | None) -> dict[str, int]:
     return {str(key): int(value) for key, value in data.items()}
 
 
+def bss_regions(symbols: dict[str, int]) -> list[tuple[int, int]]:
+    names = {
+        name.removesuffix("_head")
+        for name in symbols
+        if name.startswith("__bss_") and name.endswith("_head")
+    }
+    names.add("__BSS_UNINITIALIZED")
+    regions = sorted(
+        (symbols[f"{name}_head"], symbols[f"{name}_tail"])
+        for name in names
+        if f"{name}_head" in symbols
+        and f"{name}_tail" in symbols
+        and symbols[f"{name}_tail"] > symbols[f"{name}_head"]
+    )
+    merged: list[tuple[int, int]] = []
+    for head, tail in regions:
+        if merged and head <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], tail))
+        else:
+            merged.append((head, tail))
+    return merged
+
+
 def make_report(args: argparse.Namespace) -> dict[str, object]:
     symbols = parse_map(args.map)
     code_full = file_size(args.code_bin)
-    data_tail = symbols.get("__data_compiler_tail")
+    data_tail = symbols.get("__DATA_END_tail")
     resident_bytes = data_tail - args.org if data_tail is not None else None
-    bss_head = symbols.get("__BSS_head")
-    bss_end = symbols.get("__BSS_END_tail")
-    bss_bytes = (
-        bss_end - bss_head if bss_head is not None and bss_end is not None else None
-    )
+    regions = bss_regions(symbols)
+    bss_head = min((head for head, _tail in regions), default=None)
+    bss_end = max((tail for _head, tail in regions), default=None)
+    bss_bytes = sum(tail - head for head, tail in regions) if regions else None
     register_sp = symbols.get("__register_sp", symbols.get("TAR__register_sp"))
+    if register_sp == 0:
+        register_sp = 0x10000
 
     artifacts = {
         "code_bin": code_full,
@@ -78,8 +92,12 @@ def make_report(args: argparse.Namespace) -> dict[str, object]:
                 "__CODE_tail",
                 "__DATA_head",
                 "__data_compiler_tail",
+                "__DATA_END_tail",
                 "__BSS_head",
                 "__BSS_END_tail",
+                "__bss_compiler_tail",
+                "__bss_user_head",
+                "__bss_user_tail",
                 "_overlay_code_slot",
                 "__register_sp",
                 "TAR__register_sp",
@@ -98,6 +116,10 @@ def make_report(args: argparse.Namespace) -> dict[str, object]:
         "memory": {
             "bss_head": hex_addr(bss_head),
             "bss_bytes": bss_bytes,
+            "bss_regions": [
+                {"head": hex_addr(head), "tail": hex_addr(tail), "bytes": tail - head}
+                for head, tail in regions
+            ],
             "ram_end": hex_addr(bss_end),
             "bss_end": hex_addr(bss_end),
             "stack_guard": hex_addr(STACK_GUARD),
@@ -230,17 +252,19 @@ def compare_reports(
     return messages
 
 
-def check_hard_limits(report: dict[str, object]) -> list[str]:
+def check_hard_limits(
+    report: dict[str, object], min_sp_gap: int = MIN_SP_GAP
+) -> list[str]:
     gap = metric(report, ("memory", "register_sp_gap_bytes"))
     if gap is None:
         return ["SP_GAP missing in current size report"]
-    if gap < MIN_SP_GAP:
+    if gap < min_sp_gap:
         return [
-            f"SP_GAP {gap} bytes is below hard floor {MIN_SP_GAP} bytes"
+            f"SP_GAP {gap} bytes is below hard floor {min_sp_gap} bytes"
         ]
     if gap < MIN_SP_GAP_WARN:
         print(f"[WARN] SP_GAP {gap} bytes is below warning threshold {MIN_SP_GAP_WARN} bytes")
-    print(f"[OK] SP_GAP hard floor: {gap} >= {MIN_SP_GAP} bytes")
+    print(f"[OK] SP_GAP hard floor: {gap} >= {min_sp_gap} bytes")
     return []
 
 
@@ -290,7 +314,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--fail-on-missing-baseline", action="store_true")
     parser.add_argument("--fail-on-growth", action="store_true")
     parser.add_argument("--org", type=int, default=ZX_ORG)
+    parser.add_argument("--min-sp-gap", type=int, default=MIN_SP_GAP)
     args = parser.parse_args(argv)
+    if args.min_sp_gap <= 0:
+        parser.error("--min-sp-gap must be positive")
 
     report = make_report(args)
     if args.output:
@@ -300,7 +327,7 @@ def main(argv: list[str]) -> int:
         print(f"[OK] size baseline written: {args.write_baseline}")
 
     print_summary(report)
-    hard_limit_errors = check_hard_limits(report)
+    hard_limit_errors = check_hard_limits(report, args.min_sp_gap)
     if hard_limit_errors:
         for error in hard_limit_errors:
             print(f"[ERR] {error}", file=sys.stderr)

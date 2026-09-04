@@ -1,5 +1,5 @@
 {
-  "pipeline": 2,
+  "pipeline": 3,
   "sets": [
     "california",
     "mpchess",
@@ -12,6 +12,7 @@
     "brown",
     "wood"
   ],
+  "sources_sha256": "fc06f3142e55ce1cf36883564d2c9330b2a1c40a175b09ca992474d3e09ae37e",
   "pieces_per_set": 12,
   "bytes_per_pattern": 256,
   "piece_draw_size": 14,
@@ -24,5 +25,6 @@
   "total_bytes": 12800,
   "transparent_index": 227,
   "palette_entries": 160,
+  "marker_hint_key": "hint-dark-1",
   "browser": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
 }

@@ -3,10 +3,18 @@ import re
 import sys
 from pathlib import Path
 
+if __package__:
+    from .asm_data import label_block as block_from_label
+    from .asm_data import parse_defb_with_offsets as parse_defb
+else:
+    from asm_data import label_block as block_from_label
+    from asm_data import parse_defb_with_offsets as parse_defb
+
 EXPECTED_UI_BYTES = 812
 BANNER_INFO_SLOT = 34
 VERSION_SLOT = 16
 NEXT_BANNER_INFO = "ONLINE CHESS FOR SPECTRUM NEXT"
+SPECTRANEXT_BANNER_INFO = "ONLINE CHESS FOR SPECTRANEXT"
 # Next board sprite themes: black&white, blue3, green, brown, wood.
 # ULA attrs only tint the board frame; squares are covered by sprites.
 NEXT_BOARD_MARK_INKS = [2, 2, 1, 0, 0]
@@ -14,20 +22,12 @@ NEXT_BOARD_LIGHT_ATTRS = [0x78, 0x6F, 0x66, 0x77, 0x37]
 NEXT_BOARD_DARK_ATTRS = [0x07, 0x4D, 0x20, 0x56, 0x52]
 RUNTIME_PIECE_BYTES = 384
 EXPECTED_PIECE_BYTES = RUNTIME_PIECE_BYTES * 3
-ABOUT_BOARD_WIDTH = 18
-ABOUT_PIXEL_BYTES = ABOUT_BOARD_WIDTH * 144
-EXPECTED_ABOUT_BOARD_BYTES = ABOUT_PIXEL_BYTES + (ABOUT_BOARD_WIDTH * 18)
-# Raw rectangles containing every non-frame pixel: logo, then four text lines.
-# The overlay clears the board and generates the frame/attributes itself.
-ABOUT_RECTS = (
-    (2, 24, 14, 35),
-    (2, 90, 14, 4),
-    (2, 98, 14, 4),
-    (2, 106, 14, 4),
-    (3, 114, 12, 4),
-)
-ABOUT_ATTR_INNER = bytes((7, 0, 7, 7, 7, 7, 7, 7, 0, 0, 0, 7, 7, 6, 6, 0, 0, 7))
-EXPECTED_ABOUT_PAYLOAD_BYTES = sum(w * h for _x, _y, w, h in ABOUT_RECTS)
+ABOUT_BOARD_WIDTH = 32
+ABOUT_PIXEL_ROWS = 144
+ABOUT_ATTR_ROWS = 18
+ABOUT_PIXEL_BYTES = ABOUT_BOARD_WIDTH * ABOUT_PIXEL_ROWS
+EXPECTED_ABOUT_BOARD_BYTES = ABOUT_PIXEL_BYTES + (ABOUT_BOARD_WIDTH * ABOUT_ATTR_ROWS)
+EXPECTED_ABOUT_PAYLOAD_BYTES = EXPECTED_ABOUT_BOARD_BYTES
 ABOUT_PAYLOAD_OFFSET = EXPECTED_UI_BYTES + RUNTIME_PIECE_BYTES
 ZX_EXTRA_PIECE_OFFSET = ABOUT_PAYLOAD_OFFSET + EXPECTED_ABOUT_PAYLOAD_BYTES
 NEXT_EXTRA_PIECE_OFFSET = ABOUT_PAYLOAD_OFFSET
@@ -73,29 +73,6 @@ EXPECTED_UI_OFFSETS = {
 }
 
 
-def parse_defb(text):
-    data = bytearray()
-    offsets = {}
-    for raw in text.splitlines():
-        line = raw.split(";", 1)[0].strip()
-        label = re.match(r"^([A-Za-z_][A-Za-z0-9_]*):$", line)
-        if label:
-            offsets[label.group(1)] = len(data)
-            continue
-        if not line.upper().startswith("DEFB"):
-            continue
-        body = line[4:].strip()
-        for token in body.split(","):
-            token = token.strip()
-            if not token:
-                continue
-            if token.startswith('"') and token.endswith('"'):
-                data.extend(token[1:-1].encode("ascii"))
-            else:
-                data.append(int(token, 0) & 0xFF)
-    return bytes(data), offsets
-
-
 def parse_screen_asset_equ(text):
     offsets = {}
     for raw in text.splitlines():
@@ -128,36 +105,7 @@ def build_about_payload(raw):
         raise ValueError(
             f"About asset has {len(raw)} bytes, expected {EXPECTED_ABOUT_BOARD_BYTES}"
         )
-
-    pixels = raw[:ABOUT_PIXEL_BYTES]
-    rebuilt = bytearray(ABOUT_PIXEL_BYTES)
-    payload = bytearray()
-    for left, top, width, height in ABOUT_RECTS:
-        for row in range(top, top + height):
-            start = row * ABOUT_BOARD_WIDTH + left
-            chunk = pixels[start : start + width]
-            payload.extend(chunk)
-            rebuilt[start : start + width] = chunk
-
-    frame = bytes((1,)) + (b"\xff" * 16) + bytes((0x80,))
-    rebuilt[7 * ABOUT_BOARD_WIDTH : 8 * ABOUT_BOARD_WIDTH] = frame
-    rebuilt[136 * ABOUT_BOARD_WIDTH : 137 * ABOUT_BOARD_WIDTH] = frame
-    for row in range(8, 136):
-        rebuilt[row * ABOUT_BOARD_WIDTH] = 1
-        rebuilt[(row + 1) * ABOUT_BOARD_WIDTH - 1] = 0x80
-    if bytes(rebuilt) != pixels:
-        raise ValueError("About pixels exist outside the structural rectangles/frame")
-
-    attrs = bytearray()
-    for inner in ABOUT_ATTR_INNER:
-        attrs.extend((7,))
-        attrs.extend(bytes((inner,)) * 16)
-        attrs.extend((7,))
-    if bytes(attrs) != raw[ABOUT_PIXEL_BYTES:]:
-        raise ValueError("About attributes no longer match the structural renderer")
-    if len(payload) != EXPECTED_ABOUT_PAYLOAD_BYTES:
-        raise AssertionError("bad structural About payload size")
-    return bytes(payload)
+    return raw
 
 
 def validate_offsets(label, got, expected):
@@ -166,19 +114,6 @@ def validate_offsets(label, got, expected):
             raise SystemExit(
                 f"{label}: {name} offset got {got.get(name)}, expected {offset}"
             )
-
-
-def block_from_label(text, label, end_label=None):
-    start = re.search(rf"(?m)^{re.escape(label)}:\s*$", text)
-    if not start:
-        raise SystemExit(f"label not found: {label}")
-    body = text[start.end() :]
-    if end_label is not None:
-        end = re.search(rf"(?m)^{re.escape(end_label)}:\s*$", body)
-        if not end:
-            raise SystemExit(f"end label not found: {end_label}")
-        body = body[: end.start()]
-    return body
 
 
 def patch_slot(ui, offset, slot, text, label):
@@ -191,6 +126,7 @@ def patch_slot(ui, offset, slot, text, label):
 def main(argv):
     version = None
     is_next = False
+    is_spectranext = False
     args = [argv[0]]
     it = iter(argv[1:])
     for arg in it:
@@ -200,6 +136,8 @@ def main(argv):
                 raise SystemExit("--version requires a value")
         elif arg == "--next":
             is_next = True
+        elif arg == "--spectranext":
+            is_spectranext = True
         else:
             args.append(arg)
     argv = args
@@ -207,8 +145,10 @@ def main(argv):
         raise SystemExit(
             "usage: gen_assets.py <ui_assets.asm> <pieces.asm> "
             "<screen.asm> <overlay_loader.asm> <about_board.bin> <out.dat> "
-            "--version <version> [--next]"
+            "--version <version> [--next|--spectranext]"
         )
+    if is_next and is_spectranext:
+        raise SystemExit("--next and --spectranext are mutually exclusive")
     if re.fullmatch(
         r"[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:-dev(?:[0-9]{3}|ESP))?", version
     ) is None:
@@ -239,14 +179,15 @@ def main(argv):
     screen_offsets = parse_screen_asset_equ(screen_path.read_text(encoding="ascii"))
     validate_offsets(str(screen_path), screen_offsets, EXPECTED_UI_OFFSETS)
 
-    if is_next:
+    if is_next or is_spectranext:
         patch_slot(
             ui,
             EXPECTED_UI_OFFSETS["banner_info_top_msg"],
             BANNER_INFO_SLOT,
-            NEXT_BANNER_INFO,
+            NEXT_BANNER_INFO if is_next else SPECTRANEXT_BANNER_INFO,
             "banner_info_top_msg",
         )
+    if is_next:
         for name, values in (
             ("board_theme_mark_inks", NEXT_BOARD_MARK_INKS),
             ("board_theme_light_attrs", NEXT_BOARD_LIGHT_ATTRS),

@@ -16,6 +16,7 @@
 #define SPECTRUM_OVL_CTX_GUI_MOVE_PLY_HI 1u
 #define SPECTRUM_OVL_CTX_GUI_MOVE_TEXT_LO 2u
 #define SPECTRUM_OVL_CTX_GUI_MOVE_TEXT_HI 3u
+/* ADD_MOVE packs render in bit 0; bit 7 requests a row reservation. */
 #define SPECTRUM_OVL_CTX_GUI_RENDER 4u
 
 #define SPECTRUM_OVL_CTX_GUI_CHAT_WHO 0u
@@ -70,6 +71,9 @@
 #define SPECTRUM_OVL_FILEUI_ACT_FAIL 0xffu
 #define SPECTRUM_OVL_CTX_PREFLIGHT_OK 0u
 #define SPECTRUM_OVL_CTX_PREFLIGHT_RETRY 1u
+/* Warm return to Setup: do the ESP work without repainting the cold-boot
+   panel, and skip the steps a reconnect does not need. */
+#define SPECTRUM_OVL_CTX_PREFLIGHT_QUIET 2u
 #define SPECTRUM_OVL_PREFLIGHT_RETRY_DEFAULT 0u
 #define SPECTRUM_OVL_PREFLIGHT_RETRY_AGAIN 1u
 
@@ -94,11 +98,15 @@
 #define SPECTRUM_OVL_SETUP_ACTION_BOARD 1u
 #define SPECTRUM_OVL_SETUP_ACTION_SET 2u
 #define SPECTRUM_OVL_SETUP_ACTION_START 3u
+#define SPECTRUM_OVL_SETUP_ACTION_SAVE 4u
 
 #define SPECTRUM_OVL_SETUP_NOTICE_NONE 0u
 #define SPECTRUM_OVL_SETUP_NOTICE_SELECT 1u
 #define SPECTRUM_OVL_SETUP_NOTICE_PENDING 2u
 #define SPECTRUM_OVL_SETUP_NOTICE_BAD_IP 3u
+#define SPECTRUM_OVL_SETUP_NOTICE_BAD_ROOM 4u
+#define SPECTRUM_OVL_SETUP_NOTICE_BAD_PORT 5u
+#define SPECTRUM_OVL_SETUP_NOTICE_BAD_TIMEZONE 6u
 
 /* Resident code writes this buffer, overlay entries mutate it, then resident
    code reads it again. Keep it volatile so C never caches values across the

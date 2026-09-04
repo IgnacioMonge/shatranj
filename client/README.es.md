@@ -2,7 +2,7 @@
 
 [English](README.md) · [Documentación del proyecto](../docs/README.es.md)
 
-Cliente de escritorio Qt para Shatranj 1.1. Windows, macOS y Linux utilizan la
+Cliente de escritorio Qt para Shatranj 1.2. Windows, macOS y Linux utilizan la
 misma implementación y admiten ambos transportes:
 
 - **Direct TCP**: el anfitrión escucha a un invitado; el invitado conecta con
@@ -30,26 +30,32 @@ el uso y la compilación del adaptador Qt; no duplica esa gramática normativa.
    /load [name] cargar una posición y solicitar restore al rival
    ```
 
-   Restore es un intercambio explícito iniciado por el anfitrión; el estado
-   retenido de MQTT no sustituye al protocolo de restore. Qt pregunta la pieza
-   de promoción; los clientes Spectrum promocionan actualmente a dama.
+   Cualquiera de los dos peers enlazados puede iniciar el intercambio explícito
+   de restore; el rival debe aceptarlo antes de enviar o aplicar el snapshot, y
+   el color del anfitrión guardado debe coincidir con los asientos actuales. El
+   estado retenido de MQTT no sustituye al protocolo de restore. Qt pregunta la
+   pieza de promoción; los clientes Spectrum promocionan actualmente a dama.
 
 El cliente recuerda los ajustes de conexión y direcciones Direct recientes,
-muestra relojes de turno/partida/movimiento y ofrece un registro RX/TX. Para
-probarlo contra un anfitrión Spectrum, consulta
+muestra relojes de turno/partida/movimiento y ofrece un registro RX/TX. Cuando
+el rival Direct o MQTT está listo, el contexto inferior termina en
+`VS ZX|NXT|MAC|LNX|PC|SPCX`; un cliente antiguo aparece como `VS ?`. Para probarlo
+contra un anfitrión Spectrum, consulta
 [Prueba Direct TCP con hardware](#probar-direct-tcp-con-hardware).
 
 ## Arquitectura
 
 ```text
-common C portable -> core de escritorio -> aplicación Qt Widgets
+common C portable -> core de escritorio -> UI Widgets común -> aplicación/paquete
 ```
 
 La capa común posee las reglas de ajedrez, parseo y construcción de protocolo,
 gramática MQTT, reducers de sesión y formato wire de las partidas guardadas.
 El core de escritorio adapta esos contratos a TCP/MQTT, temporización,
-persistencia y helpers Qt. La aplicación Qt posee la presentación y el
-empaquetado. Los límites de CMake evitan forks por plataforma.
+persistencia y helpers Qt. El target Widgets común posee la presentación y se
+compila una sola vez para la aplicación y su test de integración; el ejecutable
+final contiene el punto de entrada y el empaquetado del sistema. Los límites de
+CMake evitan forks por plataforma.
 
 ## Compilar y probar
 
@@ -65,9 +71,22 @@ make full-check    # guards de host, Spectrum, ABI y tamaño
 
 `make client-test` es el flujo soportado en Windows, macOS y Linux. En Windows,
 `client\build-pc.cmd` es un wrapper equivalente para shells interactivos; los
-presets CMake de MSVC mantienen el árbol de build fuera del repositorio y
-proporcionan las DLL de Qt a CTest. No uses un fallback qmake ni builds CMake
-raw/ad-hoc dentro del árbol.
+presets CMake de MSVC mantienen el árbol bajo el directorio `build` de la raíz
+y proporcionan las DLL de Qt a CTest. No uses un fallback qmake ni builds
+CMake raw/ad-hoc.
+
+En Windows, `make client` mantiene su árbol MSVC incremental en
+`build\pc-dist`, separado del árbol `build\pc-build` que usa
+`make client-test`. Usa `client\build-msvc.ps1 -CleanBuild` solo cuando sea
+realmente necesaria una configuración CMake limpia.
+
+Ambos puntos de entrada de Windows lanzan CMake, MSBuild, el compilador y CTest
+con sus manejadores estándar heredados normales. No pongas estas herramientas
+detrás de pipes de salida gestionados, bucles de heartbeat ni timeouts de un
+wrapper: su progreso nativo debe llegar directamente al terminal o agente que
+las invoca. El launcher compartido también desactiva el seguimiento de accesos
+de MSBuild porque su tracker inyectado puede dejar suspendidos los procesos del
+compilador y linker bajo hosts de agentes que gestionan procesos.
 
 `make client` produce el ejecutable Windows, despliega un bundle macOS o
 compila el ejecutable Linux soportado y probado contra el Qt del sistema. El

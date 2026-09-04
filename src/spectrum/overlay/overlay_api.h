@@ -19,7 +19,11 @@
 #endif
 #endif
 
+#ifdef NETCHESSZX_NEXT_BANKING
+#define SPECTRUM_OVL_BLOCK_SIZE 8192u
+#else
 #define SPECTRUM_OVL_BLOCK_SIZE 2048u
+#endif
 
 extern uint8_t overlay_code_slot[];
 extern uint8_t spectrum_overlay_loaded_id;
