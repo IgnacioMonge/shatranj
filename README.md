@@ -96,7 +96,7 @@ clients connect to the same broker and room instead.
 ### Spectrum hardware
 
 Network play on Classic and Next uses a supported UART-to-ESP link with ESP-AT
-firmware 1.7.6. The Classic build also needs divMMC/esxDOS to load its OVL and
+firmware. The Classic build also needs divMMC/esxDOS to load its OVL and
 DAT companions. A ZX-Uno-compatible UART requires ESP transmit flow control
 via CTS; [NetManZX](https://github.com/IgnacioMonge/NetManZX) configures the
 required setting. The Next release is self-contained, so only its NEX file
