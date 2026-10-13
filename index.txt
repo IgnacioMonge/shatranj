@@ -1,5 +1,5 @@
-type=file name=boot.zx size=230
-type=file name=SHATRANJ.INS size=3306
-type=file name=SHATRANJ.PKG size=43764
-type=file name=SHATRANJ.SCR size=6912
-type=file name=package.json size=683
+type=file name=boot.zx size=55
+type=file name=SHATRANJ.tap size=42123
+type=file name=SHATRANJ.OVL size=41967
+type=file name=SHATRANJ.DAT size=7513
+type=file name=package.json size=687

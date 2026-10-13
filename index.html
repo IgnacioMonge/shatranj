@@ -1,4 +1,363 @@
 <!DOCTYPE html>
+<html lang="en" data-lang="en">
+<head>
 <meta charset="utf-8">
-<title>Shatranj</title>
-<p>Shatranj Spectranext resource. Mount this HTTPS directory and load boot.zx.</p>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shatranj for Spectranext</title>
+<meta name="description" content="Shatranj 1.3 Sealed Move: online chess for the ZX Spectrum family. Play on Spectranext straight from the web or install it on the cartridge.">
+<meta name="theme-color" content="#07090d">
+<meta property="og:title" content="Shatranj 1.3 · Sealed Move">
+<meta property="og:description" content="Online chess across ZX Spectrum Classic, Next, Spectranext, Windows, macOS, and Linux.">
+<meta property="og:image" content="img/hero.jpg">
+<link rel="icon" type="image/png" href="img/icon.png">
+<style>
+  :root {
+    --bg: #07090d;
+    --bg-2: #0d1118;
+    --panel: rgba(18, 23, 33, 0.78);
+    --line: rgba(255, 255, 255, 0.09);
+    --text: #e8ecf2;
+    --muted: #97a1b2;
+    --cyan: #00d7d7;
+    --yellow: #f2d600;
+    --red: #e0322e;
+    --green: #2fcb54;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --radius: 18px;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; color: var(--text); font: 16px/1.6 var(--sans);
+    background:
+      radial-gradient(1100px 520px at 85% -10%, rgba(0, 215, 215, 0.10), transparent 60%),
+      radial-gradient(900px 600px at -10% 30%, rgba(242, 214, 0, 0.06), transparent 60%),
+      var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+  [data-lang="en"] [lang="es"], [data-lang="es"] [lang="en"] { display: none !important; }
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { width: min(1080px, 100% - 32px); margin: 0 auto; }
+
+  /* Hero */
+  .hero { position: relative; overflow: hidden; border-bottom: 1px solid var(--line); }
+  .hero::before {
+    content: ""; position: absolute; inset: 0;
+    background: url("img/hero.jpg") right center / cover no-repeat;
+    opacity: 0.55;
+  }
+  .hero::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(90deg, var(--bg) 18%, rgba(7, 9, 13, 0.55) 60%, rgba(7, 9, 13, 0.2)),
+                linear-gradient(0deg, var(--bg), transparent 45%);
+  }
+  .hero .wrap { position: relative; z-index: 1; padding: 28px 0 64px; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+    font: 600 13px/1 var(--mono); letter-spacing: 0.04em; color: var(--text);
+    background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); backdrop-filter: blur(6px);
+  }
+  .badge i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 12px var(--green); }
+  .lang { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .lang button {
+    font: 600 12px/1 var(--mono); color: var(--muted); background: transparent; border: 0;
+    padding: 8px 12px; cursor: pointer;
+  }
+  .lang button[aria-pressed="true"] { color: var(--bg); background: var(--text); }
+  .logo { display: block; width: min(520px, 88%); height: auto; margin: 56px 0 18px; filter: drop-shadow(0 6px 30px rgba(0, 0, 0, 0.6)); }
+  .stripes { display: flex; width: 168px; height: 8px; transform: skewX(-35deg); margin: 0 0 22px 6px; }
+  .stripes span { flex: 1; }
+  .stripes span:nth-child(1) { background: var(--red); }
+  .stripes span:nth-child(2) { background: var(--yellow); }
+  .stripes span:nth-child(3) { background: var(--green); }
+  .stripes span:nth-child(4) { background: var(--cyan); }
+  .tagline { font-size: clamp(20px, 3.2vw, 28px); line-height: 1.3; font-weight: 650; max-width: 640px; margin: 0 0 10px; }
+  .sub { color: var(--muted); max-width: 620px; margin: 0; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 10px; padding: 12px 18px; border-radius: 12px;
+    font-weight: 650; border: 1px solid var(--line); color: var(--text); background: rgba(255, 255, 255, 0.06);
+  }
+  .btn:hover { text-decoration: none; border-color: rgba(255, 255, 255, 0.25); }
+  .btn.primary { color: #041014; background: linear-gradient(135deg, var(--cyan), #6af0d8); border: 0; }
+
+  /* Sections */
+  section { padding: 56px 0 8px; }
+  .eyebrow { font: 700 12px/1 var(--mono); letter-spacing: 0.18em; text-transform: uppercase; color: var(--yellow); margin: 0 0 10px; }
+  h2 { font-size: clamp(24px, 3.4vw, 34px); line-height: 1.2; margin: 0 0 12px; }
+  .lead { color: var(--muted); max-width: 720px; margin: 0 0 28px; }
+
+  .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+  .card {
+    position: relative; padding: 26px; border-radius: var(--radius); background: var(--panel);
+    border: 1px solid var(--line); overflow: hidden;
+  }
+  .card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; }
+  .card.web::before { background: linear-gradient(90deg, var(--cyan), var(--green)); }
+  .card.install::before { background: linear-gradient(90deg, var(--yellow), var(--red)); }
+  .card h3 { margin: 0 0 6px; font-size: 21px; }
+  .card .kicker { font: 700 12px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  .url {
+    display: block; margin: 18px 0 16px; padding: 14px 16px; border-radius: 12px;
+    font: 600 15px/1.4 var(--mono); color: var(--cyan); overflow-wrap: anywhere;
+    background: #04070a; border: 1px solid rgba(0, 215, 215, 0.25);
+  }
+  .install .url { color: var(--yellow); border-color: rgba(242, 214, 0, 0.25); }
+  .card ol { margin: 0; padding-left: 20px; color: var(--muted); }
+  .card li { margin: 4px 0; }
+  .card li strong, .card li code { color: var(--text); }
+  code { font-family: var(--mono); font-size: 0.92em; }
+  .note {
+    display: flex; gap: 12px; align-items: flex-start; margin-top: 18px; padding: 14px 16px; border-radius: 12px;
+    background: rgba(224, 50, 46, 0.08); border: 1px solid rgba(224, 50, 46, 0.3); color: #f3c7c5; font-size: 15px;
+  }
+  .note b { color: #fff; }
+
+  .shots { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+  figure { margin: 0; }
+  .shot {
+    display: block; width: 100%; height: auto; border-radius: 12px;
+    border: 1px solid var(--line); background: #000; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+  }
+  figcaption { color: var(--muted); font-size: 13.5px; margin-top: 8px; }
+
+  .features { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .feature { padding: 20px; border-radius: 14px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--line); }
+  .feature .ico { font-size: 22px; line-height: 1; }
+  .feature h4 { margin: 10px 0 4px; font-size: 16.5px; }
+  .feature p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+  .platforms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .platform { padding: 20px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); }
+  .platform h4 { margin: 0 0 4px; font-size: 16.5px; }
+  .platform p { margin: 0 0 12px; color: var(--muted); font-size: 14.5px; }
+  .platform .files { font: 600 13px/1.5 var(--mono); color: var(--text); }
+
+  footer { margin-top: 64px; padding: 28px 0 40px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 24px; }
+  footer nav { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+
+  @media (max-width: 860px) {
+    .cards, .features, .platforms { grid-template-columns: 1fr; }
+    .shots { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .logo { margin-top: 40px; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .card, .feature, .platform, .shot { transition: transform 0.2s ease, border-color 0.2s ease; }
+    .card:hover, .feature:hover, .platform:hover { transform: translateY(-2px); border-color: rgba(255, 255, 255, 0.18); }
+  }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div class="topbar">
+      <span class="badge"><i></i>v1.3 · Sealed Move</span>
+      <div class="lang" role="group" aria-label="Language">
+        <button type="button" data-set-lang="en" aria-pressed="true">EN</button>
+        <button type="button" data-set-lang="es" aria-pressed="false">ES</button>
+      </div>
+    </div>
+    <img class="logo" src="img/logo.png" width="1342" height="497" alt="Shatranj">
+    <div class="stripes" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+    <p class="tagline" lang="en">Online chess for the ZX Spectrum family and modern desktops.</p>
+    <p class="tagline" lang="es">Ajedrez en línea para la familia ZX Spectrum y los escritorios actuales.</p>
+    <p class="sub" lang="en">Play on Spectranext straight from this page's address, or install it on the
+      cartridge. Every Shatranj client plays every other one: Classic, Next, Spectranext, Windows, macOS,
+      and Linux, over Direct TCP or MQTT.</p>
+    <p class="sub" lang="es">Juega en Spectranext directamente desde la dirección de esta página o instálalo en
+      el cartucho. Todos los clientes de Shatranj juegan entre sí: Classic, Next, Spectranext, Windows, macOS
+      y Linux, por Direct TCP o MQTT.</p>
+    <div class="cta">
+      <a class="btn primary" href="#spectranext"><span lang="en">Play on Spectranext</span><span lang="es">Jugar en Spectranext</span> →</a>
+      <a class="btn" href="https://github.com/IgnacioMonge/shatranj/releases/latest"><span lang="en">Downloads for other platforms</span><span lang="es">Descargas para otras plataformas</span></a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section id="spectranext">
+    <p class="eyebrow">Spectranext</p>
+    <h2 lang="en">Two ways to start</h2>
+    <h2 lang="es">Dos formas de empezar</h2>
+    <p class="lead" lang="en">Connect the cartridge to Wi-Fi, open its menu and choose <strong>Load Resource URL</strong>.
+      Your settings and saved games live in the cartridge's local storage either way, and both options share them.</p>
+    <p class="lead" lang="es">Conecta el cartucho a la Wi-Fi, abre su menú y elige <strong>Load Resource URL</strong>.
+      La configuración y las partidas guardadas viven en el almacenamiento local del cartucho en ambos casos,
+      y las dos opciones las comparten.</p>
+    <div class="cards">
+      <article class="card web">
+        <span class="kicker" lang="en">Nothing to install</span>
+        <span class="kicker" lang="es">Sin instalar nada</span>
+        <h3 lang="en">Play from the web</h3>
+        <h3 lang="es">Juega desde la web</h3>
+        <code class="url" data-site-url="">https://<wbr>ignaciomonge.github.io/<wbr>shatranj/</code>
+        <ol lang="en">
+          <li>Enter this address in <strong>Load Resource URL</strong>.</li>
+          <li>Shatranj downloads and starts at once; nothing is copied to the cartridge.</li>
+          <li>Each start fetches the published version, so you always play the latest release.</li>
+        </ol>
+        <ol lang="es">
+          <li>Introduce esta dirección en <strong>Load Resource URL</strong>.</li>
+          <li>Shatranj se descarga y arranca al momento; no se copia nada al cartucho.</li>
+          <li>Cada arranque descarga la versión publicada, así que siempre juegas la última.</li>
+        </ol>
+      </article>
+      <article class="card install">
+        <span class="kicker" lang="en">Works without the web</span>
+        <span class="kicker" lang="es">Funciona sin la web</span>
+        <h3 lang="en">Install on the cartridge</h3>
+        <h3 lang="es">Instálalo en el cartucho</h3>
+        <code class="url" data-site-url="install/">https://<wbr>ignaciomonge.github.io/<wbr>shatranj/<wbr>install/</code>
+        <ol lang="en">
+          <li>Enter this address in <strong>Load Resource URL</strong>.</li>
+          <li>The guided installer copies Shatranj to local storage and launches it.</li>
+          <li>From then on start <code>SHATRANJ.ZX</code> from local XFS. Load the address again to update.</li>
+        </ol>
+        <ol lang="es">
+          <li>Introduce esta dirección en <strong>Load Resource URL</strong>.</li>
+          <li>El instalador guiado copia Shatranj al almacenamiento local y lo inicia.</li>
+          <li>En adelante, inicia <code>SHATRANJ.ZX</code> desde el XFS local. Vuelve a cargar la dirección para actualizar.</li>
+        </ol>
+      </article>
+    </div>
+    <div class="note">
+      <span aria-hidden="true">⚠</span>
+      <span lang="en">Both options need <b>Spectranext firmware 1.0 or later</b>. Older firmware shows
+        <code>FIRMWARE OUTDATED: SEE README</code>; update the cartridge first.</span>
+      <span lang="es">Las dos opciones necesitan <b>firmware de Spectranext 1.0 o posterior</b>. Con un firmware
+        anterior aparece <code>FIRMWARE OUTDATED: SEE README</code>; actualiza antes el cartucho.</span>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow" lang="en">On screen</p>
+    <p class="eyebrow" lang="es">En pantalla</p>
+    <h2 lang="en">The same game on every machine</h2>
+    <h2 lang="es">El mismo juego en cada máquina</h2>
+    <div class="shots">
+      <figure><img class="shot" src="img/shatranj-1.3-classic-stats.png" width="640" height="480" loading="lazy" alt="End-of-game statistics"><figcaption><span lang="en">End-of-game statistics</span><span lang="es">Estadísticas de fin de partida</span></figcaption></figure>
+      <figure><img class="shot" src="img/shatranj-1.3-classic-stockfish.png" width="640" height="480" loading="lazy" alt="Playing Stockfish from a Spectrum"><figcaption><span lang="en">Playing Stockfish from a Spectrum</span><span lang="es">Jugando contra Stockfish desde un Spectrum</span></figcaption></figure>
+      <figure><img class="shot" src="img/shatranj-1.3-next-names-menu.png" width="640" height="480" loading="lazy" alt="Spectrum Next: names and rolling menu"><figcaption><span lang="en">Spectrum Next: names and rolling menu</span><span lang="es">Spectrum Next: nombres y menú rotatorio</span></figcaption></figure>
+      <figure><img class="shot" src="img/shatranj-1.3-next-resume.png" width="640" height="480" loading="lazy" alt="Resuming after a power cut"><figcaption><span lang="en">Resuming after a power cut</span><span lang="es">Reanudar tras un corte de corriente</span></figcaption></figure>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow" lang="en">New in 1.3</p>
+    <p class="eyebrow" lang="es">Novedades de la 1.3</p>
+    <h2>Sealed Move</h2>
+    <div class="features">
+      <div class="feature"><div class="ico">♞</div>
+        <h4 lang="en">Stockfish joins the game</h4><h4 lang="es">Stockfish entra en juego</h4>
+        <p lang="en">The desktop client can let Stockfish play your side, from level 0 to 20, against any opponent.</p>
+        <p lang="es">El cliente de escritorio puede dejar que Stockfish juegue por ti, del nivel 0 al 20, contra cualquier rival.</p></div>
+      <div class="feature"><div class="ico">⏻</div>
+        <h4 lang="en">Interrupted games come back</h4><h4 lang="es">Las partidas interrumpidas vuelven</h4>
+        <p lang="en">Classic, Next, and Spectranext resume a game after a crash, reset, or power cut.</p>
+        <p lang="es">Classic, Next y Spectranext reanudan una partida tras un cuelgue, un reset o un corte de corriente.</p></div>
+      <div class="feature"><div class="ico">☰</div>
+        <h4 lang="en">End-of-game statistics</h4><h4 lang="es">Estadísticas de fin de partida</h4>
+        <p lang="en">Time per move, longest and fastest moves, and every captured piece.</p>
+        <p lang="es">Tiempo por jugada, jugadas más largas y más rápidas, y todas las piezas capturadas.</p></div>
+      <div class="feature"><div class="ico">✎</div>
+        <h4 lang="en">Player names</h4><h4 lang="es">Nombres de jugador</h4>
+        <p lang="en">Up to ten characters, shown in both players' move lists.</p>
+        <p lang="es">Hasta diez caracteres, en la lista de jugadas de ambos jugadores.</p></div>
+      <div class="feature"><div class="ico">⇣</div>
+        <h4 lang="en">Spectranext from the web</h4><h4 lang="es">Spectranext desde la web</h4>
+        <p lang="en">Start straight from this address, or install it for offline use.</p>
+        <p lang="es">Arranca directamente desde esta dirección, o instálalo para usarlo sin conexión.</p></div>
+      <div class="feature"><div class="ico">⚡</div>
+        <h4 lang="en">Faster, steadier play</h4><h4 lang="es">Juego más rápido y estable</h4>
+        <p lang="en">Quicker move replies, fewer disk loads on Classic, and requests that expire cleanly.</p>
+        <p lang="es">Respuestas más rápidas, menos lecturas de disco en Classic y peticiones que caducan limpiamente.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow" lang="en">Other platforms</p>
+    <p class="eyebrow" lang="es">Otras plataformas</p>
+    <h2 lang="en">Download the release</h2>
+    <h2 lang="es">Descarga la versión</h2>
+    <div class="platforms">
+      <div class="platform">
+        <h4>ZX Spectrum Classic</h4>
+        <p lang="en">48K Spectrum with divMMC/esxDOS and a UART-to-ESP link running ESP-AT firmware.</p>
+        <p lang="es">Spectrum de 48K con divMMC/esxDOS y un enlace UART-ESP con firmware ESP-AT.</p>
+        <div class="files">SHATRANJ.tap · .OVL · .DAT</div>
+      </div>
+      <div class="platform">
+        <h4>Spectrum Next</h4>
+        <p lang="en">One self-contained file, launched from the NextZXOS browser.</p>
+        <p lang="es">Un único fichero autocontenido, que se inicia desde el navegador de NextZXOS.</p>
+        <div class="files">SHATRANJ.nex</div>
+      </div>
+      <div class="platform">
+        <h4 lang="en">Desktop</h4><h4 lang="es">Escritorio</h4>
+        <p lang="en">Qt client for Windows, macOS (Apple silicon and Intel), and Linux.</p>
+        <p lang="es">Cliente Qt para Windows, macOS (Apple silicon e Intel) y Linux.</p>
+        <div class="files">ZIP · AppImage</div>
+      </div>
+    </div>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/IgnacioMonge/shatranj/releases/latest"><span lang="en">Latest release</span><span lang="es">Última versión</span> →</a>
+      <a class="btn" href="https://github.com/IgnacioMonge/shatranj/blob/main/CHANGELOG.md"><span lang="en">What changed</span><span lang="es">Qué ha cambiado</span></a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Shatranj 1.3 · GPL-2.0 · M. Ignacio Monge García</span>
+    <nav>
+      <a href="https://github.com/IgnacioMonge/shatranj#readme">README</a>
+      <a href="https://github.com/IgnacioMonge/shatranj/blob/main/README.es.md">Léeme en español</a>
+      <a href="https://github.com/IgnacioMonge/shatranj/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/IgnacioMonge/shatranj">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    function setLang(lang) {
+      root.setAttribute("data-lang", lang);
+      root.setAttribute("lang", lang);
+      var buttons = document.querySelectorAll("[data-set-lang]");
+      for (var i = 0; i < buttons.length; i++) {
+        buttons[i].setAttribute("aria-pressed", String(buttons[i].getAttribute("data-set-lang") === lang));
+      }
+      try { localStorage.setItem("shatranj-lang", lang); } catch (e) {}
+    }
+    var saved = null;
+    try { saved = localStorage.getItem("shatranj-lang"); } catch (e) {}
+    setLang(saved || ((navigator.language || "").toLowerCase().indexOf("es") === 0 ? "es" : "en"));
+    document.addEventListener("click", function (event) {
+      var target = event.target.closest ? event.target.closest("[data-set-lang]") : null;
+      if (target) { setLang(target.getAttribute("data-set-lang")); }
+    });
+    // A mirror of this site (for example a test deployment) shows its own addresses.
+    if (location.protocol === "https:") {
+      var base = location.origin + location.pathname.replace(/[^/]*$/, "");
+      var urls = document.querySelectorAll("[data-site-url]");
+      for (var j = 0; j < urls.length; j++) {
+        // Line breaks only after a slash, never inside a word.
+        var parts = (base + urls[j].getAttribute("data-site-url")).split("/");
+        urls[j].textContent = "";
+        for (var k = 0; k < parts.length; k++) {
+          urls[j].appendChild(document.createTextNode(parts[k] + (k < parts.length - 1 ? "/" : "")));
+          if (k < parts.length - 1 && parts[k + 1] !== "") {
+            urls[j].appendChild(document.createElement("wbr"));
+          }
+        }
+      }
+    }
+  })();
+</script>
+</body>
+</html>

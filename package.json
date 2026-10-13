@@ -2,26 +2,26 @@
   "files": [
     {
       "name": "boot.zx",
-      "sha256": "11cc423cc353d61bb52f0a1fd33f5b12ff235b44da03a9fcb5996ffbd414783d",
-      "size": 230
+      "sha256": "cd2813d204a409a4e9dc83cb4ba6b23309672600006453758b18be14a011c363",
+      "size": 55
     },
     {
-      "name": "SHATRANJ.INS",
-      "sha256": "c5db03cadf0ad507427e02336f591e173a395f9b72d0933b2b421af012b19cfa",
-      "size": 3306
+      "name": "SHATRANJ.tap",
+      "sha256": "4a90b2c319ef15fa5558103037d8cfade03dd79daa185b20f909be0ae74ab198",
+      "size": 42123
     },
     {
-      "name": "SHATRANJ.PKG",
-      "sha256": "960a4179c0dba7e072752141e96a5dc51579bfaafda54f6c8f2a095c49a94851",
-      "size": 43764
+      "name": "SHATRANJ.OVL",
+      "sha256": "a671571890511e1ba281043ce66faebb1f9d223079a0cadb2c0e4372195d3ea7",
+      "size": 41967
     },
     {
-      "name": "SHATRANJ.SCR",
-      "sha256": "7edaccd06aede50a4f9df124efa66f658861ed2d1f371650542d7fabee2f09c3",
-      "size": 6912
+      "name": "SHATRANJ.DAT",
+      "sha256": "43b481bd3f21e197652138ea6660d78d96b38c862d66d8556feef9ab550e303c",
+      "size": 7513
     }
   ],
-  "minimum_firmware": "0.9-6fc153a3",
-  "resource": "Shatranj",
-  "version": "1.2"
+  "minimum_firmware": "1.0",
+  "resource": "Shatranj direct HTTPS",
+  "version": "1.3"
 }
