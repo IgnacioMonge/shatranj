@@ -7,7 +7,8 @@ permissions:
   contents: read
 
 env:
-  QT_VERSION: 6.10.3
+  # The tested macOS app uses Qt 6.11; 6.10.3 macdeployqt rejects -no-codesign.
+  QT_VERSION: 6.11.1
 
 jobs:
   build:

@@ -4362,6 +4362,9 @@ check_handle:
     inc (hl)
     ret
 
+; Defined here, EXTERN in entry_about.asm: older z80asm needs them PUBLIC.
+PUBLIC ovl_read_chunked, ovl_close_overlay_file
+
 ; IX=destination, BC=bytes from the packed About payload.
 ovl_read_chunked:
     call check_handle
