@@ -39,6 +39,14 @@ Release smoke checklist (all pending until recorded):
   `4a90b2c319ef15fa5558103037d8cfade03dd79daa185b20f909be0ae74ab198`, OVL
   `a671571890511e1ba281043ce66faebb1f9d223079a0cadb2c0e4372195d3ea7`, DAT
   `43b481bd3f21e197652138ea6660d78d96b38c862d66d8556feef9ab550e303c`.
+- On 2026-10-13 a real ZX Spectrum Classic and a Spectrum Next ran the final
+  release builds of `ef1ef0f` (deployed with BridgeZX) in MQTT play. Result:
+  PASS (operator report: "ZX y Next comprobado en partida MQTT"); the chat
+  burst and the power-cut resume were not reported separately. SHA-256:
+  Classic TAP `8395af808d0fd660f0a70f60675378f294bd6ef3a1c8fe0e84a03c9036461c99`,
+  OVL `6a830ada7ba110a1df018b272f6fe20ee510a339e230aece29aaf7ac27d56e06`, DAT
+  `511a06e05ae3fd32b65859b921d71e9b5ac09bc857715fc75fc248539b878f89`; NEX
+  `33c556500e9d10740c9c767eea1c41f82996ec93e063e369c5ee87d1df252449`.
 - On 2026-10-13 the Qt client built from `ef1ef0f` on Linux opened the manual
   (? / F1), and the Engine tab, the pause setting and the violet Stockfish
   button worked. Result: PASS (operator report: "Comprobado y funcionando").

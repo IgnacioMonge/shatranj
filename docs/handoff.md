@@ -9,7 +9,9 @@ plegado en los documentos citados.
 
 ## 1. Estado del repositorio
 
-- Rama `main`, release **1.3 «Sealed Move»** en preparación (2026-10-13).
+- Rama `main`, release **1.3 «Sealed Move»** publicada el 2026-10-13 (tag
+  `v1.3` en `IgnacioMonge/shatranj`; artefactos de `make release-check` de
+  `ef1ef0f`, hashes en `docs/hardware-validation.md`).
   `VERSION` = `1.3`; `CHANGELOG.md` tiene la sección `[1.3]` para el usuario.
   Las notas de desarrollo del snapshot 1.2.1 siguen en el historial
   (`git show e324e4b:CHANGELOG.md`) y la evidencia física está en
@@ -111,10 +113,11 @@ Ignacio.
 ## 5. Pendiente (lista única)
 
 ### 5.1 Validación física (orden sugerido)
-0. Humo de la release 1.3 sobre los artefactos finales: ver
-   `docs/hardware-validation.md` § «1.3 release». Cubre lo que el ledger da
-   por pendiente tras las sesiones de shrink del 2026-10-13 (MQTT connect,
-   scroll del chat, About y estadísticas, Next y SpectraNext).
+0. Humo de la release 1.3 (`docs/hardware-validation.md` § «1.3 release»):
+   PASS en Spectranext por HTTPS (arranque directo e instalador, pantalla de
+   carga), Classic y Next por MQTT y Qt en Linux. Sin informe por separado:
+   ráfaga de chat, corte de corriente con reanudación, Stockfish con pausa
+   contra un Spectrum real.
 1. Recompilar `main` (`make tap`, `make nex`, `make spectranext-port-build
    SPXN_DIR=C:/dev/SpectraNext/driver`) y desplegar (§6.3).
 2. Partida completa Classic↔Next por DIRECT con nombres: OVER por tablas,
@@ -217,8 +220,8 @@ Registrar cada resultado como pass/fail/pending con commit y SHA-256 en
     (`tests/pc/test_engine_flow.cpp`, seis casos) con un motor UCI de pega
     (`tests/pc/fake_uci_engine.cpp`) y un peer DIRECT guionizado; 18/18 en
     `make client-test`. Sin probar con el Stockfish real tras el cambio.
-- Release 1.3: ver §1 y §5.1 punto 0. Tras publicarla, abrir de nuevo
-  `## [Unreleased]` en `CHANGELOG.md` para el siguiente ciclo.
+- Release 1.3 publicada (§1). Abrir de nuevo `## [Unreleased]` en
+  `CHANGELOG.md` con el primer cambio del siguiente ciclo.
 
 ### 5.3 Documentación
 - `docs/zesarux-zxespemu.md` sigue escrito para la ruta macOS; añadir la
