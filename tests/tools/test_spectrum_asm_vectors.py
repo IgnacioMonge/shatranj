@@ -74,6 +74,16 @@ def assemble_vector(
     return binary.with_suffix(".map").read_text(encoding="utf-8")
 
 
+def sdcc_ix_helpers(assembler: str) -> list[Path]:
+    """z88dk's IX frame helpers: the installed sources, else the copies kept in
+    tests/spectrum for installs without libsrc (such as the CI image)."""
+    installed = Path(assembler).resolve().parents[1] / "libsrc/l/sdcc"
+    names = ("___sdcc_enter_ix.asm", "____sdcc_4_push_hlix.asm")
+    if all((installed / name).is_file() for name in names):
+        return [installed / name for name in names]
+    return [ROOT / "tests/spectrum/z88dk_sdcc_ix_helpers.asm"]
+
+
 def execute_vector(
     emulator: str,
     binary: Path,
@@ -2271,16 +2281,12 @@ def run_next_rtc_vector() -> None:
         )
         harness = tmp / "next_rtc_vector.asm"
         harness.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        # Use the installed compiler helpers, including their real IX frame ABI.
-        helpers = Path(assembler).resolve().parents[1] / "libsrc/l/sdcc"
+        # Use the compiler helpers, including their real IX frame ABI.
         binary = harness.with_suffix(".bin")
         map_text = assemble_vector(
             assembler,
             harness,
-            [
-                helpers / "___sdcc_enter_ix.asm",
-                helpers / "____sdcc_4_push_hlix.asm",
-            ],
+            sdcc_ix_helpers(assembler),
             binary,
             ["__SDCC_IX"],
         )

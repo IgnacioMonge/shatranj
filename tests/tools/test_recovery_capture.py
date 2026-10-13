@@ -13,6 +13,7 @@ from test_spectrum_asm_vectors import (
     assemble_vector,
     execute_vector,
     required_tool,
+    sdcc_ix_helpers,
     symbol_address,
 )
 
@@ -336,16 +337,10 @@ def run_target(label: str, scratch: int, defines: tuple[str, ...]) -> None:
         harness = tmp / "recovery_capture_vector.asm"
         harness.write_text(HARNESS, encoding="ascii")
         binary = tmp / "recovery_capture_vector.bin"
-        helpers = Path(assembler).resolve().parents[1] / "libsrc/l/sdcc"
         symbols = assemble_vector(
             assembler,
             harness,
-            [
-                recovery_asm,
-                restore_asm,
-                helpers / "___sdcc_enter_ix.asm",
-                helpers / "____sdcc_4_push_hlix.asm",
-            ],
+            [recovery_asm, restore_asm, *sdcc_ix_helpers(assembler)],
             binary,
             ["__SDCC_IX"],
         )
