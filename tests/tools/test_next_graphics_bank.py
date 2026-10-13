@@ -7,6 +7,9 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+from asm_source import read_asm
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -85,6 +88,7 @@ def main() -> int:
     source = (ROOT / "asm/next/graphics_bank_next.asm").read_text(
         encoding="utf-8"
     )
+    screen = read_asm(ROOT / "asm/next/screen.asm")
     loader = (ROOT / "asm/next/overlay_loader_next.asm").read_text(encoding="utf-8")
     stubs = "\n".join(
         (ROOT / path).read_text(encoding="utf-8")
@@ -136,6 +140,15 @@ def main() -> int:
     assert overlay_scratch + 160 == palette_stage
     assert palette_stage + 512 <= 0x4000
 
+    notice = screen[
+        screen.index("render_notice_common:") :
+        screen.index("_spectrum_render_connection:", screen.index("render_notice_common:"))
+    ]
+    assert "call align_notice_text" in notice
+    assert "clear_notice_row" not in screen
+    assert "calc_len64" not in screen
+    assert "ld bc, NETCHESSZX_NOTICE_TEXT_SIZE" in screen
+
     assert sprite_patterns * 256 == sprite_set_size
     stride = " ".join(
         source[
@@ -161,7 +174,7 @@ def main() -> int:
     assert not re.search(r"(?mi)^\s*rst(?:\s|$)", source), "cold bank calls ROM"
     assert "next_map_slot0" not in source, "cold bank remaps its executing slot"
     assert "next_copy_bundle_ei" not in source, "cold bank uses the EI copy entry"
-    assert stubs.count("call next_extension_restore") == 49
+    assert stubs.count("call next_extension_restore") == 47  # two retired timer slots
     assert not re.search(r"(?m)^\s*[^;\n]*:\s+jp\s+next_ext_", stubs)
     assert "DEFB 0xed, 0x91, next_mmu_slot1, next_extension_page" in loader
     assert "out (c), a\n    jp ngb_success" not in source

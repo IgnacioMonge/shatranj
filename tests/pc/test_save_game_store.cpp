@@ -93,7 +93,8 @@ int main()
 
     QVector<SaveSlotEntry> entries = SaveGameStore::scanSlots(temporary.path());
     check(entries.size() == SaveGameStore::kSlotCount && entries[0].used &&
-              entries[0].baseName == base,
+              entries[0].baseName == base &&
+              entries[0].fileName == base + QStringLiteral(".stj"),
           "scan slot");
 
     check(SaveGameStore::remove(path) && !QFile::exists(path),
@@ -115,6 +116,26 @@ int main()
                   QDateTime(QDate(2020, 1, 1), QTime(0, 0)),
           "scan exact zero stamp");
     check(!entries[1].used, "reject partial zero stamp");
+
+    const QString mixedName = QStringLiteral("0267m905.STJ");
+    const QString mixedPath = temporary.filePath(mixedName);
+    check(SaveGameStore::write(mixedPath, expected), "write mixed-case slot");
+    entries = SaveGameStore::scanSlots(temporary.path());
+    check(entries[1].used &&
+              entries[1].baseName == QStringLiteral("0267M905") &&
+              entries[1].fileName == mixedName,
+          "preserve enumerated mixed-case file name");
+    check(SaveGameStore::read(SaveGameStore::slotFilePath(
+              temporary.path(), entries[1].fileName), &actual),
+          "read enumerated mixed-case slot");
+    QFile duplicate(temporary.filePath(QStringLiteral("0267M906.stj")));
+    check(duplicate.open(QIODevice::WriteOnly), "write duplicate slot");
+    duplicate.close();
+    entries = SaveGameStore::scanSlots(temporary.path());
+    check(entries[1].duplicate &&
+              QFile::exists(SaveGameStore::slotFilePath(
+                  temporary.path(), entries[1].fileName)),
+          "duplicate slot retains an operable enumerated path");
 
     QFile corrupt(temporary.filePath(QStringLiteral("corrupt.stj")));
     check(corrupt.open(QIODevice::WriteOnly) && corrupt.write("bad") == 3,

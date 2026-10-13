@@ -29,6 +29,7 @@ def main() -> None:
         encoding="utf-8"
     )
     session_h = (root / "src/spectrum/config/session.h").read_text(encoding="utf-8")
+    identity_h = (root / "src/spectrum/session/identity.h").read_text(encoding="utf-8")
     pc = (root / "src/pc/client/main_window.cpp").read_text(encoding="utf-8")
 
     room_match = re.search(r"#define NETCHESSZX_MQTT_CODE_MAX\s+(\d+)u", session_h)
@@ -36,8 +37,8 @@ def main() -> None:
         fail("missing Spectrum room limit")
     room_max = int(room_match.group(1))
     if (
-        "#define NETCHESSZX_SESSION_ROLE_HOST 0u" not in session_h
-        or "#define NETCHESSZX_SESSION_ROLE_JOIN 1u" not in session_h
+        "#define NETCHESSZX_SESSION_ROLE_HOST 0u" not in identity_h
+        or "#define NETCHESSZX_SESSION_ROLE_JOIN 1u" not in identity_h
     ):
         fail("Spectrum H/J role encoding no longer matches session roles")
     fixed = equ(asm, "mqtt_client_id_fixed")
@@ -48,7 +49,7 @@ def main() -> None:
     for token in (
         "ld a, $26",
         "ld (mqtt_packet_ovl + 9), a",
-        "jr nz, mqtt_conn_finish",
+        "jr z, mqtt_conn_finish",
         "call _spectrum_append_u16",
         "ld (mqtt_packet_ovl + 1), a",
     ):
@@ -67,7 +68,8 @@ def main() -> None:
         "add a, a",
         "add a, 'H'",
         "_netchesszx_mqtt_code",
-        "_netchesszx_session_role",
+        "_spectrum_overlay_context + mqtt_connect_flags",
+        "mqtt_connect_will",
         "ld hl, ($5c78)",
         "ld a, h",
         "ld h, l",

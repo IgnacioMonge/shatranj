@@ -1,5 +1,7 @@
 SECTION code_user
 
+INCLUDE "ui_layout.inc"
+
 IFDEF NETCHESSZX_NEXT_BANKING
 INCLUDE "asm/next/extension_bank_layout.asm"
 ENDIF
@@ -74,11 +76,13 @@ ROW_TIME        EQU 4
 ROW_COLOR       EQU 5
 ROW_NOTATION    EQU 6
 ROW_ACTION      EQU 10
-MASK_ALL        EQU 0x07ff
+ROW_NAME        EQU 11
+MASK_ALL        EQU 0x0fff
 INIT_CLEAN      EQU 0x01
 INIT_COMPLETE   EQU 0x02
 TIME_RTC        EQU 127
 TC_PROBE_KEY       EQU 0xff
+INCLUDE "asm/app/player_name_layout.inc"
 ZXUNOADDR       EQU 0xfc3b
 M_GETDATE       EQU 0x8e
 M_DRVAPI        EQU 0x92
@@ -101,6 +105,40 @@ _time_config_init_ovl_entry:
     cp TC_PROBE_KEY
     jp z, tc_probe
     ld (tc_init_flags), a
+    ; Every Setup precedes a connection: rebuild the "MNAME " prefix of the
+    ; advisory line (low RAM holds no image data) and start with no peer.
+    ld hl, tc_name_prefix
+    ld de, PLAYER_NAME_LINE
+    ld bc, tc_name_prefix_end - tc_name_prefix
+    ldir
+    ; DE = PLAYER_NAME. The saved name tail sits outside the 1.2 record CRC,
+    ; so a damaged tail becomes no name rather than garbage on the wire:
+    ; every character must be valid and the NUL must lie within the
+    ; PLAYER_NAME_MAX + 1 bytes CONFIG copied (the scan never reads beyond).
+    ex de, hl
+    ld b, PLAYER_NAME_MAX + 1
+tc_name_check:
+    ld a, (hl)
+    inc hl
+    or a
+    jr z, tc_name_checked
+    cp '-'
+    jr z, tc_name_next
+    cp '_'
+    jr z, tc_name_next
+    sub '0'
+    cp 10
+    jr c, tc_name_next
+    sub 'A' - '0'
+    cp 26
+    jr nc, tc_name_bad
+tc_name_next:
+    djnz tc_name_check
+tc_name_bad:
+    xor a
+    ld (PLAYER_NAME), a
+tc_name_checked:
+    ld (PEER_NAME), a
     ld hl, _setup_choice
     ld a, (_netchesszx_session_role)
     ld (hl), a
@@ -183,24 +221,7 @@ tc_init_cursor:
     jp tc_ret1
 
 _time_config_commit_ovl_entry:
-    ld a, (_setup_choice)
-    ld (_netchesszx_session_role), a
-    ld b, a
-    inc a
-    and 1
-    ld (_netchesszx_host_color_ready), a
-    ld a, (_setup_choice + 1)
-    ld (_netchesszx_transport), a
-    ld a, (_setup_choice + 2)
-    ld (_netchesszx_host_color), a
-    ld c, a
-    ld a, b
-    or a
-    ld a, c
-    jr z, tc_commit_local_color
-    xor 1
-tc_commit_local_color:
-    ld (_netchesszx_local_color), a
+INCLUDE "asm/session/identity_setup.inc"
     ld a, (_setup_choice + 3)
     ld (_netchesszx_notation), a
     ld a, (_setup_choice + 4)
@@ -356,17 +377,19 @@ tc_define_time:
     ld hl, _setup_defined_mask
     set 4, (hl)
     call tc_mark_dirty
-    ld a, (_setup_choice)
-    or a
-    ld a, ROW_COLOR
-    jr z, tc_time_next
-    ld a, ROW_NOTATION
-tc_time_next:
+    ; NAME follows TIME in screen order; its line carries its own marker.
+    ld a, ROW_NAME
     ld (_setup_cursor), a
     ld a, NOTICE_SELECT
     ld (CTX_NOTICE), a
+    ; The resident applies this TIMEZONE action before it asks for the TIME
+    ; and ACTION repaint. Choosing RTC probes the RTC (PCF8563 uses CTX_FLAGS
+    ; as scratch) and may sync the clock through this shared context, so the
+    ; flags were lost and TIME kept its marker beside the NAME cursor. Paint
+    ; both now from the final state; the step cleared CTX_FLAGS on entry.
     ld a, FLAG_RENDER | FLAG_TIME_UI | FLAG_ACTION_UI | FLAG_SUPPRESS
-    jp tc_or_flags
+    ld (CTX_FLAGS), a
+    jp _time_config_ui_ovl_entry
 
 tc_action_key:
     ld a, (tc_key)
@@ -555,9 +578,9 @@ tc_ui_done:
 
 tc_ui_time:
     call tc_ui_draw_time
-    ld hl, 0x5952
-    ld b, 3
-    ld a, 0x03
+    ld hl, NETCHESSZX_SETUP_TIME_HEADER_ATTR
+    ld b, NETCHESSZX_SETUP_TIME_HEADER_WIDTH
+    ld a, NETCHESSZX_ATTR_SETUP_HEADER
     call tc_ui_attr_span
     ld a, (_netchesszx_rtc_available)
     or a
@@ -580,8 +603,8 @@ tc_ui_time_rtc_selected:
     jr nz, tc_ui_time_rtc_focus_done
     inc e
 tc_ui_time_rtc_focus_done:
-    ld hl, 0x5955
-    ld b, 2
+    ld hl, NETCHESSZX_SETUP_TIME_FIRST_OPTION_ATTR
+    ld b, NETCHESSZX_SETUP_TIME_RTC_WIDTH
     call tc_ui_option_span
 tc_ui_time_utc:
     ld d, 0
@@ -611,13 +634,13 @@ tc_ui_time_utc_focus_done:
     ld d, 0
     ld e, 1
 tc_ui_time_utc_paint:
-    ld hl, 0x5955
+    ld hl, NETCHESSZX_SETUP_TIME_FIRST_OPTION_ATTR
     ld a, (_netchesszx_rtc_available)
     or a
     jr z, tc_ui_time_utc_positioned
-    ld l, 0x5a
+    ld l, NETCHESSZX_SETUP_TIME_RTC_UTC_ATTR_COL
 tc_ui_time_utc_positioned:
-    ld b, 4
+    ld b, NETCHESSZX_SETUP_TIME_UTC_WIDTH
     call tc_ui_option_span
     ld a, (_setup_room_editing)
     or a
@@ -625,12 +648,12 @@ tc_ui_time_utc_positioned:
     ld a, (_setup_edit_row)
     cp ROW_TIME
     ret nz
-    ld l, 10
-    ld h, 48
+    ld l, NETCHESSZX_SETUP_TIME_EDIT_ROW
+    ld h, NETCHESSZX_SETUP_TIME_EDIT_UTC_COL
     ld a, (_netchesszx_rtc_available)
     or a
     jr z, tc_ui_time_edit_positioned
-    ld h, 58
+    ld h, NETCHESSZX_SETUP_TIME_EDIT_RTC_COL
 tc_ui_time_edit_positioned:
     jp _spectrum_gui_edit_show
 
@@ -638,10 +661,10 @@ tc_ui_draw_time:
     ld a, (_netchesszx_rtc_available)
     or a
     ld hl, tc_ui_prefix_utc
-    ld bc, 11
+    ld bc, NETCHESSZX_SETUP_TIME_UTC_PREFIX_SIZE
     jr z, tc_ui_time_prefix
     ld hl, tc_ui_prefix_rtc
-    ld c, 21
+    ld c, NETCHESSZX_SETUP_TIME_RTC_PREFIX_SIZE
 tc_ui_time_prefix:
     ld de, tc_ui_line_buf
     ldir
@@ -653,24 +676,23 @@ tc_ui_time_value:
     inc de
     or a
     jr nz, tc_ui_time_value
-    ld hl, tc_ui_line_buf + 6
+    ld hl, tc_ui_line_buf + NETCHESSZX_SETUP_TIME_RTC_MARKER_INDEX
     ld (hl), ' '
-    ld hl, tc_ui_line_buf + 16
+    ld hl, tc_ui_line_buf + NETCHESSZX_SETUP_TIME_UTC_MARKER_INDEX
     ld (hl), ' '
     ld a, (_setup_cursor)
     cp ROW_TIME
     jr nz, tc_ui_time_draw
-    ld hl, tc_ui_line_buf + 6
+    ld hl, tc_ui_line_buf + NETCHESSZX_SETUP_TIME_RTC_MARKER_INDEX
     ld a, (_netchesszx_rtc_available)
     or a
     jr z, tc_ui_time_mark
     ld a, (_setup_time_focus)
     or a
     jr z, tc_ui_time_mark
-    ld hl, tc_ui_line_buf + 16
+    ld hl, tc_ui_line_buf + NETCHESSZX_SETUP_TIME_UTC_MARKER_INDEX
 tc_ui_time_mark:
-    ; Font slot 92 is the setup cursor glyph.
-    ld (hl), 92
+    ld (hl), NETCHESSZX_SETUP_CURSOR_GLYPH
 tc_ui_time_draw:
     ld hl, tc_ui_line_buf
     jp _spectrum_info_line
@@ -683,24 +705,24 @@ tc_ui_action:
     ld hl, tc_ui_line_save
 tc_ui_action_draw:
     call _spectrum_info_line
-    ld hl, 0x5a99
-    ld b, 3
-    ld a, 0x45
+    ld hl, NETCHESSZX_SETUP_ACTION_SAVE_ATTR
+    ld b, NETCHESSZX_SETUP_ACTION_WIDTH
+    ld a, NETCHESSZX_ATTR_SETUP_ACTION_SAVE
     call tc_ui_attr_span
-    ld hl, 0x5a9d
-    ld b, 3
-    ld a, 0x44
+    ld hl, NETCHESSZX_SETUP_ACTION_START_ATTR
+    ld b, NETCHESSZX_SETUP_ACTION_WIDTH
+    ld a, NETCHESSZX_ATTR_SETUP_ACTION_START
     call tc_ui_attr_span
     ld a, (_setup_cursor)
     cp ROW_ACTION
     ret nz
     ld a, (_setup_action_focus)
     or a
-    ld hl, 0x5a99
-    ld b, 3
-    ld a, 0x38
+    ld hl, NETCHESSZX_SETUP_ACTION_SAVE_ATTR
+    ld b, NETCHESSZX_SETUP_ACTION_WIDTH
+    ld a, NETCHESSZX_ATTR_SETUP_ACTION_FOCUS
     jr z, tc_ui_attr_span
-    ld hl, 0x5a9d
+    ld hl, NETCHESSZX_SETUP_ACTION_START_ATTR
     jr tc_ui_attr_span
 
 tc_ui_option_span:
@@ -709,16 +731,16 @@ tc_ui_option_span:
     jr z, tc_ui_option_plain
     ld a, d
     or a
-    ld a, 0x47
+    ld a, NETCHESSZX_ATTR_SETUP_FOCUS
     jr z, tc_ui_attr_span
     dec a
     jr tc_ui_attr_span
 tc_ui_option_plain:
     ld a, d
     or a
-    ld a, 0x05
+    ld a, NETCHESSZX_ATTR_SETUP_SELECTED
     jr nz, tc_ui_attr_span
-    ld a, 0x07
+    ld a, NETCHESSZX_ATTR_TEXT
 tc_ui_attr_span:
     ld (hl), a
     inc hl
@@ -726,23 +748,22 @@ tc_ui_attr_span:
     ret
 
 tc_ui_prefix_rtc:
-    DEFB 10, "TIME  RTC       UTC "
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_TIME, "TIME  RTC       UTC "
 tc_ui_prefix_utc:
-    DEFB 10, "TIME  UTC "
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_TIME, "TIME  UTC "
 tc_ui_line_save:
-    DEFB 20, "              SAVE    START", 0
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_ACTION, "              SAVE    START", 0
 tc_ui_line_edit:
-    DEFB 20, "              EDIT    START", 0
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_ACTION, "              EDIT    START", 0
 tc_ui_line_buf:
-    DEFS tc_ui_prefix_utc - tc_ui_prefix_rtc + 4
+    DEFS tc_ui_prefix_utc - tc_ui_prefix_rtc + NETCHESSZX_SETUP_TIME_VALUE_BYTES
 tc_key:
     DEFB 0
 tc_init_flags:
     DEFB 0
 
 IFDEF NETCHESSZX_SPECTRANEXT
-; Spectranext has no esxDOS/NextZXOS RTC. The resident dispatcher normally
-; answers this probe without entering the overlay; keep the entry safe too.
+; Spectranext has no esxDOS/NextZXOS RTC. Answer before any ROM call.
 tc_probe:
     ld l, 0
     ret
@@ -1066,3 +1087,7 @@ tc_rtc_bcd_to_bin:
     or a
     ret
 ENDIF
+
+tc_name_prefix:
+    DEFM "MNAME "
+tc_name_prefix_end:

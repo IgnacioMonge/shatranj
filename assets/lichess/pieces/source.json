@@ -1,0 +1,14 @@
+{
+  "source": "https://github.com/lichess-org/lila/tree/master/public/piece",
+  "license_source": "https://github.com/lichess-org/lila/blob/master/COPYING.md",
+  "downloaded_at": "2026-07-01",
+  "sets": {
+    "california": {"author": "Jerry S.", "license": "CC-BY-NC-SA-4.0"},
+    "gioco": {"author": "the lila authors", "license": "AGPL-3.0-or-later"},
+    "kiwen-suwi": {"author": "neverRare", "license": "CC-BY-4.0"},
+    "merida": {"author": "Armando Hernandez Marroquin", "license": "GPL-2.0-or-later"},
+    "mpchess": {"author": "Maxime Chupin", "license": "GPL-3.0-or-later"},
+    "totoy": {"author": "Kosal Sen", "license": "CC-BY-4.0"}
+  },
+  "notes": "Desktop packages retain the selected SVGs; Spectrum Next converts california, mpchess, and totoy into 16x16 sprites."
+}

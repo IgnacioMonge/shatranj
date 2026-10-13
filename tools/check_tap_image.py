@@ -60,6 +60,85 @@ def parse_blocks(blob: bytes) -> list[tuple[int, bytes]]:
     return blocks
 
 
+def tap_block(flag: int, payload: bytes) -> bytes:
+    body = bytes((flag,)) + payload
+    checksum = 0
+    for value in body:
+        checksum ^= value
+    block = body + bytes((checksum,))
+    return len(block).to_bytes(2, "little") + block
+
+
+def tape_header(
+    block_type: int, name: str, length: int, parameter1: int, parameter2: int,
+) -> bytes:
+    encoded_name = name.encode("ascii")[:10].ljust(10, b" ")
+    return (
+        bytes((block_type,)) + encoded_name + length.to_bytes(2, "little")
+        + parameter1.to_bytes(2, "little") + parameter2.to_bytes(2, "little")
+    )
+
+
+def basic_loader(clear_address: int, load_count: int, entry_address: int) -> bytes:
+    body = bytearray((0xFD, 0xB0, 0x22))  # CLEAR VAL "
+    body.extend(str(clear_address).encode("ascii"))
+    body.extend((0x22, 0x3A))
+    for _ in range(load_count):
+        body.extend((0xEF, 0x22, 0x22, 0xAF, 0x3A))  # LOAD "" CODE:
+    body.extend((0xF9, 0xC0, 0xB0, 0x22))  # RANDOMIZE USR VAL "
+    body.extend(str(entry_address).encode("ascii"))
+    body.extend((0x22, 0x0D))
+    return bytes((0, 10)) + len(body).to_bytes(2, "little") + body
+
+
+def code_pair(name: str, payload: bytes, load_address: int) -> bytes:
+    header = tape_header(3, name, len(payload), load_address, 0)
+    return tap_block(0, header) + tap_block(0xFF, payload)
+
+
+def validate_classic_boot_tap(
+    tap: bytes, boot_code: bytes, boot_org: int, resident_org: int,
+    clear_address: int, entry_address: int,
+) -> None:
+    blocks = parse_blocks(tap)
+    if len(blocks) != 6:
+        raise TapImageError(
+            f"Classic boot TAP must contain BASIC and two CODE pairs, found "
+            f"{len(blocks)} blocks"
+        )
+    basic_header, basic_data = blocks[0], blocks[1]
+    if basic_header[0] != 0 or len(basic_header[1]) != 17 \
+            or basic_header[1][0] != 0 or basic_data[0] != 0xFF:
+        raise TapImageError("Classic boot TAP does not start with BASIC")
+    expected_loader = basic_loader(clear_address, 2, entry_address)
+    if basic_data[1] != expected_loader:
+        raise TapImageError("Classic boot BASIC loader bytes differ")
+    header = basic_header[1]
+    if int.from_bytes(header[11:13], "little") != len(expected_loader) \
+            or int.from_bytes(header[13:15], "little") != 10 \
+            or int.from_bytes(header[15:17], "little") != len(expected_loader):
+        raise TapImageError("Classic boot BASIC header differs")
+
+    for index, expected_org in ((2, boot_org), (4, resident_org)):
+        header_flag, code_header = blocks[index]
+        data_flag, payload = blocks[index + 1]
+        if header_flag != 0 or len(code_header) != 17 or code_header[0] != 3 \
+                or data_flag != 0xFF:
+            raise TapImageError("Classic boot TAP has an invalid CODE pair")
+        declared = int.from_bytes(code_header[11:13], "little")
+        load_address = int.from_bytes(code_header[13:15], "little")
+        if load_address != expected_org or declared != len(payload):
+            raise TapImageError("Classic boot TAP CODE order or length differs")
+    if blocks[3][1] != boot_code:
+        raise TapImageError("Classic boot capsule payload differs")
+    if clear_address != boot_org - 1:
+        raise TapImageError("Classic boot CLEAR must end immediately below capsule")
+    if entry_address != resident_org:
+        raise TapImageError("Classic boot must enter the resident CRT")
+    if boot_org + len(boot_code) > resident_org:
+        raise TapImageError("Classic boot capsule reaches resident ORG")
+
+
 def find_code_block(blob: bytes, org: int) -> tuple[int, bytes]:
     blocks = parse_blocks(blob)
     matches: list[tuple[int, bytes]] = []
@@ -92,6 +171,8 @@ def find_code_block(blob: bytes, org: int) -> tuple[int, bytes]:
 def validate_image(
     symbols: dict[str, int], code: bytes, tap: bytes, org: int,
     load_org: int | None = None, low_code: bytes = b"",
+    boot_code: bytes = b"", boot_org: int | None = None,
+    clear_address: int | None = None, entry_address: int | None = None,
 ) -> TapImage:
     data_compiler_tail = required_symbol(symbols, "__data_compiler_tail")
     data_end = required_symbol(symbols, "__DATA_END_tail")
@@ -132,6 +213,13 @@ def validate_image(
     if any(payload[bss_offset:]):
         raise TapImageError("TAP BSS contains non-zero bytes")
 
+    if boot_code:
+        if boot_org is None or clear_address is None or entry_address is None:
+            raise TapImageError("Classic boot validation arguments are incomplete")
+        validate_classic_boot_tap(
+            tap, boot_code, boot_org, org, clear_address, entry_address,
+        )
+
     return TapImage(
         load_address=load_org,
         payload=payload,
@@ -149,6 +237,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--org", type=lambda value: int(value, 0), required=True)
     parser.add_argument("--load-org", type=lambda value: int(value, 0))
     parser.add_argument("--low-code-bin", type=Path)
+    parser.add_argument("--boot-bin", type=Path)
+    parser.add_argument("--boot-org", type=lambda value: int(value, 0))
+    parser.add_argument("--clearaddr", type=lambda value: int(value, 0))
+    parser.add_argument("--usraddr", type=lambda value: int(value, 0))
     args = parser.parse_args(argv)
 
     try:
@@ -159,6 +251,10 @@ def main(argv: list[str]) -> int:
             args.org,
             args.load_org,
             args.low_code_bin.read_bytes() if args.low_code_bin else b"",
+            args.boot_bin.read_bytes() if args.boot_bin else b"",
+            args.boot_org,
+            args.clearaddr,
+            args.usraddr,
         )
     except (OSError, TapImageError) as exc:
         print(f"[ERR] TAP image contract: {exc}", file=sys.stderr)

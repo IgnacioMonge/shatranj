@@ -11,6 +11,7 @@
 #include <QDateTime>
 #include <QDialog>
 #include <QElapsedTimer>
+#include <QFileDialog>
 #include <QEvent>
 #include <QFileInfo>
 #include <QFont>
@@ -31,11 +32,15 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QPlainTextEdit>
+#include <QMenuBar>
+#include <QShortcut>
 #include <QPoint>
 #include <QPointer>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QRandomGenerator>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSet>
@@ -44,6 +49,7 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QStandardPaths>
 #include <QStatusBar>
 #include <QString>
 #include <QStringList>
@@ -74,6 +80,7 @@
 
 extern "C" {
 #include "common/chess/position.h"
+#include "common/chess/game_stats.h"
 #include "common/protocol/platform_protocol.h"
 #include "common/savegame/savegame_wire.h"
 #include "common/chess/rules_compact.h"
@@ -82,9 +89,15 @@ extern "C" {
 #include "common/chess/legal.h"
 #include "common/ui_messages.h"
 #include "app_banner.h"
+#include "board_widget.h"
 #include "chess_helpers.h"
+#include "command_input_widget.h"
 #include "desktop_session_controller.h"
 #include "desktop_transport_codec.h"
+#include "engine_player.h"
+#include "help_window.h"
+#include "preferences.h"
+#include "preferences_dialog.h"
 #include "piece_renderer.h"
 #include "window_chrome.h"
 #include "save_game_store.h"
@@ -93,23 +106,25 @@ extern "C" {
 namespace {
 using namespace PieceRenderer;
 
-constexpr int kBoardSquareSize = 52;
-constexpr int kBoardCoordSize = 24;
-constexpr int kPieceIconSize = 50;
 constexpr int kActionButtonWidth = 100;
 constexpr int kSidePanelWidth = 340;
 constexpr int kChatTextMax = SESSION_CHAT_TEXT_MAX;
-constexpr int kSpectrumFrameMs = 20;
-constexpr int kPieceRevealStepMs = 5 * kSpectrumFrameMs;
-constexpr int kPieceRevealMiddlePauseMs = 3 * kSpectrumFrameMs;
-constexpr int kPieceMorphStepMs = 1 * kSpectrumFrameMs;
-constexpr int kPieceMorphMiddlePauseMs = 1 * kSpectrumFrameMs;
-constexpr int kPieceFlashStepMs = 90;
 // A TCP listener may exist before the remote app is ready for its DIRECT handshake.
 constexpr const char *kAppVersion = NETCHESSZX_APP_VERSION;
 constexpr const char *kDirectHostBusyStatus = "Host busy";
 constexpr qint64 kUiStallWarnMs = 2500;
 constexpr qint64 kMoveSendWarnMs = 250;
+constexpr int kEngineMoveTimeMs = 800;
+// Restarts of a dead engine before it answers again; reset by each answer.
+constexpr int kEngineRestartLimit = 1;
+// Pause between attempts to announce the engine while the core refuses CHAT.
+constexpr int kEngineAnnounceRetryMs = 1000;
+// Takeback, draw offers and resignation belong to the engine's side, not to
+// the operator: refused while Stockfish plays.
+constexpr char kBotControlsRefused[] = "Not while Stockfish plays";
+// Peer rejections of the engine's move in one position before it stops asking.
+constexpr int kEngineRejectLimit = 3;
+using Preferences::kBotName;
 constexpr qint64 kMaxClockSeconds = 359999; // 99h59m59s ceiling for save-slot elapsed clock
 constexpr uint8_t kMqttLinkId = 1u;
 constexpr int kMqttBufferedPublishMax = 8;
@@ -168,6 +183,23 @@ static QIcon sessionActionIcon(const char *kind)
     return QIcon(pixmap);
 }
 
+// Three rising bars: dim while the statistics are hidden, accent while shown.
+static QIcon gameStatsIcon()
+{
+    QIcon icon;
+    for (const bool shown : {false, true}) {
+        QPixmap pixmap(16, 16);
+        const QColor color(QLatin1String(shown ? SHZ_ACCENT : SHZ_TEXT_DIM));
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.fillRect(2, 9, 3, 4, color);
+        painter.fillRect(7, 6, 3, 7, color);
+        painter.fillRect(12, 3, 3, 10, color);
+        icon.addPixmap(pixmap, QIcon::Normal, shown ? QIcon::On : QIcon::Off);
+    }
+    return icon;
+}
+
 static uint8_t localMachinePlatform()
 {
 #if defined(Q_OS_MACOS)
@@ -187,6 +219,26 @@ static QByteArray localMachPayload()
 
     if (!netchess_proto_format_mach(text, sizeof(text),
                                     localMachinePlatform())) {
+        return QByteArray();
+    }
+    return QByteArray(text);
+}
+
+static QString normalizedPlayerName(const QString &text)
+{
+    const QByteArray name = text.trimmed().toUpper().toLatin1();
+
+    return netchess_player_name_valid(name.constData())
+               ? QString::fromLatin1(name)
+               : QString();
+}
+
+static QByteArray localNamePayload(const QString &name)
+{
+    char text[NETCHESS_PROTO_NAME_LINE_SIZE];
+    const QByteArray latin = name.toLatin1();
+
+    if (!netchess_proto_format_name(text, sizeof(text), latin.constData())) {
         return QByteArray();
     }
     return QByteArray(text);
@@ -274,6 +326,30 @@ static QString appStyleSheet()
         "QRadioButton::indicator:checked:disabled { background:" SHZ_TEXT_MUTED ";"
         " border:1px solid " SHZ_TEXT_MUTED "; }"
         "QRadioButton:checked:disabled { color:" SHZ_TEXT_DIM "; }"
+        "QCheckBox::indicator { width:11px; height:11px; border-radius:3px;"
+        " border:1px solid " SHZ_TEXT_MUTED "; background:" SHZ_SURFACE "; }"
+        "QCheckBox::indicator:hover { border-color:" SHZ_ACCENT "; }"
+        "QCheckBox::indicator:checked { background:" SHZ_ACCENT ";"
+        " border:1px solid " SHZ_ACCENT "; }"
+        "QCheckBox::indicator:disabled { background:" SHZ_DISABLED ";"
+        " border-color:" SHZ_BORDER "; }"
+        "QCheckBox::indicator:checked:disabled { background:" SHZ_TEXT_MUTED ";"
+        " border:1px solid " SHZ_TEXT_MUTED "; }"
+        "QTabWidget::pane { background:" SHZ_CARD "; border:1px solid " SHZ_BORDER ";"
+        " border-radius:" SHZ_R "; top:-1px; }"
+        "QTabBar::tab { background:" SHZ_QUIET "; color:" SHZ_TEXT_DIM ";"
+        " border:1px solid " SHZ_BORDER "; padding:5px 14px; margin-right:2px;"
+        " border-top-left-radius:" SHZ_R "; border-top-right-radius:" SHZ_R "; }"
+        "QTabBar::tab:selected { background:" SHZ_CARD "; color:" SHZ_ACCENT ";"
+        " border-bottom-color:" SHZ_CARD "; }"
+        "QListWidget { background:" SHZ_SURFACE "; color:" SHZ_TEXT ";"
+        " border:1px solid " SHZ_BORDER "; border-radius:" SHZ_R "; padding:4px; }"
+        "QListWidget::item { padding:2px 4px; }"
+        "QListWidget::item:selected { background:" SHZ_ACCENT_DEEP ";"
+        " color:" SHZ_WELL "; }"
+        "QProgressBar { background:" SHZ_SURFACE "; border:1px solid " SHZ_BORDER ";"
+        " border-radius:" SHZ_R "; color:" SHZ_TEXT "; text-align:center; }"
+        "QProgressBar::chunk { background:" SHZ_ACCENT_DEEP "; border-radius:" SHZ_R "; }"
         "QScrollBar:vertical { background:transparent; width:10px; margin:2px; }"
         "QScrollBar::handle:vertical { background:" SHZ_SCROLL ";"
         " border-radius:3px; min-height:28px; }"
@@ -288,25 +364,6 @@ static QString appStyleSheet()
         "QStatusBar::item { border:0; }"
         "QStatusBar QLabel { color:" SHZ_ACCENT "; font-weight:700;"
         " font-size:11px; letter-spacing:0.5px; }");
-}
-
-static QString boardFrameStyle()
-{
-    return QStringLiteral(
-        "QWidget#boardFrame { background:%1;"
-        " border:1px solid " SHZ_BOARD_EDGE "; border-radius:" SHZ_R_LG "; }")
-        .arg(PieceRenderer::boardWellColor(kBoardSquareSize).name());
-}
-
-// The 8x8 block gets the same blunt vertex as the frame: only its four outer
-// squares round off, and always by display position so a flip follows along.
-static PieceRenderer::SquareCorner displayCorner(int displayRow, int displayCol)
-{
-    if (displayRow == 0 && displayCol == 0) return PieceRenderer::CornerTopLeft;
-    if (displayRow == 0 && displayCol == 7) return PieceRenderer::CornerTopRight;
-    if (displayRow == 7 && displayCol == 0) return PieceRenderer::CornerBottomLeft;
-    if (displayRow == 7 && displayCol == 7) return PieceRenderer::CornerBottomRight;
-    return PieceRenderer::CornerNone;
 }
 
 static QLabel *captionLabel(const QString &text, QWidget *parent)
@@ -480,9 +537,100 @@ public:
         return directSessionReady_;
     }
 
+    QString testChatLogText() const
+    {
+        return chatLogEdit_->toPlainText();
+    }
+
+    QString testChatDraft() const
+    {
+        return chatEdit_->text();
+    }
+
+    void testSetChatDraft(const QString &text)
+    {
+        chatEdit_->setText(text);
+    }
+
     QString testStatusContextText() const
     {
         return statusContextText();
+    }
+
+    // Needs a linked session: a later notice keeps the game result, and an
+    // opponent request awaiting this side's answer is not shown as waiting.
+    bool testStatusBarProjection()
+    {
+        const bool savedOver = gameOver_;
+        const QString savedResult = gameResult_;
+        const QString savedMessage = statusMessage_;
+
+        gameOver_ = true;
+        gameResult_ = QString::fromLatin1(NETCHESSZX_UI_EVENT_CHECKMATE_WON);
+        setStatusText(QStringLiteral("Game saved"));
+        const bool resultKept =
+            statusStateText() == gameResult_ && turnLabel_->text() == gameResult_ &&
+            statusContextText().startsWith(QStringLiteral("Game saved | "));
+
+        directDecisionControl_ = SESSION_REQUEST_DRAW;
+        setStatusText(NETCHESSZX_UI_NOTICE_DRAW_OFFERED);
+        const bool answerShown =
+            statusStateText() == QLatin1String(NETCHESSZX_UI_NOTICE_DRAW_OFFERED) &&
+            turnLabel_->text() == QStringLiteral("YOUR ANSWER");
+
+        directDecisionControl_ = 0u;
+        gameOver_ = savedOver;
+        gameResult_ = savedResult;
+        setStatusText(savedMessage);
+        return resultKept && answerShown;
+    }
+
+    void testSetPlayerName(const QString &name)
+    {
+        prefs_.playerName = Preferences::userName(name);
+    }
+
+    // Bot identity without launching an engine: reserved name, saved user
+    // name, chat label and locked board input.
+    bool testBotIdentity()
+    {
+        const ClientPreferences saved = prefs_;
+        ClientPreferences bot = prefs_;
+        bot.playerName = QStringLiteral("TESTER");
+        bot.enginePlays = true;
+        bot.engineLevel = 7;
+        applyPreferences(bot, false);
+        const bool identity = localPlayerName() == QLatin1String(kBotName) &&
+                              pcChatName() == QLatin1String(kBotName) &&
+                              engineButton_->isChecked() &&
+                              statusContextText().startsWith(QStringLiteral("STOCKFISH L7"));
+        // The engine plays: the operator cannot take back, offer a draw or
+        // resign on its behalf, by button or by chat command.
+        bool commandsRefused = true;
+        for (const QString &command : {QStringLiteral("/takeback"), QStringLiteral("/draw"),
+                                       QStringLiteral("/resign")}) {
+            chatEdit_->setText(command);
+            sendChat();
+            commandsRefused = commandsRefused &&
+                              statusMessage_ == QLatin1String(kBotControlsRefused) &&
+                              chatEdit_->text().isEmpty();
+        }
+        const bool controlsHidden = takebackButton_->isHidden() && drawButton_->isHidden();
+        ClientPreferences human = bot;
+        human.enginePlays = false;
+        applyPreferences(human, false);
+        const bool restored = localPlayerName() == QStringLiteral("TESTER") &&
+                              !engineButton_->isChecked() &&
+                              !statusContextText().contains(QStringLiteral("STOCKFISH")) &&
+                              !takebackButton_->isHidden() && !drawButton_->isHidden();
+        applyPreferences(saved, false);
+        return identity && commandsRefused && controlsHidden && restored &&
+               Preferences::userName(QStringLiteral("stockfish")).isEmpty();
+    }
+
+    QStringList testMoveHeaderLabels() const
+    {
+        return {moveHeaderWhite_, moveHeaderBlack_};
     }
 
     bool testStatusBarAligned()
@@ -495,8 +643,7 @@ public:
         alignStatusBarToControls();
         QCoreApplication::processEvents();
 
-        const int leftAnchor =
-            flipBoardButton_->mapToGlobal(QPoint(0, 0)).x();
+        const int leftAnchor = boardWidget_->flipButtonGlobalPosition().x();
         const int leftStatus =
             statusStateLabel_->mapToGlobal(QPoint(0, 0)).x();
         const int rightAnchor = logToggleButton_->mapToGlobal(
@@ -626,36 +773,48 @@ public:
         gameOver_ = true;
         gameClockRunning_ = false;
         directLocalResignPending_ = true;
-        directResignRestartPending_ = true;
+        gameResult_ = QString::fromLatin1(NETCHESSZX_UI_EVENT_RESIGNATION_LOST);
         directUiBusy_ = SESSION_REQUEST_RESIGN;
         chatEdit_->setText(QStringLiteral("/resign"));
         sendChat();
         const bool pendingBlocked =
             statusMessage_ ==
-            QString::fromLatin1(NETCHESSZX_UI_NOTICE_WAITING_RESIGN_ACK);
+            QString::fromLatin1(NETCHESSZX_UI_PC_NOTICE_RESIGNING);
         handleDirectControlResult(SESSION_REQUEST_RESIGN,
                                   SESSION_CONTROL_ACCEPTED);
         chatEdit_->setText(QStringLiteral("/resign"));
         sendChat();
         const bool completedBlocked =
-            statusMessage_ ==
-            QString::fromLatin1(NETCHESSZX_UI_NOTICE_RESIGN_ALREADY_APPLIED);
+            statusMessage_ == gameResult_ && directUiBusy_ == 0u;
         handleDirectControlResult(SESSION_REQUEST_RESET,
                                   SESSION_CONTROL_REJECTED);
         const bool failedRestart =
             statusMessage_ ==
-            QString::fromLatin1(NETCHESSZX_UI_ERROR_RESTART_FAILED_GAME_OVER);
+            QString::fromLatin1(NETCHESSZX_UI_ERROR_RESTART_REJECTED) &&
+            gameResult_ == QString::fromLatin1(NETCHESSZX_UI_EVENT_RESIGNATION_LOST);
         gameOver_ = false;
         gameClockRunning_ = true;
-        directResignRestartPending_ = false;
         directUiBusy_ = 0u;
+        const bool originalHost = pcIsHost_;
+        pcIsHost_ = false;
+        directSessionReady_ = true;
         applyDirectResignTransition();
         const bool remoteResign =
             statusMessage_ ==
-                QString::fromLatin1(NETCHESSZX_UI_EVENT_OPPONENT_RESIGN) &&
-            directUiBusy_ == SESSION_REQUEST_RESET &&
-            startGameButton_->text() == QStringLiteral("Restarting...") &&
-            !startGameButton_->isEnabled();
+                QString::fromLatin1(NETCHESSZX_UI_EVENT_RESIGNATION_WON) &&
+            directUiBusy_ == 0u &&
+            startGameButton_->text() == QStringLiteral("Restart Game") &&
+            !startGameButton_->isEnabled() && gameStatsButton_->isEnabled();
+        // Only the host asks for a new game; the guest waits and answers.
+        pcIsHost_ = true;
+        setConnectedUi(true);
+        const bool hostRestarts = startGameButton_->isEnabled();
+        directUiBusy_ = SESSION_REQUEST_RESET;
+        setConnectedUi(true);
+        const bool statsHiddenWhileRestartPending = !gameStatsButton_->isEnabled();
+        directUiBusy_ = 0u;
+        pcIsHost_ = false;
+        setConnectedUi(true);
         const bool controlHighlighted =
             chatLogEdit_->currentCharFormat().foreground().color() ==
             QColor(0xff, 0x5a, 0x5a);
@@ -671,14 +830,99 @@ public:
             !chatCanSharePendingControl(QStringLiteral("/resign"),
                                          SESSION_REQUEST_DRAW, false, false);
         directLocalResignPending_ = false;
-        directResignRestartPending_ = false;
         directUiBusy_ = 0u;
         gameOver_ = false;
+        gameClockRunning_ = false;
+        setConnectedUi(true);
+        const bool guestCannotStart = !startGameButton_->isEnabled();
+        pcIsHost_ = originalHost;
+        directSessionReady_ = false;
         chatEdit_->clear();
         setConnectedUi(false);
         return pendingBlocked && completedBlocked && failedRestart &&
-               remoteResign && terminalReasons && controlHighlighted &&
-               regularChatNormal && chatSharesControls;
+               remoteResign && hostRestarts && statsHiddenWhileRestartPending &&
+               terminalReasons && controlHighlighted &&
+               regularChatNormal && chatSharesControls && guestCannotStart;
+    }
+
+    bool testGameStatsProjection()
+    {
+        startGameFromAck();
+        const auto move = [this](const char *text, qint64 seconds) {
+            moveTimerOffsetMs_ = seconds * 1000;
+            moveTimer_.restart();
+            applyDirectLocalMove(static_cast<uint16_t>(nextPly_), QString::fromLatin1(text));
+        };
+        move("e2e4", 3);
+        move("d7d5", 5);
+        move("e4d5", 7);
+        bool ok = game_stats_total(&gameStats_, 0) == 10 &&
+            game_stats_total(&gameStats_, 1) == 5 &&
+            game_stats_longest(&gameStats_, 0) == 7 &&
+            game_stats_at(&gameStats_, 0) == 2 &&
+            game_stats_captured(&gameStats_, 0, 1) == 1;
+        const game_stats_t beforeRejectedLoad = gameStats_;
+        ok = ok && !applyDirectRestore(QByteArray("invalid"), nullptr, nullptr) &&
+            std::memcmp(&gameStats_, &beforeRejectedLoad, sizeof(gameStats_)) == 0;
+        restoreTakebackSnapshot();
+        ok = ok && game_stats_total(&gameStats_, 0) == 3 &&
+            game_stats_captured(&gameStats_, 0, 1) == 0;
+        startGameFromAck();
+        for (const char *text : {"e2e4", "a7a6", "e4e5", "d7d5", "e5d6"}) move(text, 1);
+        ok = ok && game_stats_captured(&gameStats_, 0, 1) == 1;
+        restoreTakebackSnapshot();
+        ok = ok && game_stats_captured(&gameStats_, 0, 1) == 0;
+        netchesszx_save_state_t state = {};
+        std::memset(state.cells, '.', sizeof(state.cells));
+        state.cells[0] = 'Q';  // A previously promoted queen counts as a queen.
+        state.cells[1] = 'r';
+        state.cells[4] = 'k';
+        state.cells[60] = 'K';
+        state.side = NETCHESSZX_SAVE_SIDE_BLACK;
+        state.ply = 1;
+        state.ep = NETCHESSZX_SAVE_EP_NONE;
+        state.host_color = NETCHESSZX_SAVE_HOST_WHITE;
+        state.flags = NETCHESSZX_SAVE_FLAG_ACTIVE;
+        ok = restoreApplyState(state) && ok;
+        move("b8a8", 9);
+        ok = ok && game_stats_captured(&gameStats_, 1, 5) == 1 &&
+            game_stats_balance(&gameStats_) == -9;
+        restoreTakebackSnapshot();
+        ok = ok && game_stats_captured(&gameStats_, 1, 5) == 0;
+        state.cells[0] = '.';
+        state.cells[1] = '.';
+        state.cells[8] = 'P';
+        state.side = NETCHESSZX_SAVE_SIDE_WHITE;
+        state.ply = 20;
+        ok = restoreApplyState(state) && ok;
+        ok = ok && (gameStats_.bytes[GAME_STATS_FLAGS] & GAME_STATS_PARTIAL) &&
+            game_stats_total(&gameStats_, 0) == 0 &&
+            game_stats_moves(&gameStats_, 20, 0) == 0;
+        move("a7a8q", 12);
+        ok = ok && game_stats_balance(&gameStats_) == 0 &&
+            game_stats_moves(&gameStats_, 21, 0) == 1;
+        endGameOver(QStringLiteral("Agreed draw"));
+        setStatusText(QStringLiteral("Waiting for restart"));
+        gameStatsButton_->click();
+        auto *result = boardWidget_->findChild<QLabel *>(QStringLiteral("gameStatsResult"));
+        ok = ok && boardWidget_->gameStatsVisible() && result != nullptr &&
+            result->text() == QStringLiteral("Agreed draw");
+        // A key no longer closes the page; the lit button does.
+        QKeyEvent key(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier, QStringLiteral(" "));
+        QApplication::sendEvent(chatEdit_, &key);
+        ok = ok && boardWidget_->gameStatsVisible() && gameStatsButton_->isChecked();
+        gameStatsButton_->click();
+        ok = ok && !boardWidget_->gameStatsVisible() && !gameStatsButton_->isChecked();
+        gameStatsButton_->click();
+        ok = restoreApplyState(state) && ok && !boardWidget_->gameStatsVisible();
+        startGameFromAck();
+        ok = ok && gameStats_.bytes[GAME_STATS_FLAGS] == 0 &&
+            game_stats_total(&gameStats_, 0) == 0;
+        endGameOver(QStringLiteral("Agreed draw"));
+        gameStatsButton_->click();
+        resetGame(NETCHESSZX_UI_PHASE_DISCONNECTED);
+        return ok && !boardWidget_->gameStatsVisible() &&
+            gameStats_.bytes[GAME_STATS_FLAGS] == 0 && gameResult_.isEmpty();
     }
 
     bool testBoardStateProjection()
@@ -865,10 +1109,51 @@ public:
 
     bool testCancelPendingPieceFlash()
     {
-        const bool pending = static_cast<bool>(flashDone_);
+        const bool pending = boardWidget_->hasPendingPieceFlash();
 
-        invalidatePieceFlash();
+        boardWidget_->invalidatePieceFlash();
         return pending && directUiBusy_ == 0u;
+    }
+
+    bool testClickDrawButton()
+    {
+        if (drawButton_ == nullptr || !drawButton_->isEnabled()) {
+            return false;
+        }
+        drawButton_->click();
+        return true;
+    }
+
+    QString testTurnLabelText() const
+    {
+        return turnLabel_ != nullptr ? turnLabel_->text() : QString();
+    }
+
+    bool testEngineAnnounceKeepsRetrying()
+    {
+        const ClientPreferences saved = prefs_;
+        ClientPreferences bot = prefs_;
+        bot.enginePlays = true;
+        applyPreferences(bot, false);
+        // No session: every attempt is refused.
+        gameClockRunning_ = true;
+        engineAnnounced_ = false;
+        engineAnnounceAttempts_ = 0;
+        engineAnnounceTimer_.setInterval(5);
+        announceEngine();
+        QElapsedTimer wait;
+        wait.start();
+        while (wait.elapsed() < 200) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        }
+        const bool keepsTrying = engineAnnounceTimer_.isActive() &&
+                                 engineAnnounceAttempts_ > 8;
+        engineAnnounceTimer_.stop();
+        engineAnnounceTimer_.setInterval(kEngineAnnounceRetryMs);
+        gameClockRunning_ = false;
+        engineAnnounceAttempts_ = 0;
+        applyPreferences(saved, false);
+        return keepsTrying;
     }
 #endif
 
@@ -1029,6 +1314,7 @@ public:
         auto *roleRow = new QHBoxLayout(roleWidget);
         roleRow->setContentsMargins(0, 0, 0, 0);
         roleRow->setSpacing(8);
+        /* COLOR is last: it hides for guests and must not move the rest. */
         roleRow->addWidget(captionLabel("Role", root), 0, Qt::AlignBaseline);
         roleRow->addWidget(roleHostRadio_, 0, Qt::AlignBaseline);
         roleRow->addWidget(roleGuestRadio_, 0, Qt::AlignBaseline);
@@ -1050,47 +1336,9 @@ public:
         mainRow->setContentsMargins(0, 0, 0, 0);
         mainRow->setSpacing(10);
 
-        auto *boardWidget = new QWidget(root);
-        boardWidget->setObjectName("boardFrame");
-        boardFrame_ = boardWidget;
-        boardWidget->setFixedSize(kBoardCoordSize * 2 + kBoardSquareSize * 8 + 2,
-                                  kBoardCoordSize * 2 + kBoardSquareSize * 8 + 2);
-        boardWidget->setStyleSheet(boardFrameStyle());
-        auto *boardLayout = new QGridLayout(boardWidget);
-        boardLayout->setContentsMargins(1, 1, 1, 1);
-        boardLayout->setSpacing(0);
-        addBoardCoordinates(boardLayout, boardWidget);
-        for (int row = 0; row < 8; ++row) {
-            for (int col = 0; col < 8; ++col) {
-                auto *button = new QPushButton(boardWidget);
-                button->setFixedSize(kBoardSquareSize, kBoardSquareSize);
-                button->setIconSize(QSize(kBoardSquareSize, kBoardSquareSize));
-                button->setFocusPolicy(Qt::StrongFocus);
-                connect(button, &QPushButton::clicked, this, [this, row, col]() {
-                    squareClicked(row, col);
-                });
-                squares_[row][col] = button;
-                setSquareStyle(row, col, squareStyle(row, col, false, false, false, false,
-                                                     false, true, displayCorner(row, col)));
-                boardLayout->addWidget(button, row + 1, col + 1);
-            }
-        }
-        flipBoardButton_ = new QPushButton(QString(QChar(0x21bb)), boardWidget);
-        flipBoardButton_->setAccessibleName(QStringLiteral("Flip board"));
-        flipBoardButton_->setToolTip("Flip board");
-        flipBoardButton_->setFixedSize(kBoardCoordSize - 4, kBoardCoordSize - 4);
-        flipBoardButton_->setFocusPolicy(Qt::StrongFocus);
-        flipBoardButton_->setGeometry(2,
-                                      boardWidget->height() - kBoardCoordSize + 2,
-                                      kBoardCoordSize - 4,
-                                      kBoardCoordSize - 4);
-        flipBoardButton_->setStyleSheet(
-            "QPushButton { background:" SHZ_QUIET "; color:" SHZ_ACCENT ";"
-            " border:1px solid " SHZ_BORDER "; border-radius:" SHZ_R ";"
-            " font-weight:700; font-size:11px; padding:0; min-height:0; }"
-            "QPushButton:hover { background:" SHZ_SURFACE_ALT ";"
-            " border-color:" SHZ_ACCENT "; color:" SHZ_TEXT "; }");
-        flipBoardButton_->raise();
+        auto *boardWidget = new BoardWidget(root);
+        boardWidget_ = boardWidget;
+        boardWidget_->setPosition(board_);
 
         auto *sideWidget = new QWidget(root);
         sideWidget->setObjectName(QStringLiteral("sidePanel"));
@@ -1111,28 +1359,10 @@ public:
         selectedLabel_->setStyleSheet(
             "QLabel { color:" SHZ_TEXT_DIM "; font-size:10px; }");
 
-        showHintsCheck_ = new QCheckBox("Enabled", root);
-        showHintsCheck_->setAccessibleName(QStringLiteral("Show legal move hints"));
-        showHintsCheck_->setChecked(settings.value("ui/showHints", true).toBool());
-        showHintsCheck_->setStyleSheet(
-            "QCheckBox { color:" SHZ_TEXT_DIM "; font-size:10px; spacing:6px; }"
-            "QCheckBox::indicator { width:10px; height:10px; border-radius:3px;"
-            " border:1px solid " SHZ_TEXT_MUTED "; background:" SHZ_SURFACE "; }"
-            "QCheckBox::indicator:hover { border-color:" SHZ_ACCENT "; }"
-            "QCheckBox::indicator:checked { background:" SHZ_ACCENT ";"
-            " border:1px solid " SHZ_ACCENT "; }"
-            "QCheckBox::indicator:disabled { background:" SHZ_DISABLED ";"
-            " border-color:" SHZ_BORDER "; }"
-            "QCheckBox::indicator:checked:disabled { background:" SHZ_TEXT_MUTED ";"
-            " border:1px solid " SHZ_TEXT_MUTED "; }"
-            "QCheckBox:checked:disabled { color:" SHZ_TEXT_DIM "; }"
-        );
-
         auto *settingsButton = new QToolButton(root);
         settingsButton->setText(QString(QChar(0x2699)));
-        settingsButton->setAccessibleName(QStringLiteral("Settings"));
-        settingsButton->setToolTip("Settings");
-        settingsButton->setPopupMode(QToolButton::InstantPopup);
+        settingsButton->setAccessibleName(QStringLiteral("Preferences"));
+        settingsButton->setToolTip(QStringLiteral("Preferences (Ctrl+,)"));
         settingsButton->setFixedSize(32, 32);  // square, like the save/load buttons
         settingsButton->setFocusPolicy(Qt::StrongFocus);
         settingsButton->setStyleSheet(
@@ -1148,7 +1378,60 @@ public:
         chatHeaderRow->setSpacing(6);
         chatHeaderRow->addWidget(captionLabel("Chat", root));
         chatHeaderRow->addStretch(1);
-        actionRow->insertWidget(2, settingsButton);
+        // Stockfish switch: a square glyph button like the gear, shown only
+        // when the engine is installed and enabled in Preferences.
+        engineButton_ = new QToolButton(root);
+        engineButton_->setText(QString(QChar(0x265E)));
+        engineButton_->setCheckable(true);
+        engineButton_->setAccessibleName(QStringLiteral("Stockfish plays this side"));
+        engineButton_->setFixedSize(32, 32);
+        engineButton_->setFocusPolicy(Qt::StrongFocus);
+        // Off is a grey glyph. On wears the engine's violet (the board frame
+        // and turn label colours) and keeps it while locked in a session, so
+        // a game never starts with Stockfish on unnoticed.
+        engineButton_->setStyleSheet(
+            "QToolButton { background:" SHZ_QUIET "; color:" SHZ_TEXT_MUTED ";"
+            " border:1px solid " SHZ_BORDER "; border-radius:" SHZ_R ";"
+            " font-weight:700; font-size:17px; padding:0; }"
+            "QToolButton:hover { background:" SHZ_SURFACE_ALT ";"
+            " border-color:" SHZ_ACCENT "; color:" SHZ_TEXT "; }"
+            "QToolButton:checked { background:" SHZ_BOT_FILL ";"
+            " border:2px solid " SHZ_BOT "; color:#ffffff; }"
+            "QToolButton:checked:hover { background:" SHZ_BOT_HIT_EDGE ";"
+            " border-color:" SHZ_BOT_HIT "; }"
+            "QToolButton:disabled { color:" SHZ_BORDER "; }"
+            "QToolButton:checked:disabled { background:" SHZ_BOT_FILL ";"
+            " border-color:" SHZ_BOT "; color:" SHZ_TEXT_DIM "; }");
+        actionRow->insertWidget(2, engineButton_);
+        actionRow->insertWidget(3, settingsButton);
+        auto *helpButton = new QToolButton(root);
+        helpButton->setText(QStringLiteral("?"));
+        helpButton->setAccessibleName(QStringLiteral("Help"));
+        helpButton->setToolTip(QStringLiteral("Help and manual (F1)"));
+        helpButton->setFixedSize(32, 32);
+        helpButton->setFocusPolicy(Qt::StrongFocus);
+        helpButton->setStyleSheet(settingsButton->styleSheet());
+        actionRow->insertWidget(4, helpButton);
+        connect(settingsButton, &QToolButton::clicked, this, [this]() { openPreferences(); });
+        connect(engineButton_, &QToolButton::clicked, this, [this](bool on) {
+            setEnginePlays(on);
+        });
+        connect(helpButton, &QToolButton::clicked, this, [this]() { openHelp(); });
+        connect(new QShortcut(QKeySequence::HelpContents, this), &QShortcut::activated,
+                this, [this]() { openHelp(); });
+        connect(new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma), this),
+                &QShortcut::activated, this, [this]() { openPreferences(); });
+#ifdef Q_OS_MACOS
+        {
+            QMenu *appMenu = menuBar()->addMenu(QStringLiteral("Shatranj"));
+            QAction *prefsAction = appMenu->addAction(QStringLiteral("Preferences..."));
+            prefsAction->setMenuRole(QAction::PreferencesRole);
+            connect(prefsAction, &QAction::triggered, this, [this]() { openPreferences(); });
+            QMenu *helpMenu = menuBar()->addMenu(QStringLiteral("Help"));
+            connect(helpMenu->addAction(QStringLiteral("Shatranj Help")), &QAction::triggered,
+                    this, [this]() { openHelp(); });
+        }
+#endif
         sidePanel->addLayout(chatHeaderRow);
         chatLogEdit_ = new QPlainTextEdit(root);
         chatLogEdit_->setAccessibleName(QStringLiteral("Chat log"));
@@ -1165,34 +1448,13 @@ public:
         auto *chatControls = new QVBoxLayout();
         chatControls->setSpacing(4);
 
-        chatEdit_ = new QLineEdit(root);
-        chatEdit_->setAccessibleName(QStringLiteral("Chat message or move"));
-        chatEdit_->setPlaceholderText("Message or move (e2e4)");
-        chatEdit_->setClearButtonEnabled(true);
-        chatEdit_->setMaxLength(kChatTextMax);
-        chatEdit_->setMinimumHeight(32);
-        chatEdit_->setStyleSheet(
-            "QLineEdit { background:#202b35; color:#ffffff;"
-            " border:1px solid " SHZ_ACCENT "; border-radius:" SHZ_R ";"
-            " padding:4px 8px; selection-background-color:" SHZ_ACCENT_DEEP ";"
-            " selection-color:" SHZ_WELL "; }"
-            "QLineEdit:focus { background:#243444;"
-            " border:1px solid " SHZ_ACCENT_SOFT "; }");
-        chatEdit_->installEventFilter(this);
-        moveEdit_ = chatEdit_;
+        chatEdit_ = new CommandInputWidget(kChatTextMax, root);
         chatButton_ = new QPushButton("SEND", root);
         chatButton_->setEnabled(false);
         configureActionButton(chatButton_);
         chatButton_->setMinimumSize(72, 32);
         setWidgetStyle(chatButton_, chatButtonStyle(false));
 
-        chatCountLabel_ = new QLabel(chatEdit_);
-        chatCountLabel_->setAccessibleName(QStringLiteral("Chat character count"));
-        chatCountLabel_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-        chatCountLabel_->setStyleSheet(
-            "QLabel { color:" SHZ_TEXT_MUTED "; font-size:9px;"
-            " background:transparent; padding:0; }");
-        chatCountLabel_->setText(QStringLiteral("0/%1").arg(kChatTextMax));
         takebackButton_ = new QPushButton(root);
         resetIconButton_ = new QPushButton(root);
         drawButton_ = new QPushButton(root);
@@ -1244,66 +1506,6 @@ public:
         chatControls->addWidget(chatEdit_);
         chatControls->addLayout(chatActionRow);
         sidePanel->addLayout(chatControls);
-        boardCombo_ = new QComboBox(root);
-        boardCombo_->setAccessibleName(QStringLiteral("Chessboard"));
-        boardCombo_->setToolTip("Chessboard");
-        pieceCombo_ = new QComboBox(root);
-        pieceCombo_->setAccessibleName(QStringLiteral("Piece set"));
-        pieceCombo_->setToolTip("Piece set");
-        boardCombo_->addItem("Default board");
-        {
-            const QStringList boards = PieceRenderer::boardTextures();
-            for (const QString &b : boards) {
-                QFileInfo fi(b);
-                boardCombo_->addItem(fi.completeBaseName(), b);
-            }
-        }
-        {
-            const QStringList sets = PieceRenderer::pieceSets();
-            for (const QString &s : sets) pieceCombo_->addItem(s, s);
-        }
-
-        auto *settingsMenu = new QMenu(settingsButton);
-        settingsMenu->setStyleSheet(
-            "QMenu { background:" SHZ_SURFACE "; color:" SHZ_TEXT ";"
-            " border:1px solid " SHZ_BORDER "; border-radius:" SHZ_R "; }");
-        auto *settingsPanel = new QWidget(settingsMenu);
-        auto *settingsLayout = new QGridLayout(settingsPanel);
-        settingsLayout->setContentsMargins(8, 8, 8, 8);
-        settingsLayout->setHorizontalSpacing(8);
-        settingsLayout->setVerticalSpacing(6);
-        settingsLayout->addWidget(captionLabel("Chessboard", settingsPanel), 0, 0);
-        settingsLayout->addWidget(boardCombo_, 0, 1);
-        settingsLayout->addWidget(captionLabel("Piece Set", settingsPanel), 1, 0);
-        settingsLayout->addWidget(pieceCombo_, 1, 1);
-        settingsLayout->addWidget(captionLabel("Hints", settingsPanel), 2, 0);
-        settingsLayout->addWidget(showHintsCheck_, 2, 1);
-        settingsLayout->setColumnStretch(1, 1);
-        auto *settingsAction = new QWidgetAction(settingsMenu);
-        settingsAction->setDefaultWidget(settingsPanel);
-        settingsMenu->addAction(settingsAction);
-        settingsButton->setMenu(settingsMenu);
-        connect(boardCombo_, &QComboBox::currentIndexChanged, this, [this]() { applyBoardTexture(); });
-        connect(pieceCombo_, &QComboBox::currentIndexChanged, this, [this]() { applyPieceSet(); });
-        // Restore saved preferences
-        {
-            const QSignalBlocker boardBlocker(boardCombo_);
-            const QSignalBlocker pieceBlocker(pieceCombo_);
-            const QString savedBoard = settings.value("appearance/board", "").toString();
-            const QString savedPieces = settings.value("appearance/pieces", "").toString();
-            if (!savedBoard.isEmpty()) {
-                int idx = boardCombo_->findData(savedBoard);
-                if (idx >= 0) boardCombo_->setCurrentIndex(idx);
-            }
-            const QString initialPieces = savedPieces.isEmpty()
-                ? QStringLiteral("merida")
-                : savedPieces;
-            int idx = pieceCombo_->findData(initialPieces);
-            if (idx >= 0) pieceCombo_->setCurrentIndex(idx);
-        }
-        applyBoardTexture();
-        applyPieceSet();
-
         logTitleLabel_ = captionLabel("Moves", root);
         sidePanel->addWidget(logTitleLabel_);
 
@@ -1322,6 +1524,9 @@ public:
         moveTable_->verticalHeader()->hide();
         moveTable_->verticalHeader()->setDefaultSectionSize(18);
         moveTable_->horizontalHeader()->setFixedHeight(21);
+        // Player names start where each column's moves start.
+        moveTable_->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft |
+                                                            Qt::AlignVCenter);
         moveTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
         moveTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
         moveTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
@@ -1374,11 +1579,22 @@ public:
         loadGameButton_->setMinimumSize(32, 32);
         loadGameButton_->setFocusPolicy(Qt::StrongFocus);
         loadGameButton_->setEnabled(false);
+        // A toggle: the icon lights up while the statistics cover the board.
+        gameStatsButton_ = new QPushButton(root);
+        gameStatsButton_->setAccessibleName(QStringLiteral("Game stats"));
+        gameStatsButton_->setToolTip(QStringLiteral("Game stats"));
+        gameStatsButton_->setIcon(gameStatsIcon());
+        gameStatsButton_->setIconSize(QSize(16, 16));
+        gameStatsButton_->setMinimumSize(32, 32);
+        gameStatsButton_->setFocusPolicy(Qt::StrongFocus);
+        gameStatsButton_->setCheckable(true);
+        gameStatsButton_->setEnabled(false);
         logToggleButton_ = new QPushButton("Log", root);
         logToggleButton_->setMinimumSize(kActionButtonWidth, 32);
         logActionRow->addStretch(1);
         logActionRow->addWidget(saveGameButton_);
         logActionRow->addWidget(loadGameButton_);
+        logActionRow->addWidget(gameStatsButton_);
         logActionRow->addWidget(logToggleButton_);
         sidePanel->addLayout(logActionRow);
 
@@ -1432,6 +1648,16 @@ public:
         uiTickTimer_.start();
         clockTimer_->start(1000);
 
+        engineAnnounceTimer_.setSingleShot(true);
+        engineAnnounceTimer_.setInterval(kEngineAnnounceRetryMs);
+        connect(&engineAnnounceTimer_, &QTimer::timeout, this, [this]() {
+            announceEngine();
+        });
+        engineMoveTimer_.setSingleShot(true);
+        connect(&engineMoveTimer_, &QTimer::timeout, this, [this]() {
+            playEngineAnswer(engineAnswerFen_, engineAnswerMove_);
+        });
+
         directConnectRetryTimer_ = new QTimer(this);
         directConnectRetryTimer_->setSingleShot(true);
         directConnectRetryTimer_->setInterval(kDirectConnectRetryIntervalMs);
@@ -1439,28 +1665,15 @@ public:
             retryDirectConnection();
         });
 
-        revealTimer_ = new QTimer(this);
-        revealTimer_->setSingleShot(true);
-        connect(revealTimer_, &QTimer::timeout, this, [this]() {
-            advancePieceReveal();
-        });
-        flashTimer_ = new QTimer(this);
-        flashTimer_->setSingleShot(true);
-        connect(flashTimer_, &QTimer::timeout, this, [this]() {
-            advancePieceFlash();
-        });
-        feedbackTimer_ = new QTimer(this);
-        feedbackTimer_->setSingleShot(true);
-        connect(feedbackTimer_, &QTimer::timeout, this, [this]() {
-            advanceDestinationFeedback();
-        });
-
         configureSessionControllerCallbacks();
 
         connectUiSignals();
+        {
+            QSettings stored;
+            applyPreferences(ClientPreferences::load(stored));
+        }
 
         setConnectedUi(false);
-        layoutChatCountLabel();
         updateClockLabels();
         refreshBoard();
         animateBoardPiecesIn();
@@ -1468,16 +1681,7 @@ public:
 
     ~MainWindowImpl() override
     {
-        if (revealTimer_ != nullptr) {
-            revealTimer_->stop();
-        }
-        if (flashTimer_ != nullptr) {
-            flashTimer_->stop();
-        }
-        if (feedbackTimer_ != nullptr) {
-            feedbackTimer_->stop();
-        }
-        flashDone_ = {};
+        delete helpWindow_;
         for (QTcpSocket *sock : findChildren<QTcpSocket *>()) {
             QObject::disconnect(sock, nullptr, this, nullptr);
         }
@@ -1535,11 +1739,12 @@ private:
             }
             connectToOpponent();
         });
-        connect(flipBoardButton_, &QPushButton::clicked, this, [this]() {
-            boardWhiteAtBottom_ = !boardWhiteAtBottom_;
-            coordinatesInitialized_ = false;
+        connect(boardWidget_, &BoardWidget::flipRequested, this, [this]() {
+            boardWidget_->setWhiteAtBottom(!boardWidget_->whiteAtBottom());
             refreshBoard();
         });
+        connect(boardWidget_, &BoardWidget::squareActivated,
+                this, &MainWindowImpl::squareClicked);
         connect(directRadio_, &QRadioButton::toggled, this, [this](bool checked) {
             if (checked) {
                 cancelDirectConnectRetry();
@@ -1610,15 +1815,31 @@ private:
             refreshBoard();
             setConnectedUi(isConnected());
         });
-        #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
-        connect(showHintsCheck_, &QCheckBox::checkStateChanged, this, [this](Qt::CheckState state) {
-        #else
-        connect(showHintsCheck_, &QCheckBox::stateChanged, this, [this](int state) {
-        #endif
-            QSettings settings;
-            settings.setValue("ui/showHints", state == Qt::Checked);
-            refreshBoard();
-        });
+        engine_.onBestMove = [this](const QString &fen, const QString &move) {
+            engineRestarts_ = 0;
+            if (prefs_.engineDelay <= 0) {
+                playEngineAnswer(fen, move);
+                return;
+            }
+            // The pause leaves the opponent time to ask for a takeback. The
+            // request stays pending meanwhile, so refreshes do not ask again.
+            engineAnswerFen_ = fen;
+            engineAnswerMove_ = move;
+            engineMoveTimer_.start(prefs_.engineDelay * 1000);
+        };
+        engine_.onError = [this](const QString &error) {
+            appendLog(QStringLiteral("ERROR: engine: %1").arg(error));
+            forgetEngineRequest();
+            // Never hand the side back to a human: the peer was told STOCKFISH
+            // plays. One restart keeps that identity; if the engine dies again
+            // before it has moved, the operator can resign or disconnect.
+            if (botMode() && engineRestarts_ < kEngineRestartLimit) {
+                ++engineRestarts_;
+                QTimer::singleShot(0, this, [this]() { restartEngine(); });
+                return;
+            }
+            setStatusText(QStringLiteral("Stockfish stopped: resign or disconnect"));
+        };
         connect(hostEdit_, &QLineEdit::textChanged, this, [this]() {
             cancelDirectConnectRetry();
             setConnectedUi(isConnected());
@@ -1657,23 +1878,80 @@ private:
                     return;
                 }
                 setStatusText(NETCHESSZX_UI_CONFIRM_RESTART_GAME);
-                resetPromptOpen_ = true;
-                if (askQuestion(this, NETCHESSZX_UI_CONFIRM_PC_RESTART_TITLE,
-                                NETCHESSZX_UI_CONFIRM_RESTART_GAME,
-                                QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) {
-                    resetPromptOpen_ = false;
-                    disconnectToSetup();
+                bool declined = false;
+                if (!confirmLocalRequest(NETCHESSZX_UI_CONFIRM_PC_RESTART_TITLE,
+                                         NETCHESSZX_UI_CONFIRM_RESTART_GAME,
+                                         &declined)) {
+                    if (declined) {
+                        setStatusText(gameResult_);
+                    }
                     return;
                 }
-                resetPromptOpen_ = false;
                 if (submitSessionLocalRequest(SESSION_REQUEST_RESET)) {
-                    setStatusText(NETCHESSZX_UI_NOTICE_WAITING_RESTART_ACK);
+                    setStatusText(NETCHESSZX_UI_NOTICE_RESTART_REQUESTED);
                     setConnectedUi(true);
                 }
                 return;
             }
             sendGameStart();
         });
+        // The page reads the live sample, so it also works during a game and
+        // is rebuilt after every move while it is open.
+        showGameStatsPanel_ = [this]() {
+            {
+                BoardWidget::GameStatsView view;
+                view.result = gameOver_ ? gameResult_
+                                        : QStringLiteral("Game in progress");
+                view.names[0] = moveHeaderWhite_;
+                view.names[1] = moveHeaderBlack_;
+                view.partial = gameStats_.bytes[GAME_STATS_FLAGS] & GAME_STATS_PARTIAL;
+                const uint16_t ply = static_cast<uint16_t>(nextPly_ - 1);
+                const auto duration = [](uint16_t seconds) {
+                    return QTime(0, 0).addSecs(seconds).toString(seconds >= 3600 ? "h:mm:ss" : "m:ss");
+                };
+                // AT 255 means move 255 or later (common/chess/game_stats.h).
+                const auto moveNumber = [](uint8_t at) {
+                    return QString::number(at) + (at == GAME_STATS_AT_SATURATED ? "+" : "");
+                };
+                const uint8_t whiteShare = game_stats_white_share(&gameStats_);
+                const bool anyLimit = gameStats_.bytes[GAME_STATS_FLAGS] &
+                    (GAME_STATS_TOTAL_LIMIT_WHITE | (GAME_STATS_TOTAL_LIMIT_WHITE << 1));
+                for (uint8_t side = 0; side < 2; ++side) {
+                    const uint16_t moves = game_stats_moves(&gameStats_, ply, side);
+                    const uint16_t total = game_stats_total(&gameStats_, side);
+                    const bool limited = gameStats_.bytes[GAME_STATS_FLAGS] & (GAME_STATS_TOTAL_LIMIT_WHITE << side);
+                    const uint16_t longest = game_stats_longest(&gameStats_, side);
+                    const uint16_t fastest = game_stats_fastest(&gameStats_, side);
+                    view.metrics[side] = QStringList{
+                        duration(total) + (limited ? "+" : ""),
+                        !moves || limited ? QStringLiteral("--") : duration(total / moves),
+                        !moves ? QStringLiteral("--") : duration(longest) + (longest == 65535 && limited ? "+" : ""),
+                        !moves ? QStringLiteral("--") : moveNumber(game_stats_at(&gameStats_, side)),
+                        !moves ? QStringLiteral("--") : duration(fastest) + (fastest == 65535 && limited ? "+" : ""),
+                        !moves ? QStringLiteral("--") : moveNumber(game_stats_fastest_at(&gameStats_, side))
+                    };
+                    if (whiteShare != 255 && !anyLimit) {
+                        view.share[side] = QStringLiteral("%1%").arg(side ? 100 - whiteShare : whiteShare);
+                    }
+                    view.material[side] = QString::number(game_stats_material(&gameStats_, side));
+                    for (uint8_t type = 5; type != 0; --type) {
+                        char piece = " PNBRQ"[type];
+                        if (side == 0) piece = static_cast<char>(piece + ('a' - 'A'));
+                        view.captured[side].append(QString(game_stats_captured(&gameStats_, side, type), QChar(piece)));
+                    }
+                }
+                boardWidget_->showGameStats(view);
+            }
+        };
+        connect(gameStatsButton_, &QPushButton::clicked, this, [this]() {
+            if (boardWidget_->gameStatsVisible()) {
+                boardWidget_->hideGameStats();
+            } else {
+                showGameStatsPanel_();
+            }
+        });
+        connect(boardWidget_, &BoardWidget::gameStatsVisibilityChanged,
+                gameStatsButton_, &QPushButton::setChecked);
         connect(resetButton_, &QPushButton::clicked, this, [this]() {
             const bool connected = isConnected();
             if (connected) {
@@ -1681,16 +1959,12 @@ private:
                     setStatusText("Load in progress");
                     return;
                 }
-                resetPromptOpen_ = true;
-                if (askQuestion(this, NETCHESSZX_UI_CONFIRM_PC_RESET_TITLE,
-                                NETCHESSZX_UI_CONFIRM_PC_RESET_REQUEST,
-                                QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) {
-                    resetPromptOpen_ = false;
+                if (!confirmLocalRequest(NETCHESSZX_UI_CONFIRM_PC_RESET_TITLE,
+                                         NETCHESSZX_UI_CONFIRM_PC_RESET_REQUEST)) {
                     return;
                 }
-                resetPromptOpen_ = false;
                 if (submitSessionLocalRequest(SESSION_REQUEST_RESET)) {
-                    setStatusText(NETCHESSZX_UI_NOTICE_RESET_REQUESTED_ACK);
+                    setStatusText(NETCHESSZX_UI_NOTICE_RESET_REQUESTED);
                     setConnectedUi(true);
                 }
                 return;
@@ -1703,20 +1977,11 @@ private:
             sendChat();
         });
         connect(chatEdit_, &QLineEdit::textChanged, this,
-                [this](const QString &text) {
-            chatInputHistoryIndex_ = static_cast<int>(chatInputHistory_.size());
-            if (chatCountLabel_ != nullptr) {
-                chatCountLabel_->setText(
-                    QStringLiteral("%1/%2").arg(text.size()).arg(kChatTextMax));
-            }
-            layoutChatCountLabel();
+                [this](const QString &) {
             refreshChatButton();
         });
-        connect(chatEdit_, &QLineEdit::returnPressed, this, [this]() {
-            if (chatButton_->isEnabled()) {
-                sendChat();
-            }
-        });
+        connect(chatEdit_, &CommandInputWidget::submitRequested,
+                this, &MainWindowImpl::sendChat);
         connect(saveGameButton_, &QPushButton::clicked, this, [this]() {
             saveGameWithDialog();
         });
@@ -1748,6 +2013,7 @@ private:
         bool gameCheck = false;
         bool localMove = false;
         bool valid = false;
+        uint8_t capturedType = 0u;
     };
 
     void showEvent(QShowEvent *event) override
@@ -1766,40 +2032,10 @@ private:
         if (directServer_ != nullptr) {
             directServer_->close();
         }
+        if (helpWindow_ != nullptr) {
+            helpWindow_->close();
+        }
         QMainWindow::closeEvent(event);
-    }
-
-    bool eventFilter(QObject *watched, QEvent *event) override
-    {
-        if (watched == chatEdit_ &&
-            (event->type() == QEvent::Resize || event->type() == QEvent::Show)) {
-            layoutChatCountLabel();
-        }
-        if (watched == chatEdit_ && event->type() == QEvent::KeyPress) {
-            auto *keyEvent = static_cast<QKeyEvent *>(event);
-            if ((keyEvent->key() == Qt::Key_Up || keyEvent->key() == Qt::Key_Down) &&
-                !chatInputHistory_.isEmpty()) {
-                const int delta = keyEvent->key() == Qt::Key_Up ? -1 : 1;
-                const int historySize = static_cast<int>(chatInputHistory_.size());
-                const int target = qBound(0, chatInputHistoryIndex_ + delta,
-                                          historySize);
-                chatEdit_->setText(target == historySize
-                                       ? QString()
-                                       : chatInputHistory_.at(target));
-                chatInputHistoryIndex_ = target;
-                chatEdit_->selectAll();
-                return true;
-            }
-            const bool isReturn = keyEvent->key() == Qt::Key_Return ||
-                                  keyEvent->key() == Qt::Key_Enter;
-            if (isReturn && keyEvent->modifiers().testFlag(Qt::ControlModifier)) {
-                if (chatButton_->isEnabled()) {
-                    sendChat();
-                }
-                return true;
-            }
-        }
-        return QMainWindow::eventFilter(watched, event);
     }
 
     static QString buildStamp()
@@ -1851,8 +2087,8 @@ private:
                     "(C) 2026 M. Ignacio Monge Garcia<br>"
                     "Version %1 (Build %2)<br>"
                     "<a style=\"color:#f0d58b; text-decoration:none;\" "
-                    "href=\"https://github.com/IgnacioMonge/Shatranj\">"
-                    "github.com/IgnacioMonge/Shatranj</a>"
+                    "href=\"https://github.com/IgnacioMonge/shatranj\">"
+                    "github.com/IgnacioMonge/shatranj</a>"
                     "</div><br>"
                     "<div style=\"color:#c4c7cf; font-size:9pt;\">"
                     "Shatranj: GNU GPL v2.0.<br>"
@@ -1892,68 +2128,22 @@ private:
             return false;
         }
         ChessHelpers::asciiBoardFromCompact(state.board, &board_[0][0]);
+        if (boardWidget_ != nullptr) {
+            boardWidget_->setPosition(board_);
+        }
         return true;
     }
 
     void refreshBoard()
     {
-        refreshBoardCoordinates();
-        for (int displayRow = 0; displayRow < 8; ++displayRow) {
-            for (int displayCol = 0; displayCol < 8; ++displayCol) {
-                const int boardRow = boardRowForDisplay(displayRow);
-                const int boardCol = boardColForDisplay(displayCol);
-                squares_[displayRow][displayCol]->setAccessibleName(
-                    QStringLiteral("Board square %1").arg(ChessHelpers::squareName(boardRow, boardCol).toUpper()));
-                squares_[displayRow][displayCol]->setText(QString());
-                refreshBoardSquareVisual(boardRow, boardCol);
-            }
-        }
+        boardWidget_->refresh();
     }
 
     void refreshChangedBoardSquares(const char previous[8][8])
     {
-        for (int row = 0; row < 8; ++row) {
-            for (int col = 0; col < 8; ++col) {
-                if (previous[row][col] != board_[row][col]) {
-                    refreshBoardSquareVisual(row, col);
-                }
-            }
-        }
+        boardWidget_->refreshChangedSquares(previous);
     }
 
-    static QLabel *coordLabel(const QString &text, QWidget *parent, const QSize &size)
-    {
-        auto *label = new QLabel(text, parent);
-        label->setAlignment(Qt::AlignCenter);
-        label->setFixedSize(size);
-        label->setStyleSheet(
-            "QLabel { color:" SHZ_TEXT "; background:transparent;"
-            " font-weight:700; font-size:11px; letter-spacing:1px;"
-            " padding:0; margin:0; }");
-        return label;
-    }
-
-    void addBoardCoordinates(QGridLayout *layout, QWidget *parent)
-    {
-        for (int col = 0; col < 8; ++col) {
-            fileLabelsTop_[col] = coordLabel(QString(), parent,
-                                             QSize(kBoardSquareSize, kBoardCoordSize));
-            fileLabelsBottom_[col] = coordLabel(QString(), parent,
-                                                QSize(kBoardSquareSize, kBoardCoordSize));
-            layout->addWidget(fileLabelsTop_[col], 0, col + 1, Qt::AlignCenter);
-            layout->addWidget(fileLabelsBottom_[col], 9, col + 1, Qt::AlignCenter);
-        }
-
-        for (int row = 0; row < 8; ++row) {
-            rankLabelsLeft_[row] = coordLabel(QString(), parent,
-                                              QSize(kBoardCoordSize, kBoardSquareSize));
-            rankLabelsRight_[row] = coordLabel(QString(), parent,
-                                               QSize(kBoardCoordSize, kBoardSquareSize));
-            layout->addWidget(rankLabelsLeft_[row], row + 1, 0, Qt::AlignCenter);
-            layout->addWidget(rankLabelsRight_[row], row + 1, 9, Qt::AlignCenter);
-        }
-        refreshBoardCoordinates(true);
-    }
 
     QString checkSuffixAfterMove(bool *stalemate = nullptr) const
     {
@@ -2056,35 +2246,6 @@ private:
         return notation;
     }
 
-    int boardRowForDisplay(int displayRow) const
-    {
-        return boardWhiteAtBottom_ ? displayRow : 7 - displayRow;
-    }
-
-    int boardColForDisplay(int displayCol) const
-    {
-        return boardWhiteAtBottom_ ? displayCol : 7 - displayCol;
-    }
-
-    int displayRowForBoard(int boardRow) const
-    {
-        return boardWhiteAtBottom_ ? boardRow : 7 - boardRow;
-    }
-
-    int displayColForBoard(int boardCol) const
-    {
-        return boardWhiteAtBottom_ ? boardCol : 7 - boardCol;
-    }
-
-    QString displayFileLabel(int displayCol) const
-    {
-        return QString(QChar('A' + boardColForDisplay(displayCol)));
-    }
-
-    QString displayRankLabel(int displayRow) const
-    {
-        return QString(QChar('8' - boardRowForDisplay(displayRow)));
-    }
 
     QString pcSideName() const
     {
@@ -2098,7 +2259,7 @@ private:
 
     QString pcChatName() const
     {
-        return QStringLiteral("PLAYER");
+        return botMode() ? QString::fromLatin1(kBotName) : QStringLiteral("PLAYER");
     }
 
     QString opponentChatName() const
@@ -2106,318 +2267,46 @@ private:
         return QStringLiteral("OPPONENT");
     }
 
-    void syncBoardOrientationWithPcSide()
+    bool syncBoardOrientationWithPcSide()
     {
-        boardWhiteAtBottom_ = pcPlaysWhite_;
-        coordinatesInitialized_ = false;
+        return boardWidget_->setWhiteAtBottom(pcPlaysWhite_);
     }
 
-    void refreshBoardCoordinates(bool force = false)
+    void refreshBoardOrientationFromSide()
     {
-        if (!force && coordinatesInitialized_ && lastCoordinatePcWhite_ == boardWhiteAtBottom_) {
+        if (!syncBoardOrientationWithPcSide()) {
             return;
         }
-        coordinatesInitialized_ = true;
-        lastCoordinatePcWhite_ = boardWhiteAtBottom_;
-
-        for (int col = 0; col < 8; ++col) {
-            const QString file = displayFileLabel(col);
-            if (fileLabelsTop_[col] != nullptr) {
-                fileLabelsTop_[col]->setText(file);
-            }
-            if (fileLabelsBottom_[col] != nullptr) {
-                fileLabelsBottom_[col]->setText(file);
-            }
-        }
-        for (int row = 0; row < 8; ++row) {
-            const QString rank = displayRankLabel(row);
-            if (rankLabelsLeft_[row] != nullptr) {
-                rankLabelsLeft_[row]->setText(rank);
-            }
-            if (rankLabelsRight_[row] != nullptr) {
-                rankLabelsRight_[row]->setText(rank);
-            }
-        }
-    }
-
-    bool isLegalTarget(int row, int col) const
-    {
-        return legalTargets_.contains(ChessHelpers::squareName(row, col));
-    }
-
-    void setSquareStyle(int displayRow, int displayCol, const QString &style)
-    {
-        if (displayRow < 0 || displayRow >= 8 || displayCol < 0 || displayCol >= 8 ||
-            squares_[displayRow][displayCol] == nullptr ||
-            squareStyleCache_[displayRow][displayCol] == style) {
+        if (boardWidget_->piecesVisible() && !gameClockRunning_ && !gameOver_) {
+            boardWidget_->setPiecesVisible(false);
+            refreshBoard();
+            animateBoardPiecesIn();
             return;
         }
-
-        squareStyleCache_[displayRow][displayCol] = style;
-        squares_[displayRow][displayCol]->setStyleSheet(style);
-    }
-
-    void refreshBoardSquareStyle(int row, int col)
-    {
-        if (row < 0 || row >= 8 || col < 0 || col >= 8) {
-            return;
-        }
-
-        const int displayRow = displayRowForBoard(row);
-        const int displayCol = displayColForBoard(col);
-        const bool selected = (row == selectedRow_ && col == selectedCol_);
-        const bool target = (row == targetRow_ && col == targetCol_);
-        const bool legalTarget = isLegalTarget(row, col);
-        const bool feedback = isFeedbackSquare(row, col);
-        const bool hasPiece = (board_[row][col] != '.');
-        const bool showHints = showHintsCheck_ ? showHintsCheck_->isChecked() : true;
-        setSquareStyle(displayRow, displayCol,
-                       squareStyle(row, col, selected, target, legalTarget, feedback, hasPiece,
-                                   showHints, displayCorner(displayRow, displayCol)));
-    }
-
-    void refreshBoardSquareVisual(int row, int col)
-    {
-        refreshBoardSquareStyle(row, col);
-        refreshBoardSquareIcon(row, col, true);
-    }
-
-    void refreshBoardSquareIcon(int row, int col, bool visible)
-    {
-        if (row < 0 || row >= 8 || col < 0 || col >= 8) {
-            return;
-        }
-
-        const int displayRow = displayRowForBoard(row);
-        const int displayCol = displayColForBoard(col);
-        const bool selected = (row == selectedRow_ && col == selectedCol_);
-        const bool target = (row == targetRow_ && col == targetCol_);
-        const bool legalTarget = isLegalTarget(row, col);
-        const bool feedback = isFeedbackSquare(row, col);
-        const bool hasPiece = (board_[row][col] != '.');
-        const bool showHints = showHintsCheck_ ? showHintsCheck_->isChecked() : true;
-        const bool styledBackground = selected || feedback ||
-            (target && hasPiece) ||
-            (legalTarget && showHints && hasPiece);
-        const bool textured = !PieceRenderer::boardTexture().isEmpty() && !styledBackground;
-        squares_[displayRow][displayCol]->setIconSize(
-            QSize(textured ? kBoardSquareSize : kPieceIconSize,
-                  textured ? kBoardSquareSize : kPieceIconSize));
-        squares_[displayRow][displayCol]->setIcon(
-            textured ? PieceRenderer::boardSquareIcon(board_[row][col], row, col,
-                                                      kBoardSquareSize, kPieceIconSize,
-                                                      boardPiecesVisible_ && visible,
-                                                      legalTarget && showHints && !hasPiece,
-                                                      target && !hasPiece,
-                                                      displayCorner(displayRow, displayCol))
-                     : (boardPiecesVisible_ && visible
-                            ? PieceRenderer::pieceIcon(board_[row][col])
-                            : QIcon()));
-    }
-
-    void invalidatePieceReveal()
-    {
-        if (revealTimer_ != nullptr) {
-            revealTimer_->stop();
-        }
-        morphSquares_.clear();
-    }
-
-    void invalidatePieceFlash()
-    {
-        if (flashTimer_ != nullptr) {
-            flashTimer_->stop();
-        }
-        auto done = std::move(flashDone_);
-        flashDone_ = {};
-        if (done) {
-            done(true);
-        }
-    }
-
-    void invalidateDestinationFeedback()
-    {
-        if (feedbackTimer_ != nullptr) {
-            feedbackTimer_->stop();
-        }
-    }
-
-    void revealBoardSquarePair(int rowA, int colA, int rowB, int colB)
-    {
-        refreshBoardSquareIcon(rowA, colA, true);
-        refreshBoardSquareIcon(rowB, colB, true);
-    }
-
-    void advancePieceReveal()
-    {
-        if (revealIsMorph_) {
-            if (revealStep_ >= morphSquares_.size()) {
-                if (revealTimer_ != nullptr) {
-                    revealTimer_->stop();
-                }
-                return;
-            }
-            const QPoint square = morphSquares_.at(revealStep_);
-            refreshBoardSquareIcon(square.x(), square.y(), true);
-            ++revealStep_;
-            if (revealStep_ >= morphSquares_.size()) {
-                if (revealTimer_ != nullptr) {
-                    revealTimer_->stop();
-                }
-                return;
-            }
-            int nextMs = kPieceMorphStepMs;
-            if (revealStep_ == morphMid_) {
-                nextMs += kPieceMorphMiddlePauseMs;
-            }
-            revealTimer_->start(nextMs);
-            return;
-        }
-
-        if (revealStep_ >= 16) {
-            if (revealTimer_ != nullptr) {
-                revealTimer_->stop();
-            }
-            return;
-        }
-        const int i = revealStep_ < 8 ? revealStep_ : revealStep_ - 8;
-        if (revealStep_ < 8) {
-            revealBoardSquarePair(0, i, 7, 7 - i);
-        } else {
-            revealBoardSquarePair(1, 7 - i, 6, i);
-        }
-        ++revealStep_;
-        if (revealStep_ >= 16) {
-            if (revealTimer_ != nullptr) {
-                revealTimer_->stop();
-            }
-            return;
-        }
-        int nextMs = revealStepMs_;
-        if (revealStep_ == 8) {
-            nextMs += revealPauseMs_;
-        }
-        revealTimer_->start(nextMs);
-    }
-
-    void animateBoardPiecePairs(int stepMs, int pauseMs, bool hideFirst)
-    {
-        invalidatePieceReveal();
-        revealIsMorph_ = false;
-        revealStep_ = 0;
-        revealStepMs_ = stepMs;
-        revealPauseMs_ = pauseMs;
-        boardPiecesVisible_ = true;
-        if (hideFirst) {
-            for (int row = 0; row < 8; ++row) {
-                for (int col = 0; col < 8; ++col) {
-                    refreshBoardSquareIcon(row, col, false);
-                }
-            }
-        }
-        advancePieceReveal();
+        refreshBoard();
     }
 
     void animateBoardPiecesIn()
     {
-        animateBoardPiecePairs(kPieceRevealStepMs, kPieceRevealMiddlePauseMs, true);
+        boardWidget_->animatePiecesIn();
     }
 
     void animateBoardPiecesMorph()
     {
-        if (!boardPiecesVisible_) {
-            animateBoardPiecesIn();
-            return;
-        }
-
-        // The setup reveal only walks the home ranks. A mid-game set change
-        // must retarget every occupied square or moved pieces keep the old set.
-        invalidatePieceReveal();
-        revealIsMorph_ = true;
-        revealStep_ = 0;
-        morphSquares_.clear();
-        morphSquares_.reserve(32);
-        for (int row = 0; row < 8; ++row) {
-            for (int col = 0; col < 8; ++col) {
-                if (board_[row][col] != '.') {
-                    morphSquares_.append(QPoint(row, col));
-                } else {
-                    refreshBoardSquareIcon(row, col, true);
-                }
-            }
-        }
-        morphMid_ = morphSquares_.size() / 2;
-        if (!morphSquares_.isEmpty()) {
-            advancePieceReveal();
-        }
-    }
-
-    void advancePieceFlash()
-    {
-        ++flashStep_;
-        if (flashRow_ < 0 || flashCol_ < 0 || flashStep_ > 5) {
-            return;
-        }
-        refreshBoardSquareIcon(flashRow_, flashCol_, (flashStep_ % 2) != 0);
-        if (flashStep_ < 5) {
-            flashTimer_->start(kPieceFlashStepMs);
-            return;
-        }
-        refreshBoardSquareIcon(flashRow_, flashCol_, true);
-        auto done = std::move(flashDone_);
-        flashDone_ = {};
-        if (done) {
-            done(false);
-        }
+        boardWidget_->animatePiecesMorph();
     }
 
     void flashPieceAt(int row, int col, std::function<void(bool)> done)
     {
-        if (row < 0 || row >= 8 || col < 0 || col >= 8 ||
-            board_[row][col] == '.' || !boardPiecesVisible_) {
-            if (done) {
-                done(false);
-            }
-            return;
-        }
-
-        invalidatePieceFlash();
-        flashRow_ = row;
-        flashCol_ = col;
-        flashStep_ = 0;
-        flashDone_ = std::move(done);
-        refreshBoardSquareIcon(flashRow_, flashCol_, false);
-        flashTimer_->start(kPieceFlashStepMs);
+        boardWidget_->flashPieceAt(row, col, std::move(done));
     }
 
-    void refreshBoardSquareStyleByName(const QString &square)
+    void refreshSelectionFootprint(const BoardWidget::SelectionState &previous)
     {
-        if (square.size() < 2) {
-            return;
-        }
-        refreshBoardSquareVisual('8' - square[1].unicode(),
-                                 square[0].unicode() - 'a');
-    }
-
-    void refreshSelectionFootprint(int oldSelectedRow,
-                                   int oldSelectedCol,
-                                   int oldTargetRow,
-                                   int oldTargetCol,
-                                   const QStringList &oldLegalTargets)
-    {
-        for (const QString &target : oldLegalTargets) {
-            refreshBoardSquareStyleByName(target);
-        }
-        refreshBoardSquareVisual(oldSelectedRow, oldSelectedCol);
-        refreshBoardSquareVisual(oldTargetRow, oldTargetCol);
-
-        for (const QString &target : legalTargets_) {
-            refreshBoardSquareStyleByName(target);
-        }
-        refreshBoardSquareVisual(selectedRow_, selectedCol_);
-        refreshBoardSquareVisual(targetRow_, targetCol_);
+        boardWidget_->refreshSelectionFootprint(previous);
         refreshTurnLabel();
     }
+
 
     void configureSessionControllerCallbacks()
     {
@@ -2507,6 +2396,7 @@ private:
     bool initializeDirectSession()
     {
         closeDirectDecisionPrompt();
+        lastAnswer_.at.invalidate();
         directSockets_.clear();
         transportCodec_.clear();
         directLinkUpSeen_.clear();
@@ -2516,7 +2406,6 @@ private:
         directUiBusy_ = false;
         directStartTransitionApplied_ = false;
         directLocalResignPending_ = false;
-        directResignRestartPending_ = false;
         directEndStatus_.clear();
         resetPeerMachineState();
 
@@ -2531,12 +2420,12 @@ private:
     bool initializeMqttSession()
     {
         closeDirectDecisionPrompt();
+        lastAnswer_.at.invalidate();
         transportCodec_.clear();
         directSessionReady_ = false;
         directUiBusy_ = false;
         directStartTransitionApplied_ = false;
         directLocalResignPending_ = false;
-        directResignRestartPending_ = false;
         mqttSessionLinked_ = false;
         mqttSideReady_ = pcIsHost_;
         resetPeerMachineState();
@@ -2552,7 +2441,90 @@ private:
     void resetPeerMachineState()
     {
         peerPlatform_ = NETCHESS_PLAT_UNKNOWN;
+        peerName_.clear();
         localMachSent_ = false;
+        engineAnnounced_ = false;
+        engineAnnounceAttempts_ = 0;
+        engineAnnounceTimer_.stop();
+        refreshMoveTableHeaders();
+    }
+
+    bool botMode() const
+    {
+        return prefs_.enginePlays;
+    }
+
+    // The name announced as MNAME: the reserved bot name while Stockfish
+    // plays, otherwise the user's own (never the bot name).
+    QString localPlayerName() const
+    {
+        return botMode() ? QString::fromLatin1(kBotName) : prefs_.playerName;
+    }
+
+    // Once per session, at the first game start or restore, the peer is told
+    // in its own chat that an engine moves this side. The core refuses CHAT
+    // while a move or restore is pending, so this retries for as long as the
+    // game runs; the timer dies with the game clock or the announcement.
+    void announceEngine()
+    {
+        if (!botMode() || !gameClockRunning_ || engineAnnounced_) {
+            engineAnnounceTimer_.stop();
+            return;
+        }
+        const QString engine = engine_.name().isEmpty() ? QString::fromLatin1(kBotName)
+                                                        : engine_.name().toUpper();
+        const QString text = QStringLiteral("%1 PLAYS %2 - LEVEL %3")
+                                 .arg(engine, pcSideName())
+                                 .arg(prefs_.engineLevel)
+                                 .left(kChatTextMax);
+        if (submitSessionLocalRequest(SESSION_REQUEST_CHAT, 0u, text.toLatin1())) {
+            engineAnnounced_ = true;
+            engineAnnounceTimer_.stop();
+            return;
+        }
+        ++engineAnnounceAttempts_;
+        engineAnnounceTimer_.start();
+    }
+
+    void setPeerName(const QByteArray &name)
+    {
+        /* The reducer already validated the slice; keep the display strict. */
+        const QString peer = normalizedPlayerName(QString::fromLatin1(name));
+
+        if (peer.isEmpty() || peer == peerName_) {
+            return;
+        }
+        peerName_ = peer;
+        appendLog("PEER NAME: " + peerName_);
+        refreshMoveTableHeaders();
+    }
+
+    /* Column labels follow the colours: a player's name replaces its
+       colour once known, and the colour stays as the fallback. */
+    void refreshMoveTableHeaders()
+    {
+        QString white = QStringLiteral("WHITE");
+        QString black = QStringLiteral("BLACK");
+
+        if (directSessionReady_) {
+            const QString local = localPlayerName();
+            QString &mine = pcPlaysWhite_ ? white : black;
+            QString &theirs = pcPlaysWhite_ ? black : white;
+
+            if (!local.isEmpty()) {
+                mine = local;
+            }
+            if (!peerName_.isEmpty()) {
+                theirs = peerName_;
+            }
+        }
+        if (moveTable_ == nullptr ||
+            (white == moveHeaderWhite_ && black == moveHeaderBlack_)) {
+            return;
+        }
+        moveHeaderWhite_ = white;
+        moveHeaderBlack_ = black;
+        moveTable_->setHorizontalHeaderLabels({QString(), white, black});
     }
 
     void setPeerPlatform(uint8_t platform)
@@ -2574,10 +2546,29 @@ private:
         }
         localMachSent_ = true;
 
+        // MNAME goes first: a Spectrum repaints its status bar on MACH, so the
+        // name is already known there ("VS MAC: STOCKFISH" from macOS).
+        const QString name = localPlayerName();
+        if (!name.isEmpty() &&
+            !sendAdvisoryPayload(localNamePayload(name), "MNAME")) {
+            return;
+        }
         const QByteArray payload = localMachPayload();
         if (payload.isEmpty()) {
             appendLog("NOTICE: local machine identity unavailable");
+        } else if (!sendAdvisoryPayload(payload, "MACH")) {
             return;
+        }
+        refreshMoveTableHeaders();
+    }
+
+    /* Informational identity lines: no ACK, no retry, no session effect. */
+    bool sendAdvisoryPayload(const QByteArray &payload, const char *label)
+    {
+        const QString what = QString::fromLatin1(label);
+
+        if (payload.isEmpty()) {
+            return false;
         }
 
         if (isMqttMode()) {
@@ -2586,17 +2577,18 @@ private:
             if (suffix.isEmpty() ||
                 !mqttPublish(QString::fromLatin1(suffix),
                              QString::fromLatin1(payload), false)) {
-                appendLog("NOTICE: MACH announcement not sent");
+                appendLog("NOTICE: " + what + " announcement not sent");
+                return false;
             }
-            return;
+            return true;
         }
 
         const QPointer<QTcpSocket> sock =
             directSocketForLink(directPrimaryLinkId_);
         if (sock == nullptr ||
             sock->state() != QAbstractSocket::ConnectedState) {
-            appendLog("NOTICE: MACH announcement link unavailable");
-            return;
+            appendLog("NOTICE: " + what + " announcement link unavailable");
+            return false;
         }
 
         QByteArray frame = payload;
@@ -2605,16 +2597,18 @@ private:
         if (written == frame.size()) {
             sock->flush();
             appendLog("TX: " + QString::fromLatin1(payload));
-            return;
+            return true;
         }
 
-        appendLog(QString("NOTICE: MACH write %1/%2")
+        appendLog(QString("NOTICE: %1 write %2/%3")
+                      .arg(what)
                       .arg(written)
                       .arg(frame.size()));
         if (written > 0) {
             /* A partial TCP frame corrupts later line framing. */
             sock->abort();
         }
+        return false;
     }
 
     bool submitSessionLocalRequest(uint8_t request,
@@ -2709,16 +2703,7 @@ private:
         }
         pcPlaysWhite_ = color == SESSION_COLOR_WHITE;
         hostPlaysWhite_ = pcIsHost_ ? pcPlaysWhite_ : !pcPlaysWhite_;
-        const bool oldWhiteAtBottom = boardWhiteAtBottom_;
-        syncBoardOrientationWithPcSide();
-        if (boardPiecesVisible_ && !gameClockRunning_ && !gameOver_ &&
-            oldWhiteAtBottom != boardWhiteAtBottom_) {
-            boardPiecesVisible_ = false;
-            refreshBoard();
-            animateBoardPiecesIn();
-        } else {
-            refreshBoard();
-        }
+        refreshBoardOrientationFromSide();
         setConnectedUi(directSessionReady_);
     }
 
@@ -2764,16 +2749,7 @@ private:
             advanceMqttSubscriptionTransition();
             return;
         }
-        const bool oldWhiteAtBottom = boardWhiteAtBottom_;
-        syncBoardOrientationWithPcSide();
-        if (boardPiecesVisible_ && !gameClockRunning_ && !gameOver_ &&
-            oldWhiteAtBottom != boardWhiteAtBottom_) {
-            boardPiecesVisible_ = false;
-            refreshBoard();
-            animateBoardPiecesIn();
-        } else {
-            refreshBoard();
-        }
+        refreshBoardOrientationFromSide();
         setConnectedUi(isConnected());
     }
 
@@ -2784,8 +2760,7 @@ private:
             directSessionReady_ = true;
             directUiBusy_ = false;
             directEndStatus_.clear();
-            setStatusText(pcIsHost_ ? NETCHESSZX_UI_NOTICE_OPPONENT_READY_START
-                                    : NETCHESSZX_UI_NOTICE_OPPONENT_READY_WAIT_START);
+            setStatusText(QString());
             setConnectedUi(true);
             sendLocalMachAnnouncement();
             return;
@@ -2815,7 +2790,6 @@ private:
             directUiBusy_ = false;
             directStartTransitionApplied_ = false;
             directLocalResignPending_ = false;
-            directResignRestartPending_ = false;
             directPrimaryLinkId_ = SESSION_LINK_NONE;
             closeDirectDecisionPrompt();
             QString ended = directEndStatus_;
@@ -2831,7 +2805,7 @@ private:
                     NETCHESSZX_UI_PC_ERROR_CONNECTION_LOST);
             } else if (ended.isEmpty()) {
                 ended = QString::fromLatin1(
-                    NETCHESSZX_UI_ERROR_OPPONENT_DISCONNECTED);
+                    NETCHESSZX_UI_PC_ERROR_CONNECTION_LOST);
             }
             directEndStatus_.clear();
             resetGame(ended);
@@ -2859,22 +2833,16 @@ private:
                 setConnectedUi(directSessionReady_);
                 return;
             }
-            if (control == SESSION_REQUEST_RESET &&
-                directResignRestartPending_) {
-                directUiBusy_ = false;
-                directResignRestartPending_ = false;
-                closeDirectDecisionPrompt();
-                appendLog(NETCHESSZX_UI_ERROR_RESTART_FAILED_GAME_OVER);
-                setStatusText(NETCHESSZX_UI_ERROR_RESTART_FAILED_GAME_OVER);
-                setConnectedUi(directSessionReady_);
-                return;
-            }
-            const QString name = control == SESSION_REQUEST_RESET
-                                     ? QStringLiteral("RESET")
-                                     : QStringLiteral("DRAW");
+            // CANCELLED: this side's request got no answer in time.
+            // EXPIRED: the opponent withdrew its own request.
+            const QString name = control == SESSION_REQUEST_TAKEBACK
+                                     ? QStringLiteral("Takeback request") :
+                                 control == SESSION_REQUEST_RESET
+                                     ? QStringLiteral("Reset request")
+                                     : QStringLiteral("Draw offer");
             const QString message = result == SESSION_CONTROL_CANCELLED
-                                        ? name + QStringLiteral(" cancelled: no response")
-                                        : name + QStringLiteral(" request expired");
+                                        ? name + QStringLiteral(" expired")
+                                        : name + QStringLiteral(" withdrawn");
 
             directUiBusy_ = false;
             closeDirectDecisionPrompt();
@@ -2896,18 +2864,18 @@ private:
             if (rejected) {
                 pcTurn_ = true;
                 setStatusText(QStringLiteral("Move rejected by opponent"));
+                noteEngineMoveRejected();
             }
             break;
         case SESSION_REQUEST_RESET:
             if (rejected) {
                 directUiBusy_ = false;
-                if (directResignRestartPending_) {
-                    directResignRestartPending_ = false;
-                    appendLog(NETCHESSZX_UI_ERROR_RESTART_FAILED_GAME_OVER);
-                    setStatusText(NETCHESSZX_UI_ERROR_RESTART_FAILED_GAME_OVER);
-                } else {
-                    setStatusText(gameOver_ ? NETCHESSZX_UI_ERROR_RESTART_REJECTED
-                                            : NETCHESSZX_UI_ERROR_RESET_REJECTED);
+                setStatusText(gameOver_ ? NETCHESSZX_UI_ERROR_RESTART_REJECTED
+                                        : NETCHESSZX_UI_ERROR_RESET_REJECTED);
+                if (gameOver_) {
+                    // The opponent declined a new game: the session ends.
+                    appendLog(NETCHESSZX_UI_ERROR_RESTART_REJECTED);
+                    leaveAfterDeclinedRestart();
                 }
             } else {
                 applyDirectStartTransition();
@@ -2926,14 +2894,8 @@ private:
             break;
         case SESSION_REQUEST_RESIGN:
             directLocalResignPending_ = false;
-            if (rejected) {
-                directUiBusy_ = false;
-                directResignRestartPending_ = false;
-            } else {
-                directUiBusy_ = SESSION_REQUEST_RESET;
-                directResignRestartPending_ = true;
-                setStatusText(NETCHESSZX_UI_NOTICE_RESTARTING_GAME);
-            }
+            directUiBusy_ = false;
+            if (gameOver_) setStatusText(gameResult_);
             break;
         case SESSION_REQUEST_TAKEBACK:
             directUiBusy_ = false;
@@ -2944,7 +2906,7 @@ private:
             directUiBusy_ = false;
             closeDirectDecisionPrompt();
             if (rejected) {
-                setStatusText(QStringLiteral("Load declined"));
+                setStatusText(QStringLiteral("Load rejected by opponent"));
             }
             break;
         default:
@@ -2987,9 +2949,14 @@ private:
         case SESSION_DELIVER_PLATFORM:
             setPeerPlatform(static_cast<uint8_t>(value));
             break;
+        case SESSION_DELIVER_PEER_NAME:
+            setPeerName(payload);
+            break;
         case SESSION_DELIVER_CONTROL:
             if (value == SESSION_REQUEST_RESET) {
-                appendControlEvent(false, QStringLiteral("RESET"));
+                if (!replayingAnswer_) {
+                    appendControlEvent(false, QStringLiteral("RESET"));
+                }
                 applyDirectStartTransition();
             } else if (value == SESSION_REQUEST_DRAW) {
                 const QString result =
@@ -3074,20 +3041,17 @@ private:
         const QString result = QString::fromLatin1(
             local ? NETCHESSZX_UI_EVENT_RESIGNATION_LOST
                   : NETCHESSZX_UI_EVENT_RESIGNATION_WON);
-        invalidatePieceFlash();
-        invalidatePieceReveal();
-        invalidateDestinationFeedback();
+        boardWidget_->stopAnimations();
         closeDirectDecisionPrompt();
-        directResignRestartPending_ = true;
-        directUiBusy_ = local ? SESSION_REQUEST_RESIGN : SESSION_REQUEST_RESET;
+        directUiBusy_ = local ? SESSION_REQUEST_RESIGN : 0u;
         appendControlEvent(local, result);
         endGameOver(result);
-        setStatusText(local ? NETCHESSZX_UI_NOTICE_WAITING_RESIGN_ACK : result);
+        setStatusText(local ? NETCHESSZX_UI_PC_NOTICE_RESIGNING : result);
     }
 
     void applyDirectStartTransition()
     {
-        if (directStartTransitionApplied_) {
+        if (directStartTransitionApplied_ || replayingAnswer_) {
             return;
         }
         directStartTransitionApplied_ = true;
@@ -3098,8 +3062,38 @@ private:
         });
     }
 
+    static QString declinedRequestText(uint8_t control)
+    {
+        switch (control) {
+        case SESSION_REQUEST_DRAW:
+            return QStringLiteral("Draw declined");
+        case SESSION_REQUEST_TAKEBACK:
+            return QStringLiteral("Takeback declined");
+        case SESSION_REQUEST_RESTORE:
+            return QStringLiteral("Load declined");
+        default:
+            return QStringLiteral("Reset declined");
+        }
+    }
+
     void showDirectDecision(uint8_t requestId, uint8_t control, uint16_t value)
     {
+        // The requester resends every 2.5 s until our reply arrives, so a
+        // retry can cross the reply we just gave. Answer it the same way
+        // instead of asking again (wire contract: duplicates are idempotent).
+        if (lastAnswer_.at.isValid() && lastAnswer_.at.elapsed() < kAnswerReplayMs &&
+            lastAnswer_.control == control && lastAnswer_.value == value &&
+            lastAnswer_.ply == nextPly_) {
+            const uint8_t decision = lastAnswer_.decision;
+            lastAnswer_.at.start();
+            QTimer::singleShot(0, this, [this, requestId, decision]() {
+                // The core delivers synchronously inside submit.
+                replayingAnswer_ = true;
+                submitSessionUserDecision(requestId, decision);
+                replayingAnswer_ = false;
+            });
+            return;
+        }
         if (resetPromptOpen_ ||
             (control == SESSION_REQUEST_TAKEBACK &&
             (!takebackSnapshot_.valid || takebackSnapshot_.localMove ||
@@ -3135,7 +3129,7 @@ private:
         } else if (control == SESSION_REQUEST_RESTORE) {
             title = QStringLiteral("Load Game");
             message = QStringLiteral("Opponent wants to load a saved game. Accept?");
-            setStatusText(QStringLiteral("Load requested"));
+            setStatusText(QStringLiteral("Opponent asks to load a game"));
         } else {
             QTimer::singleShot(0, this, [this, requestId]() {
                 submitSessionUserDecision(requestId, SESSION_DECISION_REJECT);
@@ -3148,7 +3142,7 @@ private:
                                     QMessageBox::Yes | QMessageBox::No, this);
         box->setAttribute(Qt::WA_DeleteOnClose);
         directDecisionBox_ = box;
-        connect(box, &QDialog::finished, this, [this, requestId, control](int result) {
+        connect(box, &QDialog::finished, this, [this, requestId, control, value](int result) {
             if (directDecisionRequestId_ != requestId ||
                 directDecisionControl_ != control) {
                 return;
@@ -3157,12 +3151,22 @@ private:
             directDecisionRequestId_ = 0u;
             directDecisionControl_ = 0u;
             const bool accepted = result == QMessageBox::Yes;
+            // An accepted RESET restarts at ply 1; other answers keep the ply.
+            lastAnswer_.control = control;
+            lastAnswer_.value = value;
+            lastAnswer_.decision = accepted ? SESSION_DECISION_ACCEPT
+                                            : SESSION_DECISION_REJECT;
+            lastAnswer_.ply = accepted && control == SESSION_REQUEST_RESET ? 1 : nextPly_;
+            lastAnswer_.at.start();
             submitSessionUserDecision(requestId, accepted ? SESSION_DECISION_ACCEPT
                                                           : SESSION_DECISION_REJECT);
+            if (!accepted && control == SESSION_REQUEST_RESET && gameOver_) {
+                // Declining a new game after OVER ends the session.
+                leaveAfterDeclinedRestart();
+                return;
+            }
             if (!accepted) {
-                setStatusText(control == SESSION_REQUEST_RESTORE
-                                  ? QStringLiteral("Load declined")
-                                  : QStringLiteral("Request rejected"));
+                setStatusText(declinedRequestText(control));
                 setConnectedUi(directSessionReady_);
             }
         });
@@ -3272,7 +3276,7 @@ private:
                       .arg(directConnectRetryCount_)
                       .arg(hostEdit_->text().trimmed())
                       .arg(portSpin_->value()));
-        setStatusText(NETCHESSZX_UI_NOTICE_CONNECTING_PC);
+        setStatusText(QString());
         socket_->connectToHost(hostEdit_->text().trimmed(),
                                static_cast<quint16>(portSpin_->value()));
         setConnectedUi(false);
@@ -3330,7 +3334,7 @@ private:
             directLinkUpSeen_[directLink] = true;
             if (directLink == directPrimaryLinkId_) {
                 pcTurn_ = false;
-                clearSelection();
+                boardWidget_->clearSelection();
                 chatLogEdit_->clear();
                 setStatusText(NETCHESSZX_UI_NOTICE_WAITING_OPPONENT_APP);
                 setConnectedUi(false);
@@ -3345,7 +3349,7 @@ private:
         }
         linkWatch_.restart();
         pcTurn_ = false;
-        clearSelection();
+        boardWidget_->clearSelection();
         chatLogEdit_->clear();
         setConnectedUi(true);
         mqttHandshake();
@@ -3417,6 +3421,17 @@ private:
         appendLog("DISCONNECTED");
     }
 
+    // A declined restart after OVER ends the session on both clients. Leave
+    // once the session core has handed off the NACK it is sending.
+    void leaveAfterDeclinedRestart()
+    {
+        QTimer::singleShot(0, this, [this]() {
+            if (gameOver_ && isConnected()) {
+                disconnectToSetup();
+            }
+        });
+    }
+
     void disconnectToSetup()
     {
         cancelDirectConnectRetry();
@@ -3449,8 +3464,10 @@ private:
         setStatusText(NETCHESSZX_UI_PHASE_DISCONNECTED);
     }
 
-    void failMqttConnection(const QString &status)
+    // The MQTT detail goes to the log; the user only sees the failure.
+    void failMqttConnection(const QString &detail)
     {
+        const QString status = QString::fromLatin1(NETCHESSZX_UI_PHASE_CONNECTION_FAILED);
         const bool linked = mqttSessionLinked_;
         clearMqttSubscriptionState();
         mqttSessionLinked_ = false;
@@ -3459,7 +3476,7 @@ private:
             (void)sessionController_.linkDown(kMqttLinkId);
         }
         ignoreNextDisconnect_ = true;
-        appendLog("ERROR: " + status);
+        appendLog("ERROR: " + detail);
         if (socket_ != nullptr) {
             socket_->abort();
         }
@@ -3504,83 +3521,10 @@ private:
         handleSocketConnected(accepted);
     }
 
-    bool isFeedbackSquare(int row, int col) const
-    {
-        return feedbackOn_ && row == feedbackRow_ && col == feedbackCol_;
-    }
-
-    static QString squareStyle(int row, int col, bool selected, bool target,
-                               bool legalTarget, bool feedback, bool hasPiece = false,
-                               bool showHints = true,
-                               PieceRenderer::SquareCorner corner = PieceRenderer::CornerNone)
-    {
-        const bool light = ((row + col) % 2) == 0;
-        const bool texturedBoard = !PieceRenderer::boardTexture().isEmpty();
-        QString bg;
-        QString border;
-
-        if (feedback) {
-            bg = SHZ_SQ_HIT;
-            border = "4px solid " SHZ_SQ_HIT_EDGE;
-        } else if (selected) {
-            bg = SHZ_SQ_SEL;
-            border = "3px solid " SHZ_SQ_SEL_EDGE;
-        } else if (target) {
-            if (legalTarget && showHints && !hasPiece && !texturedBoard) {
-                const QString dotColor = "rgba(0, 0, 0, 0.28)";
-                bg = QString("qradialgradient(cx:0.5, cy:0.5, radius:0.12, fx:0.5, fy:0.5, stop:0 %1, stop:0.85 %1, stop:0.9 " SHZ_SQ_TGT ", stop:1.0 " SHZ_SQ_TGT ")").arg(dotColor);
-            } else {
-                bg = SHZ_SQ_TGT;
-            }
-            border = "3px solid " SHZ_SQ_TGT_EDGE;
-        } else if (legalTarget && showHints) {
-            if (hasPiece) {
-                bg = light ? SHZ_SQ_HINT_L : SHZ_SQ_HINT_D;
-                border = "2px solid " SHZ_SQ_HINT_EDGE;
-            } else {
-                const QString baseBg = light ? SHZ_SQ_LIGHT : SHZ_SQ_DARK;
-                const QString dotColor = "rgba(0, 0, 0, 0.25)";
-                bg = QString("qradialgradient(cx:0.5, cy:0.5, radius:0.12, fx:0.5, fy:0.5, stop:0 %1, stop:0.85 %1, stop:0.9 %2, stop:1.0 %2)").arg(dotColor, baseBg);
-                border = "1px solid " SHZ_SQ_EDGE;
-            }
-        } else {
-            bg = light ? SHZ_SQ_LIGHT : SHZ_SQ_DARK;
-            border = "1px solid " SHZ_SQ_EDGE;
-        }
-
-        const QString fg = light || selected || target || feedback ? "#1e1e1e" : "#ffffff";
-        return PieceRenderer::boardSquareStyle(row, col, kBoardSquareSize, bg, fg, border,
-                                               corner);
-    }
-
-    void advanceDestinationFeedback()
-    {
-        ++feedbackStep_;
-        feedbackOn_ = (feedbackStep_ % 2) == 0;
-        refreshBoardSquareVisual(feedbackRow_, feedbackCol_);
-        if (feedbackStep_ < 5) {
-            feedbackTimer_->start(kPieceFlashStepMs);
-            return;
-        }
-        const int row = feedbackRow_;
-        const int col = feedbackCol_;
-        feedbackRow_ = -1;
-        feedbackCol_ = -1;
-        feedbackOn_ = false;
-        refreshBoardSquareVisual(row, col);
-    }
-
     void showDestinationFeedback(int row, int col)
     {
-        invalidateDestinationFeedback();
-        feedbackRow_ = row;
-        feedbackCol_ = col;
-        feedbackOn_ = true;
-        feedbackStep_ = 0;
-        refreshBoardSquareVisual(row, col);
-        feedbackTimer_->start(kPieceFlashStepMs);
+        boardWidget_->showDestinationFeedback(row, col);
     }
-
     QStringList legalTargetsFrom(const QString &from)
     {
         char targets[96];
@@ -3600,40 +3544,25 @@ private:
 #endif
     }
 
-    void clearSelection()
-    {
-        selectedRow_ = -1;
-        selectedCol_ = -1;
-        targetRow_ = -1;
-        targetCol_ = -1;
-        legalTargets_.clear();
-    }
-
     void clearSelectionVisuals()
     {
-        const int oldSelectedRow = selectedRow_;
-        const int oldSelectedCol = selectedCol_;
-        const int oldTargetRow = targetRow_;
-        const int oldTargetCol = targetCol_;
-        const QStringList oldLegalTargets = legalTargets_;
-        clearSelection();
-        refreshSelectionFootprint(oldSelectedRow, oldSelectedCol,
-                                  oldTargetRow, oldTargetCol, oldLegalTargets);
+        const BoardWidget::SelectionState previous = boardWidget_->selection();
+        boardWidget_->clearSelection();
+        refreshSelectionFootprint(previous);
     }
 
-    void squareClicked(int displayRow, int displayCol)
+    void squareClicked(int row, int col)
     {
-        const int row = boardRowForDisplay(displayRow);
-        const int col = boardColForDisplay(displayCol);
         const QString clicked = ChessHelpers::squareName(row, col);
-        const int oldSelectedRow = selectedRow_;
-        const int oldSelectedCol = selectedCol_;
-        const int oldTargetRow = targetRow_;
-        const int oldTargetCol = targetCol_;
-        const QStringList oldLegalTargets = legalTargets_;
+        const BoardWidget::SelectionState previous = boardWidget_->selection();
+
+        if (botMode()) {
+            setStatusBarText(QStringLiteral("Stockfish plays this side"));
+            return;
+        }
 
         if (!canPcMove()) {
-            clearSelection();
+            boardWidget_->clearSelection();
             selectedLabel_->setText("Selected: none");
             if (socket_->state() != QAbstractSocket::ConnectedState) {
                 setStatusText(NETCHESSZX_UI_ERROR_NOT_CONNECTED);
@@ -3645,13 +3574,11 @@ private:
                 setStatusBarText("Not your turn");
                 appendLog(QString("CLICK: %1 ignored, opponent turn").arg(clicked));
             }
-            refreshSelectionFootprint(oldSelectedRow, oldSelectedCol,
-                                      oldTargetRow, oldTargetCol,
-                                      oldLegalTargets);
+            refreshSelectionFootprint(previous);
             return;
         }
 
-        if (selectedRow_ < 0) {
+        if (previous.selectedRow < 0) {
             if (board_[row][col] == '.') {
                 selectedLabel_->setText(QString("Selected: none (%1 empty)").arg(clicked));
                 setStatusText(QString("%1 is empty").arg(clicked));
@@ -3666,122 +3593,111 @@ private:
                 return;
             }
 
-            legalTargets_ = legalTargetsFrom(clicked);
-            if (legalTargets_.isEmpty()) {
-                clearSelection();
+            const QStringList legalTargets = legalTargetsFrom(clicked);
+            if (legalTargets.isEmpty()) {
+                boardWidget_->clearSelection();
                 selectedLabel_->setText(QString("Selected: none (%1 has no legal moves)").arg(clicked));
                 setStatusText(QString("%1 has no legal moves").arg(clicked));
                 appendLog(QString("CLICK: %1 no legal targets").arg(clicked));
-                refreshSelectionFootprint(oldSelectedRow, oldSelectedCol,
-                                          oldTargetRow, oldTargetCol,
-                                          oldLegalTargets);
+                refreshSelectionFootprint(previous);
                 return;
             }
 
-            selectedRow_ = row;
-            selectedCol_ = col;
-            targetRow_ = -1;
-            targetCol_ = -1;
+            boardWidget_->setSelection(row, col, legalTargets);
             selectedLabel_->setText(QString("Selected: %1").arg(clicked));
             chatEdit_->clear();
             refreshChatButton();
             setStatusText(QString("Selected %1 (%2 legal)")
-                                      .arg(clicked).arg(legalTargets_.size()));
+                                      .arg(clicked).arg(legalTargets.size()));
             appendLog(QString("CLICK: selected %1 targets %2")
-                          .arg(clicked, legalTargets_.join(',')));
-            refreshSelectionFootprint(oldSelectedRow, oldSelectedCol,
-                                      oldTargetRow, oldTargetCol,
-                                      oldLegalTargets);
+                          .arg(clicked, legalTargets.join(',')));
+            refreshSelectionFootprint(previous);
             return;
         }
 
-        if (selectedRow_ == row && selectedCol_ == col) {
-            clearSelection();
+        if (previous.selectedRow == row && previous.selectedCol == col) {
+            boardWidget_->clearSelection();
             selectedLabel_->setText("Selected: none");
             setStatusText(NETCHESSZX_UI_NOTICE_SELECTION_CLEARED);
             appendLog(QString("CLICK: cleared %1").arg(clicked));
-            refreshSelectionFootprint(oldSelectedRow, oldSelectedCol,
-                                      oldTargetRow, oldTargetCol,
-                                      oldLegalTargets);
+            refreshSelectionFootprint(previous);
             return;
         }
 
         if (isPcPiece(board_[row][col])) {
-            legalTargets_ = legalTargetsFrom(clicked);
-            if (legalTargets_.isEmpty()) {
-                clearSelection();
+            const QStringList legalTargets = legalTargetsFrom(clicked);
+            if (legalTargets.isEmpty()) {
+                boardWidget_->clearSelection();
                 selectedLabel_->setText(QString("Selected: none (%1 has no legal moves)").arg(clicked));
                 setStatusText(QString("%1 has no legal moves").arg(clicked));
                 appendLog(QString("CLICK: %1 no legal targets").arg(clicked));
-                refreshSelectionFootprint(oldSelectedRow, oldSelectedCol,
-                                          oldTargetRow, oldTargetCol,
-                                          oldLegalTargets);
+                refreshSelectionFootprint(previous);
                 return;
             }
 
-            selectedRow_ = row;
-            selectedCol_ = col;
-            targetRow_ = -1;
-            targetCol_ = -1;
+            boardWidget_->setSelection(row, col, legalTargets);
             selectedLabel_->setText(QString("Selected: %1").arg(clicked));
             chatEdit_->clear();
             refreshChatButton();
             setStatusText(QString("Selected %1 (%2 legal)")
-                                      .arg(clicked).arg(legalTargets_.size()));
+                                      .arg(clicked).arg(legalTargets.size()));
             appendLog(QString("CLICK: selected %1 targets %2")
-                          .arg(clicked, legalTargets_.join(',')));
-            refreshSelectionFootprint(oldSelectedRow, oldSelectedCol,
-                                      oldTargetRow, oldTargetCol,
-                                      oldLegalTargets);
+                          .arg(clicked, legalTargets.join(',')));
+            refreshSelectionFootprint(previous);
             return;
         }
 
-        if (!isLegalTarget(row, col)) {
+        if (!boardWidget_->isLegalTarget(row, col)) {
             setStatusText(QString("Illegal target: %1").arg(clicked));
             appendLog(QString("CLICK: illegal target %1 for %2")
-                          .arg(clicked, ChessHelpers::squareName(selectedRow_, selectedCol_)));
+                          .arg(clicked, ChessHelpers::squareName(
+                                            previous.selectedRow,
+                                            previous.selectedCol)));
             return;
         }
 
-        const char movingPiece = board_[selectedRow_][selectedCol_];
+        const char movingPiece = board_[previous.selectedRow][previous.selectedCol];
         QString promotionSuffix;
         if ((movingPiece == 'P' && row == 0) ||
             (movingPiece == 'p' && row == 7)) {
             const int promoGeneration = gameGeneration_;
-            const int promoSelectedRow = selectedRow_;
-            const int promoSelectedCol = selectedCol_;
+            const int promoSelectedRow = previous.selectedRow;
+            const int promoSelectedCol = previous.selectedCol;
             promotionSuffix = askPromotionPiece();
             if (promotionSuffix.isEmpty()) {
                 return;
             }
             // exec() ran a nested event loop: session signals may have reset or
             // restored the game while the dialog was open.
+            const BoardWidget::SelectionState current = boardWidget_->selection();
             if (gameGeneration_ != promoGeneration ||
                 !canPcMove() ||
-                selectedRow_ != promoSelectedRow ||
-                selectedCol_ != promoSelectedCol ||
-                board_[selectedRow_][selectedCol_] != movingPiece ||
-                !isLegalTarget(row, col)) {
+                current.selectedRow != promoSelectedRow ||
+                current.selectedCol != promoSelectedCol ||
+                board_[current.selectedRow][current.selectedCol] != movingPiece ||
+                !boardWidget_->isLegalTarget(row, col)) {
                 appendLog("CLICK: promotion aborted, game state changed");
                 return;
             }
         }
 
-        const QString move = ChessHelpers::squareName(selectedRow_, selectedCol_) + ChessHelpers::squareName(row, col) + promotionSuffix;
-        moveEdit_->setText(move);
-        targetRow_ = row;
-        targetCol_ = col;
+        const BoardWidget::SelectionState current = boardWidget_->selection();
+        const QString move = ChessHelpers::squareName(
+                                 current.selectedRow, current.selectedCol) +
+                             ChessHelpers::squareName(row, col) + promotionSuffix;
+        chatEdit_->setText(move);
+        boardWidget_->setTarget(row, col);
         selectedLabel_->setText(QString("Selected: %1 -> %2")
-                                    .arg(ChessHelpers::squareName(selectedRow_, selectedCol_), clicked));
-        setStatusBarText(QStringLiteral("Move ready"));
+                                    .arg(ChessHelpers::squareName(
+                                             current.selectedRow,
+                                             current.selectedCol),
+                                         clicked));
+        setStatusBarText(NETCHESSZX_UI_NOTICE_MOVE_READY);
         refreshChatButton();
         appendLog(QString("CLICK: move %1").arg(move));
-        refreshSelectionFootprint(oldSelectedRow, oldSelectedCol,
-                                  oldTargetRow, oldTargetCol,
-                                  oldLegalTargets);
+        refreshSelectionFootprint(previous);
         refreshTurnLabel();
     }
-
     QString askPromotionPiece()
     {
         QDialog dialog(this);
@@ -3902,7 +3818,6 @@ private:
                 setConnectedUi(false);
                 return;
             }
-            setStatusText(NETCHESSZX_UI_NOTICE_LISTENING_OPPONENT);
             setConnectedUi(false);
             return;
         }
@@ -3914,7 +3829,7 @@ private:
                                 .arg(hostSideLetter(), pcSideLetter())
                           : QString("SESSION GUEST host=auto pc=auto"));
         }
-        setStatusText(NETCHESSZX_UI_NOTICE_CONNECTING_PC);
+        setStatusText(QString());
         if (!isMqttMode()) {
             const uint8_t linkId = registerDirectSocket(socket_);
             if (linkId == SESSION_LINK_NONE) {
@@ -3933,9 +3848,10 @@ private:
     void resetGame(const QString &status)
     {
         ++gameGeneration_;
-        invalidatePieceFlash();
-        invalidatePieceReveal();
-        invalidateDestinationFeedback();
+        boardWidget_->hideGameStats();
+        game_stats_reset(&gameStats_, 0u, 0u);
+        gameResult_.clear();
+        boardWidget_->stopAnimations();
         stopGameClock();
         clearTakebackState();
         closeControlPrompt();
@@ -3950,12 +3866,12 @@ private:
         pcTurn_ = false;
         lastMove_.clear();
         clearMoveHistory();
-        boardPiecesVisible_ = false;
-        clearSelection();
+        boardWidget_->setPiecesVisible(false);
+        boardWidget_->clearSelection();
         netchesszx_rules_reset();
         (void)syncBoardFromRules();
         nextPly_ = 1;
-        moveEdit_->clear();
+        chatEdit_->clear();
         selectedLabel_->setText("Selected: none");
         setStatusText(status);
         refreshBoard();
@@ -4014,7 +3930,7 @@ private:
                       &state->game_hour, &state->game_minute, &state->game_second);
         splitElapsed(gameClockRunning_ ? moveTimerOffsetMs_ + moveTimer_.elapsed() : 0,
                       &state->move_hour, &state->move_minute, &state->move_second);
-        const bool viewWhite = forPeer ? !pcPlaysWhite_ : boardWhiteAtBottom_;
+        const bool viewWhite = forPeer ? !pcPlaysWhite_ : boardWidget_->whiteAtBottom();
         state->view_flags = viewWhite ? 0u : NETCHESSZX_SAVE_VIEW_FLIPPED;
         return netchesszx_save_state_validate(state) == NETCHESSZX_SAVE_OK;
     }
@@ -4066,7 +3982,7 @@ private:
 
     bool canSaveGameFile() const
     {
-        return restorePeerReady() && boardPiecesVisible_ && !restoreBusy();
+        return restorePeerReady() && boardWidget_->piecesVisible() && !restoreBusy();
     }
 
     bool canLoadGameFile() const
@@ -4138,7 +4054,7 @@ private:
             setStatusText(QStringLiteral("Load failed"));
             return false;
         }
-        setStatusText(QStringLiteral("Waiting opponent approval"));
+        setStatusText(QStringLiteral("Waiting for opponent approval"));
         refreshSaveLoadButtons();
         return true;
     }
@@ -4282,7 +4198,7 @@ private:
 
             if (row >= 0 && saveSlots[row].used &&
                 loadSaveFilePath(SaveGameStore::slotFilePath(
-                    savesDirectory, saveSlots[row].baseName))) {
+                    savesDirectory, saveSlots[row].fileName))) {
                 refreshSaveLoadButtons();
                 dialog.accept();
             }
@@ -4302,7 +4218,7 @@ private:
                     return;
                 }
                 if (!SaveGameStore::remove(SaveGameStore::slotFilePath(
-                        savesDirectory, saveSlots[row].baseName))) {
+                        savesDirectory, saveSlots[row].fileName))) {
                     QMessageBox::warning(&dialog,
                                          QStringLiteral("Erase saved game"),
                                          QStringLiteral("Could not erase %1.").arg(slotName));
@@ -4334,14 +4250,15 @@ private:
         text.replace('\n', ' ');
         const QString cmd = text.toLower();
         if (ChessHelpers::isMoveSyntaxOk(cmd)) {
-            sendMove(true);
+            sendMove();
             return;
         }
-        chatInputHistory_.append(text);
-        while (chatInputHistory_.size() > 5) {
-            chatInputHistory_.removeFirst();
+        chatEdit_->rememberSubmission(text);
+        if (botMode() && isSessionControlCommand(cmd)) {
+            chatEdit_->clear();
+            setStatusText(QString::fromLatin1(kBotControlsRefused));
+            return;
         }
-        chatInputHistoryIndex_ = static_cast<int>(chatInputHistory_.size());
         if (cmd == "/save" || cmd.startsWith(QStringLiteral("/save "))) {
             if (writeSaveFile(text.mid(5).trimmed())) {
                 chatEdit_->clear();
@@ -4358,19 +4275,19 @@ private:
         }
         if (isSessionControlCommand(cmd) &&
             directLocalResignPending_) {
-            setStatusText(NETCHESSZX_UI_NOTICE_WAITING_RESIGN_ACK);
+            setStatusText(NETCHESSZX_UI_PC_NOTICE_RESIGNING);
             return;
         }
         if (isSessionControlCommand(cmd) &&
-            directResignRestartPending_) {
-            setStatusText(NETCHESSZX_UI_NOTICE_RESIGN_ALREADY_APPLIED);
+            gameOver_) {
+            setStatusText(gameResult_);
             return;
         }
         if (isSessionControlCommand(cmd) &&
             directUiBusy_ != 0u &&
             !(cmd == QStringLiteral("/resign") &&
               resignCanPreemptBusy())) {
-            setStatusText(NETCHESSZX_UI_NOTICE_WAITING_ACK);
+            setStatusText(NETCHESSZX_UI_PHASE_WAITING_OPPONENT);
             return;
         }
         if (cmd == "/resign") {
@@ -4382,21 +4299,13 @@ private:
                 setStatusText("Load in progress");
                 return;
             }
-            resetPromptOpen_ = true;
-            const QMessageBox::StandardButton answer =
-                askQuestion(this, NETCHESSZX_UI_CONFIRM_PC_RESIGN_TITLE,
-                            NETCHESSZX_UI_CONFIRM_RESIGN,
-                            QMessageBox::Yes | QMessageBox::No);
-            if (!resetPromptOpen_) {
-                return;
-            }
-            resetPromptOpen_ = false;
-            if (answer != QMessageBox::Yes) {
+            if (!confirmLocalRequest(NETCHESSZX_UI_CONFIRM_PC_RESIGN_TITLE,
+                                     NETCHESSZX_UI_CONFIRM_RESIGN)) {
                 return;
             }
             directLocalResignPending_ = true;
             if (submitSessionLocalRequest(SESSION_REQUEST_RESIGN)) {
-                setStatusText(NETCHESSZX_UI_NOTICE_WAITING_RESIGN_ACK);
+                setStatusText(NETCHESSZX_UI_PC_NOTICE_RESIGNING);
                 chatEdit_->clear();
             } else {
                 directLocalResignPending_ = false;
@@ -4424,38 +4333,49 @@ private:
         refreshChatButton();
     }
 
+    // Yes/No prompt for a local request: true when confirmed and no session
+    // event closed the prompt meanwhile; `declined` reports a plain No. The
+    // engine is re-armed on close: an answer that arrived while the prompt
+    // was open was dropped, so it must be asked for again.
+    bool confirmLocalRequest(const QString &title, const QString &message,
+                             bool *declined = nullptr)
+    {
+        resetPromptOpen_ = true;
+        const QMessageBox::StandardButton answer =
+            askQuestion(this, title, message, QMessageBox::Yes | QMessageBox::No);
+        const bool interrupted = !resetPromptOpen_;
+        resetPromptOpen_ = false;
+        if (declined != nullptr) {
+            *declined = answer != QMessageBox::Yes;
+        }
+        maybeEngineMove();
+        return !interrupted && answer == QMessageBox::Yes;
+    }
+
     bool requestDraw()
     {
         if (directLocalResignPending_) {
-            setStatusText(NETCHESSZX_UI_NOTICE_WAITING_RESIGN_ACK);
+            setStatusText(NETCHESSZX_UI_PC_NOTICE_RESIGNING);
             return false;
         }
-        if (directResignRestartPending_) {
-            setStatusText(NETCHESSZX_UI_NOTICE_RESIGN_ALREADY_APPLIED);
+        if (gameOver_) {
+            setStatusText(gameResult_);
             return false;
         }
         if (directUiBusy_ != 0u) {
-            setStatusText(NETCHESSZX_UI_NOTICE_WAITING_ACK);
+            setStatusText(NETCHESSZX_UI_PHASE_WAITING_OPPONENT);
             return false;
         }
         if (!gameClockRunning_ || restoreBusy()) {
             setStatusText(NETCHESSZX_UI_ERROR_CANNOT_OFFER_DRAW);
             return false;
         }
-        resetPromptOpen_ = true;
-        const QMessageBox::StandardButton answer =
-            askQuestion(this, NETCHESSZX_UI_CONFIRM_PC_DRAW_TITLE,
-                        NETCHESSZX_UI_CONFIRM_DRAW,
-                        QMessageBox::Yes | QMessageBox::No);
-        if (!resetPromptOpen_) {
-            return false;
-        }
-        resetPromptOpen_ = false;
-        if (answer != QMessageBox::Yes) {
+        if (!confirmLocalRequest(NETCHESSZX_UI_CONFIRM_PC_DRAW_TITLE,
+                                 NETCHESSZX_UI_CONFIRM_DRAW)) {
             return false;
         }
         if (submitSessionLocalRequest(SESSION_REQUEST_DRAW)) {
-            setStatusText(NETCHESSZX_UI_NOTICE_WAITING_DRAW_ACK);
+            setStatusText(NETCHESSZX_UI_NOTICE_DRAW_PENDING);
             return true;
         }
         return false;
@@ -4464,15 +4384,15 @@ private:
     bool requestTakeback()
     {
         if (directLocalResignPending_) {
-            setStatusText(NETCHESSZX_UI_NOTICE_WAITING_RESIGN_ACK);
+            setStatusText(NETCHESSZX_UI_PC_NOTICE_RESIGNING);
             return false;
         }
-        if (directResignRestartPending_) {
-            setStatusText(NETCHESSZX_UI_NOTICE_RESIGN_ALREADY_APPLIED);
+        if (gameOver_) {
+            setStatusText(gameResult_);
             return false;
         }
         if (directUiBusy_ != 0u) {
-            setStatusText(NETCHESSZX_UI_NOTICE_WAITING_ACK);
+            setStatusText(NETCHESSZX_UI_PHASE_WAITING_OPPONENT);
             return false;
         }
         if (!canRequestTakeback()) {
@@ -4480,16 +4400,8 @@ private:
             setStatusText("No move to take back");
             return false;
         }
-        resetPromptOpen_ = true;
-        const QMessageBox::StandardButton answer =
-            askQuestion(this, NETCHESSZX_UI_CONFIRM_PC_TAKEBACK_TITLE,
-                        NETCHESSZX_UI_CONFIRM_PC_TAKEBACK_REQUEST,
-                        QMessageBox::Yes | QMessageBox::No);
-        if (!resetPromptOpen_) {
-            return false;
-        }
-        resetPromptOpen_ = false;
-        if (answer != QMessageBox::Yes) {
+        if (!confirmLocalRequest(NETCHESSZX_UI_CONFIRM_PC_TAKEBACK_TITLE,
+                                 NETCHESSZX_UI_CONFIRM_PC_TAKEBACK_REQUEST)) {
             return false;
         }
         if (!canRequestTakeback()) {
@@ -4519,13 +4431,12 @@ private:
             return;
         }
         if (!pcIsHost_) {
-            setStatusText(isMqttMode() ? NETCHESSZX_UI_PHASE_WAITING_HOST_START :
-                                         NETCHESSZX_UI_PHASE_WAITING_OPPONENT_START);
+            setStatusText(NETCHESSZX_UI_PHASE_WAITING_HOST_START);
             appendLog("START ignored: only host starts");
             return;
         }
         if (!directSessionReady_) {
-            setStatusText(NETCHESSZX_UI_PHASE_WAITING_OPPONENT_SHORT);
+            setStatusText(NETCHESSZX_UI_PHASE_WAITING_OPPONENT);
             appendLog("START ignored: peer not ready");
             return;
         }
@@ -4537,13 +4448,19 @@ private:
         setConnectedUi(true);
     }
 
-    void sendMove(bool confirmed)
+    void sendMove()
     {
-        const QString move = moveEdit_->text().trimmed().toLower();
-        if (!confirmed) {
-            setStatusText(NETCHESSZX_UI_NOTICE_MOVE_READY);
+        if (botMode()) {
+            setStatusBarText(QStringLiteral("Stockfish plays this side"));
             return;
         }
+        if (submitLocalMove(chatEdit_->text().trimmed().toLower())) {
+            chatEdit_->clear();
+        }
+    }
+
+    bool submitLocalMove(const QString &move)
+    {
         if (!canPcMove()) {
             if (socket_->state() != QAbstractSocket::ConnectedState) {
                 appendLog("ERROR: not connected");
@@ -4555,11 +4472,11 @@ private:
                 appendLog("ERROR: opponent moves first; local side waits");
                 setStatusBarText("Not your turn");
             }
-            return;
+            return false;
         }
         if (!ChessHelpers::isMoveSyntaxOk(move)) {
             appendLog("ERROR: move syntax must be e2e4 or e7e8q/r/b/n");
-            return;
+            return false;
         }
         const int fromCol = move[0].unicode() - 'a';
         const int fromRow = '8' - move[1].unicode();
@@ -4569,7 +4486,7 @@ private:
             appendLog(QString("ERROR: you can only move %1 pieces: %2")
                           .arg(pcSideName(), move.left(2)));
             setStatusText(QString("You play %1").arg(pcSideName()));
-            return;
+            return false;
         }
 
         QElapsedTimer sendPrepTimer;
@@ -4581,13 +4498,13 @@ private:
                 appendLog(QString("ERROR: %1: %2")
                               .arg(QString::fromLatin1(netchesszx_error_string(legalRc)), move));
                 setStatusText(QString("Illegal move: %1").arg(move));
-                return;
+                return false;
             }
         }
 
         if (!submitSessionLocalRequest(SESSION_REQUEST_MOVE, 0u,
                                        moveBytes)) {
-            return;
+            return false;
         }
         const qint64 prepMs = sendPrepTimer.elapsed();
         if (prepMs > kMoveSendWarnMs) {
@@ -4595,10 +4512,236 @@ private:
         }
 
         clearSelectionVisuals();
-        moveEdit_->clear();
         showDestinationFeedback(toRow, toCol);
         setStatusText(NETCHESSZX_UI_PHASE_WAITING_OPPONENT);
         setConnectedUi(true);
+        return true;
+    }
+
+    QString currentFen() const
+    {
+        CompactRulesState state = {};
+        if (netchesszx_rules_save(&state, sizeof(state)) != NETCHESSZX_OK) {
+            return QString();
+        }
+        return ChessHelpers::fenFromCompact(state, (nextPly_ - 1) / 2 + 1);
+    }
+
+    bool sessionLocked() const
+    {
+        return isConnected() || isConnecting() || isDirectListening();
+    }
+
+    // Main-window shortcut for Preferences > Engine > "Stockfish plays my side".
+    void setEnginePlays(bool on)
+    {
+        if (sessionLocked()) {
+            refreshEngineToggle();
+            return;
+        }
+        if (on && !QFileInfo::exists(prefs_.enginePath)) {
+            refreshEngineToggle();
+            openPreferences(PreferencesDialog::EngineTab);
+            return;
+        }
+        ClientPreferences next = prefs_;
+        next.enginePlays = on;
+        QSettings settings;
+        next.save(settings);
+        applyPreferences(ClientPreferences::load(settings));
+    }
+
+    void refreshEngineToggle()
+    {
+        const QSignalBlocker blocker(engineButton_);
+        engineButton_->setChecked(botMode());
+        engineButton_->setVisible(prefs_.engineShown);
+        engineButton_->setEnabled(!sessionLocked());
+        // The tooltip always states who plays, then what a click would do.
+        const QString state =
+            botMode() ? QStringLiteral("Stockfish plays your side (level %1)")
+                            .arg(prefs_.engineLevel)
+                      : QStringLiteral("You play your side");
+        engineButton_->setToolTip(
+            sessionLocked() ? state + QStringLiteral(": locked during a session.")
+            : botMode()     ? state + QStringLiteral(" - click to play yourself.")
+                            : state + QStringLiteral(" - click to let Stockfish play"
+                                                     " (level %1).").arg(prefs_.engineLevel));
+        refreshStatusBar();
+    }
+
+    void openPreferences(PreferencesDialog::Tab tab = PreferencesDialog::BoardTab)
+    {
+        const bool locked = sessionLocked();
+        // Outside a session the engine may be updated or removed: release it.
+        if (!locked) {
+            engine_.stop();
+        }
+        PreferencesDialog dialog(prefs_, locked, this);
+        dialog.setWindowModality(Qt::WindowModal);
+        dialog.onHelp = [this](ManualSection section) { openHelp(section); };
+        dialog.showTab(tab);
+        if (dialog.exec() == QDialog::Accepted) {
+            ClientPreferences next = dialog.preferences();
+            if (locked) {
+                // Identity and engine are fixed for the session.
+                next.playerName = prefs_.playerName;
+                next.enginePlays = prefs_.enginePlays;
+                next.engineShown = prefs_.engineShown;
+                next.engineLevel = prefs_.engineLevel;
+                next.engineDelay = prefs_.engineDelay;
+                next.enginePath = prefs_.enginePath;
+            }
+            QSettings settings;
+            next.save(settings);
+            applyPreferences(ClientPreferences::load(settings));
+        } else if (!locked) {
+            applyPreferences(prefs_);
+        }
+    }
+
+    void openHelp()
+    {
+        if (helpWindow_ == nullptr) {
+            // Top level without a parent, so a modal Preferences never blocks it.
+            helpWindow_ = new HelpWindow(nullptr);
+            helpWindow_->setStyleSheet(appStyleSheet() + helpWindow_->styleSheet());
+        }
+        helpWindow_->show();
+        helpWindow_->raise();
+        helpWindow_->activateWindow();
+    }
+
+    void openHelp(ManualSection section)
+    {
+        openHelp();
+        helpWindow_->showSection(section);
+    }
+
+    // Applies stored preferences; startEngine false only for tests.
+    void applyPreferences(const ClientPreferences &next, bool startEngine = true)
+    {
+        const bool first = !prefsApplied_;
+        const ClientPreferences previous = prefs_;
+        prefsApplied_ = true;
+        prefs_ = next;
+
+        if (first || next.boardTexture != previous.boardTexture) {
+            PieceRenderer::setBoardTexture(next.boardTexture);
+            boardWidget_->refreshFrameStyle();
+        }
+        if (first || next.pieceSet != previous.pieceSet) {
+            PieceRenderer::setPieceSet(next.pieceSet);
+            if (!first && boardWidget_->piecesVisible()) {
+                animateBoardPiecesMorph();
+            }
+        }
+        boardWidget_->setShowHints(next.showHints);
+
+        if (!prefs_.enginePlays) {
+            engine_.stop();
+        } else if (startEngine && !engine_.running()) {
+            engineRestarts_ = 0;
+            if (!QFileInfo::exists(prefs_.enginePath) ||
+                !engine_.start(prefs_.enginePath, prefs_.engineLevel)) {
+                appendLog(QStringLiteral("ERROR: Stockfish not available: %1")
+                              .arg(prefs_.enginePath));
+                prefs_.enginePlays = false;
+                QSettings settings;
+                prefs_.save(settings);
+                setStatusText(QStringLiteral("Stockfish not found: you play this side"));
+            }
+        } else {
+            engine_.setSkill(prefs_.engineLevel);
+        }
+
+        refreshEngineToggle();
+        boardWidget_->setBotMode(botMode());
+        forgetEngineRequest();
+        refreshMoveTableHeaders();
+        refreshBoard();
+        if (!first) {
+            setConnectedUi(isConnected());
+        }
+    }
+
+    // Called from every UI refresh; asks once per position while it is our turn.
+    void maybeEngineMove()
+    {
+        if (!botMode() || !engine_.running() || gameOver_ || !canPcMove() ||
+            engineHalted()) {
+            forgetEngineRequest();
+            return;
+        }
+        const QString fen = currentFen();
+        if (fen.isEmpty() || fen == engineRequestedFen_) {
+            return;
+        }
+        forgetEngineRequest();
+        engineRequestedFen_ = fen;
+        engine_.request(fen, kEngineMoveTimeMs);
+    }
+
+    // The search is answered, now or after the pause. If the answer cannot be
+    // played (a local prompt, a takeback, a restore or a manual move overtook
+    // it), the next refresh asks again instead of waiting forever.
+    void playEngineAnswer(const QString &fen, const QString &move)
+    {
+        engineRequestedFen_.clear();
+        if (botMode() && canPcMove() && fen == currentFen()) {
+            (void)submitLocalMove(move);
+        }
+    }
+
+    // Drops the search in flight and an answer still waiting out its pause.
+    void forgetEngineRequest()
+    {
+        engineRequestedFen_.clear();
+        engineMoveTimer_.stop();
+    }
+
+    // One attempt to bring a dead engine back with the same path and level,
+    // so the STOCKFISH identity announced to the peer stays true.
+    void restartEngine()
+    {
+        if (!botMode() || engine_.running()) {
+            return;
+        }
+        if (QFileInfo::exists(prefs_.enginePath) &&
+            engine_.start(prefs_.enginePath, prefs_.engineLevel)) {
+            appendLog(QStringLiteral("Stockfish restarted"));
+            setConnectedUi(isConnected());
+            return;
+        }
+        setStatusText(QStringLiteral("Stockfish stopped: resign or disconnect"));
+    }
+
+    // The peer refused the engine's move for the current position often
+    // enough: the boards disagree, and repeating the move would only loop.
+    bool engineHalted() const
+    {
+        return engineMoveRejections_ >= kEngineRejectLimit &&
+               engineRejectedFen_ == currentFen();
+    }
+
+    // A fresh position starts a new count, so a takeback, reset or restore
+    // lets the engine try again.
+    void noteEngineMoveRejected()
+    {
+        if (!botMode()) {
+            return;
+        }
+        const QString fen = currentFen();
+        if (fen != engineRejectedFen_) {
+            engineRejectedFen_ = fen;
+            engineMoveRejections_ = 0;
+        }
+        ++engineMoveRejections_;
+        if (engineHalted()) {
+            appendLog(QStringLiteral("Stockfish stopped: the opponent rejected its move %1 times")
+                          .arg(engineMoveRejections_));
+            setStatusText(QStringLiteral("Stockfish stopped: opponent rejected its move"));
+        }
     }
 
     void consumeReadyRead(QTcpSocket *sock)
@@ -4666,6 +4809,9 @@ private:
         const bool colorVisible = pcIsHost_;
         const bool colorEnabled = enabled && pcIsHost_;
 
+        if (engineButton_) {
+            refreshEngineToggle();
+        }
         if (roleHostRadio_) {
             roleHostRadio_->setEnabled(enabled);
         }
@@ -4783,7 +4929,7 @@ private:
         const QByteArray packet = DesktopTransportCodec::encodeMqttConnect(
             clientId, 20, willTopic, willPayload, useWill);
         appendLog("CONNECTED TCP MQTT");
-        setStatusText(NETCHESSZX_UI_NOTICE_MQTT_CONNECTING);
+        setStatusText(NETCHESSZX_UI_NOTICE_MQTT_JOINING);
         (void)writeMqttPacket(packet, "CONNECT");
     }
 
@@ -4846,9 +4992,7 @@ private:
     {
         if (!mqttSubackPending_.isEmpty() ||
             !mqttUnsubackPending_.isEmpty()) {
-            const int pending = mqttSubackPending_.size() +
-                                mqttUnsubackPending_.size();
-            setStatusText(QString("MQTT subscribing... %1").arg(pending));
+            setStatusText(NETCHESSZX_UI_NOTICE_MQTT_JOINING);
             return;
         }
 
@@ -4863,8 +5007,7 @@ private:
                 }
             }
             if (!mqttUnsubackPending_.isEmpty()) {
-                setStatusText(QString("MQTT switching side... %1")
-                                  .arg(mqttUnsubackPending_.size()));
+                setStatusText(NETCHESSZX_UI_NOTICE_MQTT_JOINING);
                 return;
             }
         }
@@ -4878,8 +5021,7 @@ private:
         if (mqttSideTransitionPending_) {
             mqttSideTransitionPending_ = false;
             mqttSideReady_ = true;
-            syncBoardOrientationWithPcSide();
-            refreshBoard();
+            refreshBoardOrientationFromSide();
             appendLog("MQTT SIDE READY");
             setConnectedUi(isConnected());
             sessionController_.pump();
@@ -4889,8 +5031,7 @@ private:
 
         mqttSideReady_ = pcIsHost_;
         setConnectedUi(true);
-        setStatusText(pcIsHost_ ? "MQTT link established - waiting opponent"
-                                : "MQTT link established - waiting host");
+        setStatusText(QString());
         appendLog("MQTT READY");
         if (!mqttSessionLinked_) {
             mqttSessionLinked_ = true;
@@ -4954,7 +5095,7 @@ private:
                 failMqttConnection("MQTT subscribe send failed");
                 return;
             }
-            setStatusText(NETCHESSZX_UI_NOTICE_MQTT_SUBSCRIBING);
+            setStatusText(NETCHESSZX_UI_NOTICE_MQTT_JOINING);
             return;
         }
 
@@ -5055,6 +5196,7 @@ private:
         closeControlPrompt();
         clearTakebackState();
         gameOver_ = true;
+        gameResult_ = message;
         pcTurn_ = false;
         stopGameClock();
         appendLog(message);
@@ -5091,8 +5233,8 @@ private:
             return false;
         }
         ++gameGeneration_;
-        invalidatePieceFlash();
-        invalidateDestinationFeedback();
+        boardWidget_->invalidatePieceFlash();
+        boardWidget_->invalidateDestinationFeedback();
         hostPlaysWhite_ = (st.host_color == NETCHESSZX_SAVE_HOST_WHITE);
         pcPlaysWhite_ = pcIsHost_ ? hostPlaysWhite_ : !hostPlaysWhite_;
         clearTakebackState();
@@ -5100,8 +5242,11 @@ private:
         closeDirectDecisionPrompt();
         directUiBusy_ = false;
         nextPly_ = static_cast<int>(st.ply) + 1;
+        boardWidget_->hideGameStats();
+        game_stats_reset(&gameStats_, st.ply, 1u);
         const bool restoredActive = (st.flags & NETCHESSZX_SAVE_FLAG_ACTIVE) != 0u;
         gameOver_ = (st.flags & NETCHESSZX_SAVE_FLAG_GAME_OVER) != 0u;
+        gameResult_ = gameOver_ ? QStringLiteral("Game over (loaded)") : QString();
         gameCheck_ = (st.flags & NETCHESSZX_SAVE_FLAG_CHECK) != 0u;
         pcTurn_ = restoredActive && !gameOver_ &&
             ((st.side == NETCHESSZX_SAVE_SIDE_WHITE) == pcPlaysWhite_);
@@ -5110,12 +5255,11 @@ private:
         appendMoveRecord(static_cast<int>(st.ply),
                          QStringLiteral(NETCHESSZX_UI_EVENT_RESTORED),
                          QString());
-        boardPiecesVisible_ = true;
-        clearSelection();
-        moveEdit_->clear();
+        boardWidget_->setPiecesVisible(true);
+        boardWidget_->clearSelection();
+        chatEdit_->clear();
         selectedLabel_->setText("Selected: none");
         syncBoardOrientationWithPcSide();
-        coordinatesInitialized_ = false;
         refreshBoard();
         if (restoredActive && !gameOver_) {
             startGameClock(elapsedFromSave(st.game_hour, st.game_minute, st.game_second),
@@ -5125,6 +5269,7 @@ private:
         }
         refreshTurnLabel();
         setConnectedUi(true);
+        QTimer::singleShot(0, this, [this]() { announceEngine(); });
         return true;
     }
 
@@ -5199,9 +5344,13 @@ private:
         }
         lastMove_ = takebackSnapshot_.lastMove;
         nextPly_ = takebackSnapshot_.nextPly;
+        game_stats_takeback(&gameStats_, static_cast<uint16_t>(nextPly_ - 1),
+                            takebackSnapshot_.capturedType);
         pcTurn_ = takebackSnapshot_.pcTurn;
         gameCheck_ = takebackSnapshot_.gameCheck;
         gameOver_ = false;
+        gameResult_.clear();
+        boardWidget_->hideGameStats();
         selectedLabel_->setText("Selected: none");
         clearTakebackState();
         clearSelectionVisuals();
@@ -5233,6 +5382,16 @@ private:
     bool applyMoveToBoard(const QString &move, QString *checkSuffix = nullptr,
                           bool *stalemate = nullptr)
     {
+        if (!ChessHelpers::isMoveSyntaxOk(move)) return false;
+        const int fromRow = '8' - move[1].toLatin1();
+        const int fromCol = move[0].toLatin1() - 'a';
+        const int toRow = '8' - move[3].toLatin1();
+        const int toCol = move[2].toLatin1() - 'a';
+        char captured = board_[toRow][toCol];
+        if (captured == '.' && fromCol != toCol &&
+            (board_[fromRow][fromCol] == 'P' || board_[fromRow][fromCol] == 'p')) {
+            captured = board_[fromRow][toCol];
+        }
         const QByteArray moveBytes = move.toLatin1();
         const int legalRc = netchesszx_rules_play(moveBytes.constData());
         if (legalRc != NETCHESSZX_OK) {
@@ -5248,6 +5407,7 @@ private:
             setStatusText(NETCHESSZX_UI_ERROR_BOARD_REJECTED_MOVE);
             return false;
         }
+        takebackSnapshot_.capturedType = game_stats_capture_type(captured);
         if (checkSuffix != nullptr) {
             *checkSuffix = checkSuffixAfterMove(stalemate);
         } else if (stalemate != nullptr) {
@@ -5260,16 +5420,23 @@ private:
     }
 
     void finishAppliedMove(int ply, const QString &move, const QString &notation,
-                           bool nextPcTurn, const QString &normalStatus,
-                           bool stalemate = false)
+                           bool nextPcTurn, bool stalemate = false)
     {
         lastMove_ = move;
         appendMoveRecord(ply, move, notation);
         nextPly_ = ply + 1;
+        game_stats_record(&gameStats_, static_cast<uint16_t>(ply),
+                          gameClockRunning_ ? static_cast<uint32_t>(
+                              (moveTimerOffsetMs_ + moveTimer_.elapsed()) / 1000) : 0u,
+                          takebackSnapshot_.capturedType);
+        if (boardWidget_->gameStatsVisible()) {
+            showGameStatsPanel_();
+        }
         if (notation.contains('#')) {
             const QString message = nextPcTurn ? QString::fromLatin1(NETCHESSZX_UI_EVENT_CHECKMATE_LOST)
                                                : QString::fromLatin1(NETCHESSZX_UI_EVENT_CHECKMATE_WON);
             gameOver_ = true;
+            gameResult_ = message;
             gameCheck_ = false;
             pcTurn_ = false;
             stopGameClock();
@@ -5280,6 +5447,7 @@ private:
         }
         if (stalemate) {
             gameOver_ = true;
+            gameResult_ = QString::fromLatin1(NETCHESSZX_UI_EVENT_STALEMATE);
             gameCheck_ = false;
             pcTurn_ = false;
             stopGameClock();
@@ -5292,7 +5460,8 @@ private:
         gameCheck_ = notation.contains('+');
         pcTurn_ = nextPcTurn;
         restartMoveClock();
-        setStatusText(normalStatus);
+        // Turn label, move table and last-move highlight report the move.
+        setStatusText(QString());
         setConnectedUi(true);
     }
 
@@ -5312,9 +5481,7 @@ private:
             return;
         }
         const QString notation = notationBase + checkSuffix;
-        finishAppliedMove(ply, move, notation, false,
-                          QString("Move %1 confirmed").arg(notation),
-                          stalemate);
+        finishAppliedMove(ply, move, notation, false, stalemate);
     }
 
     bool applyDirectRemoteMoveAnimated(uint8_t deliveryId,
@@ -5329,7 +5496,7 @@ private:
             }
             return false;
         };
-        if (!gameClockRunning_ || !boardPiecesVisible_) {
+        if (!gameClockRunning_ || !boardWidget_->piecesVisible()) {
             return reject("START");
         }
         if (!ChessHelpers::isMoveSyntaxOk(move)) {
@@ -5376,10 +5543,7 @@ private:
             }
 
             const QString notation = notationBase + checkSuffix;
-            finishAppliedMove(ply, move, notation, true,
-                              QString("Opponent move %1 - your move")
-                                  .arg(notation),
-                              stalemate);
+            finishAppliedMove(ply, move, notation, true, stalemate);
             submitSessionGameResult(deliveryId, plyValue,
                                     SESSION_GAME_ACCEPTED,
                                     notation.toLatin1());
@@ -5413,14 +5577,15 @@ private:
 
     void startGameFromAck()
     {
-        const bool oldWhiteAtBottom = boardWhiteAtBottom_;
-        const bool keepSetupPreview = boardPiecesVisible_ && !gameOver_ &&
+        boardWidget_->hideGameStats();
+        game_stats_reset(&gameStats_, 0u, 0u);
+        gameResult_.clear();
+        const bool keepSetupPreview = boardWidget_->piecesVisible() && !gameOver_ &&
             !gameClockRunning_ && isStartingBoard();
 
-        invalidatePieceFlash();
-        invalidateDestinationFeedback();
+        boardWidget_->invalidatePieceFlash();
+        boardWidget_->invalidateDestinationFeedback();
         directLocalResignPending_ = false;
-        directResignRestartPending_ = false;
         netchesszx_rules_reset();
         (void)syncBoardFromRules();
         clearTakebackState();
@@ -5430,18 +5595,19 @@ private:
         pcTurn_ = pcPlaysWhite_;
         lastMove_.clear();
         clearMoveHistory();
-        clearSelection();
-        moveEdit_->clear();
+        boardWidget_->clearSelection();
+        chatEdit_->clear();
         selectedLabel_->setText("Selected: none");
-        syncBoardOrientationWithPcSide();
-        if (!keepSetupPreview || oldWhiteAtBottom != boardWhiteAtBottom_) {
-            boardPiecesVisible_ = false;
+        const bool orientationChanged = syncBoardOrientationWithPcSide();
+        if (!keepSetupPreview || orientationChanged) {
+            boardWidget_->setPiecesVisible(false);
             refreshBoard();
             animateBoardPiecesIn();
         }
         startGameClock();
-        setStatusText(NETCHESSZX_UI_NOTICE_GAME_STARTED_WHITE);
+        setStatusText(NETCHESSZX_UI_EVENT_GAME_STARTED);
         setConnectedUi(true);
+        QTimer::singleShot(0, this, [this]() { announceEngine(); });
     }
 
     static QString generateMqttRoomCode()
@@ -5573,24 +5739,38 @@ private:
             text = "CONNECT FAILED";
             style = turnLabelStyle(SHZ_ALERT, SHZ_ALERT_TEXT);
         } else if (!connected) {
-            text = isConnecting() ? "CONNECTING" : "OFFLINE";
+            text = isDirectListening() ? "LISTENING"
+                                       : (isConnecting() ? "CONNECTING" : "OFFLINE");
             style = isConnecting() ? turnLabelStyle(SHZ_QUIET, SHZ_ACCENT)
                                    : turnLabelStyle(SHZ_DISABLED, SHZ_TEXT_DIM);
+        } else if (directDecisionControl_ != 0u) {
+            text = "YOUR ANSWER";
+            style = turnLabelStyle(SHZ_WAIT, SHZ_WAIT_TEXT);
         } else if (gameOver_) {
-            text = statusMessage_;
+            // The result stays put; later notices go to the status bar.
+            text = (gameResult_.isEmpty() ? statusMessage_ : gameResult_).toUpper();
             style = turnLabelStyle(SHZ_ALERT, SHZ_ALERT_TEXT);
         } else if (directUiBusy_) {
-            text = "WAITING OPPONENT ACK";
+            text = "WAITING FOR OPPONENT";
             style = turnLabelStyle(SHZ_WAIT, SHZ_WAIT_TEXT);
         } else if (!gameClockRunning_) {
             if (pcIsHost_ && !directSessionReady_) {
-                text = "WAITING OPPONENT";
+                text = "WAITING FOR OPPONENT";
             } else if (!pcIsHost_ && !directSessionReady_) {
-                text = "WAITING HOST";
+                text = "WAITING FOR HOST";
             } else {
-                text = pcIsHost_ ? "PRESS START GAME" : "WAITING OPPONENT START";
+                text = pcIsHost_ ? "PRESS START GAME" : "WAITING FOR HOST TO START";
             }
             style = turnLabelStyle(SHZ_QUIET, SHZ_ACCENT);
+        } else if (botMode() && pcTurn_ && (!engine_.running() || engineHalted())) {
+            // The engine is gone or its move keeps being refused: the
+            // operator resigns or disconnects.
+            text = QString("STOCKFISH STOPPED - %1").arg(pcSideName());
+            style = turnLabelStyle(SHZ_ALERT, SHZ_ALERT_TEXT);
+        } else if (botMode() && pcTurn_) {
+            text = gameCheck_ ? QStringLiteral("STOCKFISH IN CHECK")
+                              : QString("STOCKFISH THINKING - %1").arg(pcSideName());
+            style = turnLabelStyle(SHZ_BOT_FILL, "#ffffff");
         } else if (gameCheck_) {
             text = pcTurn_ ? "YOUR KING IN CHECK" : "OPPONENT IN CHECK";
             style = pcTurn_ ? turnLabelStyle(SHZ_QUIET, SHZ_CHECK)
@@ -5669,14 +5849,19 @@ private:
         connectButton_->setEnabled(canConnect);
         connectButton_->setText(connected ? "Disconnect" :
                                 connecting ? "Cancel" : "Connect");
-        startGameButton_->setText(
-            directResignRestartPending_ ? "Restarting..." :
-            gameOver_ ? "Restart Game" : "Start Game");
+        startGameButton_->setText(gameOver_ ? "Restart Game" : "Start Game");
         const bool startBaseReady = connected && !gameClockRunning_ &&
                                      !restoreBusy() && directSessionReady_;
+        // Only the host starts a game, also a new one after OVER; the guest
+        // waits for that request and answers it.
         const bool startReady = startBaseReady && pcIsHost_;
         startGameButton_->setEnabled(startReady);
         setWidgetStyle(startGameButton_, startButtonStyle(startReady));
+        // Statistics stay available after OVER, except while this side's
+        // restart request awaits its answer.
+        const bool statsReady = gameOver_ ? directUiBusy_ != SESSION_REQUEST_RESET
+                                          : gameClockRunning_;
+        gameStatsButton_->setEnabled(statsReady);
         const bool resetReady = connected && gameClockRunning_ && !restoreBusy();
         resetButton_->setEnabled(resetReady);
         setWidgetStyle(resetButton_, quietButtonStyle(resetReady));
@@ -5693,23 +5878,25 @@ private:
         directRadio_->setEnabled(!connected && !connecting);
         mqttRadio_->setEnabled(!connected && !connecting);
         updateSessionControlsEnabled();
-        if (isDirectListening()) {
-            setStatusText(NETCHESSZX_UI_NOTICE_LISTENING_OPPONENT);
+        if (isDirectListening() ||
+            (connected && statusMessage_ == NETCHESSZX_UI_PHASE_DISCONNECTED)) {
+            setStatusText(QString());
         } else if (!connected && !connecting && statusMessage_.isEmpty()) {
             setStatusText(NETCHESSZX_UI_PHASE_DISCONNECTED);
-        } else if (connected && !directUiBusy_ &&
-                   statusMessage_ == NETCHESSZX_UI_PHASE_DISCONNECTED) {
-            setStatusText(pcTurn_ ? "Connected - your move" :
-                                    "Connected - opponent to move");
         }
         refreshStatusBar();
         refreshTurnLabel();
+        maybeEngineMove();
     }
 
     bool canStartConnection() const
     {
         const QString host = hostEdit_ ? hostEdit_->text().trimmed() : QString();
 
+        // Never announce STOCKFISH before the engine can actually move.
+        if (botMode() && !engine_.running()) {
+            return false;
+        }
         if (isMqttMode()) {
             const QString room = roomEdit_ ? roomEdit_->text().trimmed().toUpper() :
                                              QString();
@@ -5730,11 +5917,12 @@ private:
 
     bool hasSelectedMoveTarget() const
     {
-        return selectedRow_ >= 0 &&
-               selectedCol_ >= 0 &&
-               targetRow_ >= 0 &&
-               targetCol_ >= 0 &&
-               isLegalTarget(targetRow_, targetCol_);
+        const BoardWidget::SelectionState selection = boardWidget_->selection();
+        return selection.selectedRow >= 0 &&
+               selection.selectedCol >= 0 &&
+               selection.targetRow >= 0 &&
+               selection.targetCol >= 0 &&
+               boardWidget_->isLegalTarget(selection.targetRow, selection.targetCol);
     }
 
     bool pendingMoveCameFromSelection(const QString &move) const
@@ -5743,8 +5931,10 @@ private:
             return false;
         }
 
-        const QString selectedMove = ChessHelpers::squareName(selectedRow_, selectedCol_) +
-                                     ChessHelpers::squareName(targetRow_, targetCol_);
+        const BoardWidget::SelectionState selection = boardWidget_->selection();
+        const QString selectedMove =
+            ChessHelpers::squareName(selection.selectedRow, selection.selectedCol) +
+            ChessHelpers::squareName(selection.targetRow, selection.targetCol);
         return move == selectedMove || move == selectedMove + "q";
     }
 
@@ -5776,8 +5966,7 @@ private:
         }
 
         return directSessionReady_ &&
-               (!isMqttMode() || (mqttSubscribed_ && mqttSideReady_)) &&
-               statusMessage_ != NETCHESSZX_UI_ERROR_CONNECTION_LOST;
+               (!isMqttMode() || (mqttSubscribed_ && mqttSideReady_));
     }
 
     void refreshChatButton()
@@ -5790,6 +5979,7 @@ private:
         const bool ready = canSendChat();
         chatButton_->setText(QStringLiteral("SEND"));
         chatButton_->setEnabled(ready);
+        chatEdit_->setSubmissionEnabled(ready);
         setWidgetStyle(chatButton_, moveText
                                     ? moveButtonStyle(ready, ready && hasSelectedMoveTarget())
                                     : chatButtonStyle(ready));
@@ -5800,33 +5990,19 @@ private:
         const bool inGame = isConnected() && gameClockRunning_ && !gameOver_;
         const bool canControl = inGame && !restoreBusy() &&
                                 (directUiBusy_ == 0u || resignCanPreemptBusy());
+        // While the engine plays, takeback and draw offers are not the
+        // operator's to make: the buttons leave the window.
         if (drawButton_ != nullptr) {
+            drawButton_->setVisible(!botMode());
             drawButton_->setEnabled(canControl);
         }
         if (takebackButton_ != nullptr) {
+            takebackButton_->setVisible(!botMode());
             takebackButton_->setEnabled(canControl && canRequestTakeback());
         }
         if (resetIconButton_ != nullptr) {
             resetIconButton_->setEnabled(inGame && !restoreBusy());
         }
-    }
-
-    void layoutChatCountLabel()
-    {
-        if (chatEdit_ == nullptr || chatCountLabel_ == nullptr) {
-            return;
-        }
-        chatCountLabel_->adjustSize();
-        const int clearGutter = 22;
-        const int pad = 8;
-        const QSize hint = chatCountLabel_->sizeHint();
-        const int x = chatEdit_->width() - hint.width() - clearGutter;
-        const int y = (chatEdit_->height() - hint.height()) / 2;
-        chatCountLabel_->move(qMax(pad, x), qMax(0, y));
-        const QFontMetrics metrics(chatEdit_->font());
-        const int textWidth = metrics.horizontalAdvance(chatEdit_->text());
-        const int textRight = chatEdit_->textMargins().left() + pad + textWidth;
-        chatCountLabel_->setVisible(textRight + 6 < chatCountLabel_->x());
     }
 
     void resizeToContent()
@@ -5846,12 +6022,12 @@ private:
     void alignStatusBarToControls()
     {
         if (statusBarContents_ == nullptr || statusBarLayout_ == nullptr ||
-            flipBoardButton_ == nullptr || logToggleButton_ == nullptr) {
+            boardWidget_ == nullptr || logToggleButton_ == nullptr) {
             return;
         }
 
         const int leftMargin = statusBarContents_->mapFromGlobal(
-            flipBoardButton_->mapToGlobal(QPoint(0, 0))).x();
+            boardWidget_->flipButtonGlobalPosition()).x();
         const int logRight = statusBarContents_->mapFromGlobal(
             logToggleButton_->mapToGlobal(
                 QPoint(logToggleButton_->width(), 0))).x();
@@ -5988,23 +6164,6 @@ private:
         }
     }
 
-    QString endpointText() const
-    {
-        QString host = hostEdit_ ? hostEdit_->text().trimmed() : QString();
-        if (host.isEmpty()) {
-            host = "-";
-        }
-        const int port = portSpin_ ? portSpin_->value() : 0;
-        if (isMqttMode()) {
-            const QString room = roomEdit_ ? roomEdit_->text().trimmed().toUpper() : QString("-");
-            return QString("MQTT %1:%2 | room %3").arg(host).arg(port).arg(room);
-        }
-        if (pcIsHost_) {
-            return QString("IP LISTEN:%1").arg(port);
-        }
-        return QString("IP %1:%2").arg(host).arg(port);
-    }
-
     bool isConnected() const
     {
         if (socket_ == nullptr ||
@@ -6042,7 +6201,7 @@ private:
         if (text == NETCHESSZX_UI_PHASE_DISCONNECTED ||
             text == NETCHESSZX_UI_PHASE_CONNECTION_FAILED ||
             text == NETCHESSZX_UI_PC_ERROR_CONNECTION_LOST ||
-            text == NETCHESSZX_UI_ERROR_OPPONENT_DISCONNECTED ||
+            text == NETCHESSZX_UI_PC_EVENT_OPPONENT_LEFT ||
             text.startsWith("CHECKMATE") ||
             text.startsWith("STALEMATE") ||
             text.startsWith("RESIGNATION") ||
@@ -6134,116 +6293,58 @@ private:
         if (!isConnected()) {
             return NETCHESSZX_UI_PHASE_DISCONNECTED;
         }
-        if (statusMessage_ == NETCHESSZX_UI_ERROR_CONNECTION_LOST) {
-            return NETCHESSZX_UI_ERROR_OPPONENT_DISCONNECTED;
+        if (directDecisionControl_ != 0u) {
+            // The opponent's request awaits this side's answer.
+            return statusMessage_;
         }
         if (gameOver_) {
-            return statusMessage_;
+            return gameResult_.isEmpty() ? statusMessage_ : gameResult_;
         }
         if (!gameClockRunning_) {
             if (!directSessionReady_) {
-                return pcIsHost_ ? NETCHESSZX_UI_PHASE_WAITING_OPPONENT_SHORT
-                                 : NETCHESSZX_UI_PHASE_WAITING_HOST;
+                return pcIsHost_ ? NETCHESSZX_UI_PHASE_WAITING_OPPONENT
+                                 : NETCHESSZX_UI_PC_PHASE_WAITING_HOST;
             }
-            return statusMessage_.isEmpty() ? NETCHESSZX_UI_PHASE_OPPONENT_LINKED :
-                                             statusMessage_;
+            return NETCHESSZX_UI_PHASE_OPPONENT_READY;
         }
         if (directUiBusy_) {
-            return NETCHESSZX_UI_NOTICE_WAITING_ACK;
-        }
-        if (!statusMessage_.isEmpty() && !isTurnStatusMessage(statusMessage_)) {
-            return statusMessage_;
+            return NETCHESSZX_UI_PHASE_WAITING_OPPONENT;
         }
         return QStringLiteral("LIVE");
     }
 
-    static bool isTurnStatusMessage(const QString &text)
+    // The pending notice, unless the state label already says it.
+    QString statusNoticeText() const
     {
-        const QString lower = text.toLower();
-        return text.compare(QLatin1String(NETCHESSZX_UI_PHASE_YOUR_TURN),
-                            Qt::CaseInsensitive) == 0 ||
-               text.compare(QLatin1String(NETCHESSZX_UI_PHASE_OPPONENT_TURN),
-                            Qt::CaseInsensitive) == 0 ||
-               lower.contains(QStringLiteral("to move")) ||
-               lower.contains(QStringLiteral("your move")) ||
-               lower.contains(QStringLiteral("your turn")) ||
-               lower.contains(QStringLiteral("opponent turn")) ||
-               lower.startsWith(QStringLiteral("move ready"));
-    }
-
-    QString statusContextText() const
-    {
-        if (statusMessage_.compare(NETCHESSZX_UI_ERROR_CONNECTION_LOST, Qt::CaseInsensitive) == 0) {
+        const QString state = statusStateText();
+        if (statusMessage_.isEmpty() ||
+            statusMessage_.compare(state, Qt::CaseInsensitive) == 0 ||
+            statusMessage_ == NETCHESSZX_UI_PHASE_DISCONNECTED ||
+            statusMessage_ == NETCHESSZX_UI_PHASE_WAITING_OPPONENT) {
             return QString();
         }
+        const QString prefix = state + QStringLiteral(" - ");
+        return statusMessage_.startsWith(prefix) ? statusMessage_.mid(prefix.size())
+                                                 : statusMessage_;
+    }
 
-        if (!isConnected()) {
-            const bool connectionStarting = isConnecting() || isDirectListening();
-            if (!connectionStarting) {
-                if (statusMessage_.isEmpty() ||
-                    statusMessage_ == NETCHESSZX_UI_PHASE_DISCONNECTED ||
-                    statusMessage_ == statusStateText()) {
-                    return QString();
-                }
-                return statusMessage_;
-            }
-            if (statusMessage_.isEmpty() || statusMessage_ == statusStateText()) {
-                if (!isMqttMode() && !pcIsHost_ &&
-                    !ChessHelpers::isDirectIpSyntaxOk(hostEdit_ ? hostEdit_->text().trimmed() :
-                                                    QString())) {
-                    return endpointText() + " | Invalid IP";
-                }
-                return endpointText();
-            }
-            return endpointText() + " | " + statusMessage_;
-        }
-
-        if (!gameClockRunning_) {
-            if (gameOver_) {
-                QStringList parts;
-                parts << QString("Side %1").arg(pcSideName());
-                if (directResignRestartPending_) {
-                    parts << QString(NETCHESSZX_UI_NOTICE_RESTARTING_GAME);
-                } else {
-                    parts << QString(NETCHESSZX_UI_CONTEXT_PRESS_RESTART);
-                }
-                parts << endpointText();
-                const QString peer = peerMachineStatusText();
-                if (!peer.isEmpty()) {
-                    parts << peer;
-                }
-                return parts.join(" | ");
-            }
-            QString action = pcIsHost_ ? QString(NETCHESSZX_UI_CONTEXT_PRESS_START) :
-                                         QString(NETCHESSZX_UI_PHASE_WAITING_OPPONENT_START);
-            if (!directSessionReady_) {
-                action = pcIsHost_ ? QString(NETCHESSZX_UI_PHASE_WAITING_OPPONENT_SHORT)
-                                   : QString(NETCHESSZX_UI_PHASE_WAITING_HOST);
-            }
-
-            QStringList parts;
-            parts << QString("Side %1").arg(pcSideName());
-            parts << action << endpointText();
-            if (!statusMessage_.isEmpty() && statusMessage_ != statusStateText()) {
-                parts << statusMessage_;
-            }
-            const QString peer = peerMachineStatusText();
-            if (!peer.isEmpty()) {
-                parts << peer;
-            }
-            return parts.join(" | ");
-        }
-
+    // Only what the state label, the turn label and the top controls do not
+    // already show: the pending notice, the game-over action and the peer.
+    QString statusContextText() const
+    {
         QStringList parts;
-        parts << QString("Side %1").arg(pcSideName());
-        parts << QString("Ply %1").arg(nextPly_);
-        if (!lastMove_.isEmpty()) {
-            parts << QString("Last %1").arg(lastMove_.toUpper());
+        // Permanent while the engine plays this side.
+        if (botMode()) {
+            parts << QStringLiteral("STOCKFISH L%1").arg(prefs_.engineLevel);
         }
-        if (!statusMessage_.isEmpty() && statusMessage_ != statusStateText() &&
-            statusMessage_ != NETCHESSZX_UI_PHASE_WAITING_OPPONENT &&
-            !isTurnStatusMessage(statusMessage_)) {
-            parts << statusMessage_;
+        const QString notice = statusNoticeText();
+        if (!notice.isEmpty()) {
+            parts << notice;
+        }
+        if (gameOver_ && isConnected() && directUiBusy_ == 0u &&
+            directDecisionControl_ == 0u) {
+            parts << QString(pcIsHost_ ? NETCHESSZX_UI_CONTEXT_PRESS_RESTART
+                                       : NETCHESSZX_UI_PC_PHASE_WAITING_HOST);
         }
         const QString peer = peerMachineStatusText();
         if (!peer.isEmpty()) {
@@ -6263,15 +6364,20 @@ private:
 
     void refreshStatusBar()
     {
+        refreshMoveTableHeaders();
         const QString stateText = statusStateText();
 
+        // A request awaiting this side's answer uses the turn label's wait colour.
         setWidgetStyle(statusStateLabel_,
-                       statusBarLabelStyle(statusBarTextSeverity(stateText)));
+                       statusBarLabelStyle(directDecisionControl_ != 0u
+                                               ? StatusSeverity::Waiting
+                                               : statusBarTextSeverity(stateText)));
         setLabelText(statusStateLabel_, stateText.toUpper());
         if (statusContextLabel_ != nullptr) {
+            // Colour by the notice alone: the action hint and peer are neutral.
             const QString contextText = statusContextText();
             setWidgetStyle(statusContextLabel_,
-                           statusBarLabelStyle(statusBarTextSeverity(contextText)));
+                           statusBarLabelStyle(statusBarTextSeverity(statusNoticeText())));
             setLabelText(statusContextLabel_, contextText.toUpper());
         }
     }
@@ -6597,7 +6703,6 @@ private:
     QRadioButton *hostBlackRadio_ = nullptr;
     QLabel *hostCaptionLabel_ = nullptr;
     QLabel *roomCaptionLabel_ = nullptr;
-    QLabel *chatCountLabel_ = nullptr;
     QPushButton *drawButton_ = nullptr;
     QPushButton *takebackButton_ = nullptr;
     QPushButton *resetIconButton_ = nullptr;
@@ -6606,15 +6711,28 @@ private:
     QMenu *directIpHistoryMenu_ = nullptr;
     QStringList directIpHistory_;
     QLineEdit *roomEdit_ = nullptr;
-    QCheckBox *showHintsCheck_ = nullptr;
+    ClientPreferences prefs_;
+    bool prefsApplied_ = false;
+    QToolButton *engineButton_ = nullptr;
+    HelpWindow *helpWindow_ = nullptr;
+    EnginePlayer engine_;
+    QString engineRequestedFen_;
+    // The answer waiting out Preferences > Engine > Pause before each move.
+    QTimer engineMoveTimer_;
+    QString engineAnswerFen_;
+    QString engineAnswerMove_;
+    int engineRestarts_ = 0;
+    // Position the peer keeps rejecting and how many times it did.
+    QString engineRejectedFen_;
+    int engineMoveRejections_ = 0;
     QSpinBox *portSpin_ = nullptr;
     QPushButton *connectButton_ = nullptr;
     QPushButton *startGameButton_ = nullptr;
+    QPushButton *gameStatsButton_ = nullptr;
+    std::function<void()> showGameStatsPanel_;
     QPushButton *resetButton_ = nullptr;
     QPushButton *restoreButton_ = nullptr;
-    QLineEdit *moveEdit_ = nullptr;
-    QPushButton *flipBoardButton_ = nullptr;
-    QLineEdit *chatEdit_ = nullptr;
+    CommandInputWidget *chatEdit_ = nullptr;
     QPushButton *chatButton_ = nullptr;
     QPlainTextEdit *chatLogEdit_ = nullptr;
     QLabel *turnLabel_ = nullptr;
@@ -6634,36 +6752,16 @@ private:
     QTextEdit *logEdit_ = nullptr;
     QTimer *clockTimer_ = nullptr;
     QTimer *directConnectRetryTimer_ = nullptr;
-    QTimer *revealTimer_ = nullptr;
-    QTimer *flashTimer_ = nullptr;
-    QTimer *feedbackTimer_ = nullptr;
-    QVector<QPoint> morphSquares_;
-    std::function<void(bool)> flashDone_;
-    int revealStep_ = 0;
-    int revealStepMs_ = 0;
-    int revealPauseMs_ = 0;
-    int morphMid_ = 0;
-    int flashStep_ = 0;
-    int flashRow_ = -1;
-    int flashCol_ = -1;
-    int feedbackStep_ = 0;
-    bool revealIsMorph_ = false;
-    QLabel *fileLabelsTop_[8] = {};
-    QLabel *fileLabelsBottom_[8] = {};
-    QLabel *rankLabelsLeft_[8] = {};
-    QLabel *rankLabelsRight_[8] = {};
-    QPushButton *squares_[8][8] = {};
-    QString squareStyleCache_[8][8];
     char board_[8][8] = {};
     QString mqttRoom_;
     QString statusMessage_;
+    QString gameResult_;
+    game_stats_t gameStats_ = {};
     QString lastSocketError_;
     QString lastMove_;
-    QStringList chatInputHistory_;
     QStringList logLines_;
     QVector<MoveRecord> moveHistoryRecords_;
     TakebackSnapshot takebackSnapshot_;
-    QStringList legalTargets_;
     QElapsedTimer gameTimer_;
     QElapsedTimer moveTimer_;
     QElapsedTimer linkWatch_;
@@ -6672,13 +6770,6 @@ private:
     qint64 moveTimerOffsetMs_ = 0;
     int nextPly_ = 1;
     int moveTableFirstMoveNumber_ = 0;
-    int selectedRow_ = -1;
-    int selectedCol_ = -1;
-    int chatInputHistoryIndex_ = 0;
-    int targetRow_ = -1;
-    int targetCol_ = -1;
-    int feedbackRow_ = -1;
-    int feedbackCol_ = -1;
     int gameGeneration_ = 0;
     int directConnectRetryCount_ = 0;
     uint8_t directNextLinkId_ = 0u;
@@ -6686,19 +6777,38 @@ private:
     uint8_t directDecisionRequestId_ = 0u;
     uint8_t directDecisionControl_ = 0u;
     uint8_t peerPlatform_ = NETCHESS_PLAT_UNKNOWN;
+    QString peerName_;
+    QString moveHeaderWhite_ = QStringLiteral("WHITE");
+    QString moveHeaderBlack_ = QStringLiteral("BLACK");
     quint16 mqttSessionId_ = 0;
     quint64 mqttClientNonce_ = QRandomGenerator::global()->generate64();
-    bool feedbackOn_ = false;
     bool mqttSubscribed_ = false;
     bool mqttSideReady_ = false;
     bool mqttSessionLinked_ = false;
     bool directSessionReady_ = false;
     bool localMachSent_ = false;
+    bool engineAnnounced_ = false;
+    QTimer engineAnnounceTimer_;
+    int engineAnnounceAttempts_ = 0;
     uint8_t directUiBusy_ = 0u;
     bool directStartTransitionApplied_ = false;
     bool directLocalResignPending_ = false;
-    bool directResignRestartPending_ = false;
     bool resetPromptOpen_ = false;
+    // Last peer request answered here, replayed to its crossing retries for
+    // longer than one 2.5 s retry period while the position is unchanged.
+    struct AnsweredRequest {
+        uint8_t control = 0u;
+        uint16_t value = 0u;
+        uint8_t decision = 0u;
+        int ply = 0;
+        QElapsedTimer at;
+    };
+    static constexpr qint64 kAnswerReplayMs = 3000;
+    AnsweredRequest lastAnswer_;
+    // Set while a replayed answer is submitted: a replayed accepted RESET
+    // re-ACKs a retry of the RESET that already started this game (still at
+    // ply 1), so the game is not restarted again.
+    bool replayingAnswer_ = false;
     bool pcTurn_ = false;
     bool pcIsHost_ = false;
     bool ignoreNextDisconnect_ = false;
@@ -6706,41 +6816,7 @@ private:
     bool directConnectRetryActive_ = false;
     bool hostPlaysWhite_ = true;
     bool pcPlaysWhite_ = false;
-    bool coordinatesInitialized_ = false;
-    bool lastCoordinatePcWhite_ = false;
-    void applyBoardTexture() {
-        const QString tex = boardCombo_ ? boardCombo_->currentData().toString() : QString();
-        PieceRenderer::setBoardTexture(tex);
-        QSettings s;
-        s.setValue("appearance/board", tex);
-        if (boardFrame_) {
-            boardFrame_->setStyleSheet(boardFrameStyle());
-            // A second setStyleSheet on an unshown widget keeps the rules parsed
-            // for the first one, so the new well colour needs an explicit repolish.
-            boardFrame_->style()->unpolish(boardFrame_);
-            boardFrame_->style()->polish(boardFrame_);
-            boardFrame_->update();
-        }
-        refreshBoard();
-    }
-
-    void applyPieceSet() {
-        const QString set = pieceCombo_ ? pieceCombo_->currentData().toString() : QString();
-        PieceRenderer::setPieceSet(set);
-        QSettings s;
-        s.setValue("appearance/pieces", set);
-        if (boardPiecesVisible_) {
-            animateBoardPiecesMorph();
-        } else {
-            refreshBoard();
-        }
-    }
-
-    QWidget *boardFrame_ = nullptr;
-    QComboBox *boardCombo_ = nullptr;
-    QComboBox *pieceCombo_ = nullptr;
-    bool boardWhiteAtBottom_ = false;
-    bool boardPiecesVisible_ = false;
+    BoardWidget *boardWidget_ = nullptr;
     bool showingMoveHistory_ = true;
     bool gameOver_ = false;
     bool gameCheck_ = false;
@@ -6816,9 +6892,22 @@ void MainWindow::testSetMqttWriteFailure(bool enabled)
     impl_->testSetMqttWriteFailure(enabled);
 }
 bool MainWindow::testSessionReady() const { return impl_->testSessionReady(); }
+QString MainWindow::testChatLogText() const { return impl_->testChatLogText(); }
+QString MainWindow::testChatDraft() const { return impl_->testChatDraft(); }
+void MainWindow::testSetChatDraft(const QString &text) { impl_->testSetChatDraft(text); }
 QString MainWindow::testStatusContextText() const
 {
     return impl_->testStatusContextText();
+}
+bool MainWindow::testStatusBarProjection() { return impl_->testStatusBarProjection(); }
+bool MainWindow::testBotIdentity() { return impl_->testBotIdentity(); }
+void MainWindow::testSetPlayerName(const QString &name)
+{
+    impl_->testSetPlayerName(name);
+}
+QStringList MainWindow::testMoveHeaderLabels() const
+{
+    return impl_->testMoveHeaderLabels();
 }
 bool MainWindow::testStatusBarAligned()
 {
@@ -6880,6 +6969,11 @@ bool MainWindow::testResignRestartUiProjection()
 {
     return impl_->testResignRestartUiProjection();
 }
+
+bool MainWindow::testGameStatsProjection()
+{
+    return impl_->testGameStatsProjection();
+}
 bool MainWindow::testRestoredMoveProjection()
 {
     return impl_->testRestoredMoveProjection();
@@ -6891,5 +6985,17 @@ bool MainWindow::testSessionEndPresentation()
 bool MainWindow::testCancelPendingPieceFlash()
 {
     return impl_->testCancelPendingPieceFlash();
+}
+bool MainWindow::testClickDrawButton()
+{
+    return impl_->testClickDrawButton();
+}
+QString MainWindow::testTurnLabelText() const
+{
+    return impl_->testTurnLabelText();
+}
+bool MainWindow::testEngineAnnounceKeepsRetrying()
+{
+    return impl_->testEngineAnnounceKeepsRetrying();
 }
 #endif

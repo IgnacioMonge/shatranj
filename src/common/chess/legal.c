@@ -15,12 +15,6 @@ typedef struct rules_state {
     int8_t ep;
 } rules_state_t;
 
-typedef struct parsed_move {
-    uint8_t from;
-    uint8_t to;
-    char promo;
-} parsed_move_t;
-
 static rules_state_t rules;
 
 static uint8_t row_of(uint8_t square)
@@ -57,7 +51,7 @@ static int8_t promoted_piece(int8_t pawn, char promo)
     }
 }
 
-static int parse_move(const char *text, parsed_move_t *move)
+int netchesszx_action_decode(const char *text, netchesszx_action_t *move)
 {
     char promotion;
 
@@ -120,7 +114,7 @@ static uint8_t is_promotion_target(int8_t piece, uint8_t to)
                      (piece == NETCHESSZX_RULE_BP && row == 7u));
 }
 
-static int validate_promotion(const parsed_move_t *move)
+static int validate_promotion(const netchesszx_action_t *move)
 {
     const int8_t piece = rules.board[move->from];
     const uint8_t promotion = is_promotion_target(piece, move->to);
@@ -144,7 +138,7 @@ static uint8_t compact_legal(uint8_t from, uint8_t to)
                                             rules.ep);
 }
 
-static int move_is_legal(const parsed_move_t *move)
+static int move_is_legal(const netchesszx_action_t *move)
 {
     int rc = validate_promotion(move);
     if (rc != NETCHESSZX_OK) {
@@ -192,7 +186,7 @@ static void clear_castle_rights(uint8_t from, uint8_t to,
     }
 }
 
-static void apply_move(const parsed_move_t *move)
+static void apply_move(const netchesszx_action_t *move)
 {
     const uint8_t from = move->from;
     const uint8_t to = move->to;
@@ -272,8 +266,8 @@ int netchesszx_rules_reset(void)
 
 int netchesszx_rules_can_play(const char *move_text)
 {
-    parsed_move_t move;
-    int rc = parse_move(move_text, &move);
+    netchesszx_action_t move;
+    int rc = netchesszx_action_decode(move_text, &move);
 
     if (rc != NETCHESSZX_OK) {
         return rc;
@@ -283,17 +277,64 @@ int netchesszx_rules_can_play(const char *move_text)
 
 int netchesszx_rules_play(const char *move_text)
 {
-    parsed_move_t move;
-    int rc = parse_move(move_text, &move);
+    netchesszx_action_t move;
+    int rc = netchesszx_action_decode(move_text, &move);
 
     if (rc != NETCHESSZX_OK) {
         return rc;
     }
-    rc = move_is_legal(&move);
+    return netchesszx_rules_apply_action(&move);
+}
+
+static int action_shape(const netchesszx_action_t *action)
+{
+    if (action == NULL) {
+        return NETCHESSZX_ERR_NULL;
+    }
+    if (action->from >= 64u || action->to >= 64u) {
+        return NETCHESSZX_ERR_MOVE;
+    }
+    if (action->promo != '\0' && action->promo != 'q' &&
+        action->promo != 'r' && action->promo != 'b' && action->promo != 'n') {
+        return NETCHESSZX_ERR_UNSUPPORTED;
+    }
+    return NETCHESSZX_OK;
+}
+
+int netchesszx_action_encode(const netchesszx_action_t *action, char *out, size_t cap)
+{
+    int rc = action_shape(action);
     if (rc != NETCHESSZX_OK) {
         return rc;
     }
-    apply_move(&move);
+    if (out == NULL) {
+        return NETCHESSZX_ERR_NULL;
+    }
+    if (cap < (action->promo ? 6u : 5u)) {
+        return NETCHESSZX_ERR_BUFFER;
+    }
+    out[0] = (char)('a' + col_of(action->from));
+    out[1] = (char)('8' - row_of(action->from));
+    out[2] = (char)('a' + col_of(action->to));
+    out[3] = (char)('8' - row_of(action->to));
+    out[4] = action->promo;
+    if (action->promo) {
+        out[5] = '\0';
+    }
+    return NETCHESSZX_OK;
+}
+
+int netchesszx_rules_apply_action(const netchesszx_action_t *action)
+{
+    int rc = action_shape(action);
+    if (rc != NETCHESSZX_OK) {
+        return rc;
+    }
+    rc = move_is_legal(action);
+    if (rc != NETCHESSZX_OK) {
+        return rc;
+    }
+    apply_move(action);
     return NETCHESSZX_OK;
 }
 

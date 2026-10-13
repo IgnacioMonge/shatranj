@@ -319,30 +319,6 @@
       "return": "void"
     },
     {
-      "args": [
-        "const char *text",
-        "uint8_t len",
-        "uint8_t cursor"
-      ],
-      "asm_name": "_spectrum_gui_set_input_edit",
-      "calling_convention": "z88dk_c",
-      "kind": "function",
-      "name": "spectrum_gui_set_input_edit",
-      "return": "void"
-    },
-    {
-      "args": [
-        "uint8_t pos",
-        "char c",
-        "uint8_t cursor"
-      ],
-      "asm_name": "_spectrum_gui_input_cell",
-      "calling_convention": "z88dk_c",
-      "kind": "function",
-      "name": "spectrum_gui_input_cell",
-      "return": "void"
-    },
-    {
       "args": [],
       "asm_name": "_spectrum_gui_redraw_board_squares",
       "calling_convention": "z88dk_c",
@@ -495,6 +471,44 @@
       "return": "void"
     },
     {
+      "args": [
+        "const char *spec"
+      ],
+      "asm_name": "_spectrum_render_ikkle_at",
+      "calling_convention": "fastcall",
+      "kind": "function",
+      "name": "spectrum_render_ikkle_at",
+      "return": "void"
+    },
+    {
+      "args": [
+        "const char *text"
+      ],
+      "asm_name": "_spectrum_render_input",
+      "calling_convention": "fastcall",
+      "kind": "function",
+      "name": "spectrum_render_input",
+      "return": "void"
+    },
+    {
+      "args": [
+        "const char *spec"
+      ],
+      "asm_name": "_spectrum_render_input_cell",
+      "calling_convention": "fastcall",
+      "kind": "function",
+      "name": "spectrum_render_input_cell",
+      "return": "void"
+    },
+    {
+      "args": [],
+      "asm_name": "_spectrum_gui_side_panels_visible",
+      "calling_convention": "z88dk_c",
+      "kind": "function",
+      "name": "spectrum_gui_side_panels_visible",
+      "return": "uint8_t"
+    },
+    {
       "args": [],
       "asm_name": "_spectrum_board_reset",
       "calling_convention": "z88dk_c",
@@ -593,12 +607,20 @@
       "kind": "function",
       "name": "spectrum_net_runtime_fat_time",
       "return": "uint16_t"
+    },
+    {
+      "args": [],
+      "asm_name": "_spectrum_net_runtime_fat_day_delta",
+      "calling_convention": "z88dk_c",
+      "kind": "function",
+      "name": "spectrum_net_runtime_fat_day_delta",
+      "return": "int16_t"
     }
   ],
   "markers": {
-    "__BSS_END_tail": "0xFC30",
-    "__CODE_END_tail": "0xF9FA",
-    "__data_compiler_tail": "0xFA25",
+    "__BSS_END_tail": "0xED80",
+    "__CODE_END_tail": "0xEB49",
+    "__data_compiler_tail": "0xEB74",
     "_overlay_code_slot": "0x6000"
   },
   "missing_required": [],
@@ -804,6 +826,16 @@
       "value": 0
     },
     {
+      "name": "SPECTRUM_OVL_STATUS_MOVES_HEADER",
+      "raw_value": "1u",
+      "value": 1
+    },
+    {
+      "name": "SPECTRUM_OVL_STATUS_CHLOG",
+      "raw_value": "2u",
+      "value": 2
+    },
+    {
       "name": "SPECTRUM_OVL_HINTS",
       "raw_value": "SPECTRUM_OVL_RULES",
       "value": 0
@@ -879,6 +911,11 @@
       "value": 2
     },
     {
+      "name": "SPECTRUM_OVL_SAVELOAD_JOURNAL_APPEND",
+      "raw_value": "3u",
+      "value": 3
+    },
+    {
       "name": "SPECTRUM_OVL_RESTORE",
       "raw_value": "11u",
       "value": 11
@@ -904,6 +941,11 @@
       "value": 0
     },
     {
+      "name": "SPECTRUM_OVL_ABOUT_STATS",
+      "raw_value": "1u",
+      "value": 1
+    },
+    {
       "name": "SPECTRUM_OVL_FILEUI",
       "raw_value": "13u",
       "value": 13
@@ -927,6 +969,11 @@
       "name": "SPECTRUM_OVL_CONTROL_CLASSIFY",
       "raw_value": "0u",
       "value": 0
+    },
+    {
+      "name": "SPECTRUM_OVL_CONTROL_RECOVERY_RESUME",
+      "raw_value": "2u",
+      "value": 2
     },
     {
       "name": "SPECTRUM_OVL_CONFIG",
@@ -970,6 +1017,46 @@
     },
     {
       "name": "SPECTRUM_OVL_TIME_CONFIG_COMMIT",
+      "raw_value": "3u",
+      "value": 3
+    },
+    {
+      "name": "SPECTRUM_OVL_JOURNAL",
+      "raw_value": "17u",
+      "value": 17
+    },
+    {
+      "name": "SPECTRUM_OVL_JOURNAL_LOAD",
+      "raw_value": "0u",
+      "value": 0
+    },
+    {
+      "name": "SPECTRUM_OVL_JOURNAL_SAVE",
+      "raw_value": "1u",
+      "value": 1
+    },
+    {
+      "name": "SPECTRUM_OVL_RECOVERY",
+      "raw_value": "17u",
+      "value": 17
+    },
+    {
+      "name": "SPECTRUM_OVL_RECOVERY_WRITE",
+      "raw_value": "0u",
+      "value": 0
+    },
+    {
+      "name": "SPECTRUM_OVL_RECOVERY_CAPTURE",
+      "raw_value": "1u",
+      "value": 1
+    },
+    {
+      "name": "SPECTRUM_OVL_RECOVERY_REPLAY",
+      "raw_value": "2u",
+      "value": 2
+    },
+    {
+      "name": "SPECTRUM_OVL_RECOVERY_RETIRE",
       "raw_value": "3u",
       "value": 3
     },
@@ -1099,6 +1186,86 @@
       "name": "SPECTRUM_OVL_CTX_SAVELOAD_RESULT",
       "raw_value": "4u",
       "value": 4
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_RECOVERY_BUF_LO",
+      "raw_value": "SPECTRUM_OVL_CTX_SAVELOAD_BUF_LO",
+      "value": 2
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_RECOVERY_BUF_HI",
+      "raw_value": "SPECTRUM_OVL_CTX_SAVELOAD_BUF_HI",
+      "value": 3
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_RECOVERY_OUT_LO",
+      "raw_value": "SPECTRUM_OVL_CTX_SAVELOAD_NAME_LO",
+      "value": 0
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_RECOVERY_OUT_HI",
+      "raw_value": "SPECTRUM_OVL_CTX_SAVELOAD_NAME_HI",
+      "value": 1
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_RECOVERY_RESULT",
+      "raw_value": "SPECTRUM_OVL_CTX_SAVELOAD_RESULT",
+      "value": 4
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_RECOVERY_FLAGS",
+      "raw_value": "5u",
+      "value": 5
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_RECOVERY_LINK",
+      "raw_value": "6u",
+      "value": 6
+    },
+    {
+      "name": "SPECTRUM_RECOVERY_LINK_PARTIAL",
+      "raw_value": "0x01u",
+      "value": 1
+    },
+    {
+      "name": "SPECTRUM_RECOVERY_LINK_UNLINKED",
+      "raw_value": "0x02u",
+      "value": 2
+    },
+    {
+      "name": "SPECTRUM_RECOVERY_LINK_HOST",
+      "raw_value": "0x04u",
+      "value": 4
+    },
+    {
+      "name": "SPECTRUM_RECOVERY_LINK_BLACK",
+      "raw_value": "0x08u",
+      "value": 8
+    },
+    {
+      "name": "SPECTRUM_RECOVERY_LINK_PLAYED",
+      "raw_value": "0x10u",
+      "value": 16
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_JOURNAL_REC_LO",
+      "raw_value": "0u",
+      "value": 0
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_JOURNAL_REC_HI",
+      "raw_value": "1u",
+      "value": 1
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_JOURNAL_FD",
+      "raw_value": "2u",
+      "value": 2
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_JOURNAL_CAPTURE_PENDING",
+      "raw_value": "7u",
+      "value": 7
     },
     {
       "name": "SPECTRUM_OVL_CTX_RESTORE_SNAP_LO",
@@ -1416,7 +1583,7 @@
       "required": true
     },
     {
-      "address": "0xFC25",
+      "address": "0xED75",
       "api": {
         "asm_name": "_spectrum_overlay_loaded_id",
         "kind": "object",
@@ -1428,7 +1595,7 @@
       "required": true
     },
     {
-      "address": "0xF1C5",
+      "address": "0xE307",
       "api": {
         "args": [
           "uint8_t ovl_id",
@@ -1445,7 +1612,7 @@
       "required": true
     },
     {
-      "address": "0xF1C9",
+      "address": "0xE311",
       "api": {
         "args": [
           "uint8_t ovl_id",
@@ -1462,19 +1629,19 @@
       "required": true
     },
     {
-      "address": "0xF830",
+      "address": "0xE99F",
       "name": "_NETCHESS_PROTO_GAME_START",
       "present": true,
       "required": true
     },
     {
-      "address": "0xF32F",
+      "address": "0xE495",
       "name": "ovl_close_overlay_file",
       "present": true,
       "required": true
     },
     {
-      "address": "0xC2B4",
+      "address": "0xAEF2",
       "api": {
         "args": [],
         "asm_name": "_spectrum_frame_wait",
@@ -1488,7 +1655,7 @@
       "required": true
     },
     {
-      "address": "0xDC3F",
+      "address": "0xA15D",
       "api": {
         "args": [],
         "asm_name": "_spectrum_gui_tick",
@@ -1502,7 +1669,7 @@
       "required": true
     },
     {
-      "address": "0xF09B",
+      "address": "0xD872",
       "api": {
         "args": [],
         "asm_name": "_spectrum_key_poll",
@@ -1516,7 +1683,7 @@
       "required": true
     },
     {
-      "address": "0xC2F8",
+      "address": "0xAF45",
       "api": {
         "args": [
           "uint16_t frames"
@@ -1532,7 +1699,7 @@
       "required": true
     },
     {
-      "address": "0xC35A",
+      "address": "0xAFAD",
       "api": {
         "args": [
           "const char *s"
@@ -1548,7 +1715,7 @@
       "required": true
     },
     {
-      "address": "0xC36F",
+      "address": "0xAFC2",
       "api": {
         "args": [
           "const uint8_t *data",
@@ -1565,7 +1732,7 @@
       "required": true
     },
     {
-      "address": "0xC396",
+      "address": "0xAFE9",
       "api": {
         "args": [],
         "asm_name": "_spectrum_uart_send_crlf",
@@ -1579,7 +1746,7 @@
       "required": true
     },
     {
-      "address": "0xC3A8",
+      "address": "0xAFFB",
       "api": {
         "args": [],
         "asm_name": "_spectrum_uart_ready",
@@ -1593,7 +1760,7 @@
       "required": true
     },
     {
-      "address": "0xC3B5",
+      "address": "0xB022",
       "api": {
         "args": [],
         "asm_name": "_spectrum_uart_read",
@@ -1607,7 +1774,7 @@
       "required": true
     },
     {
-      "address": "0xF126",
+      "address": "0xE294",
       "api": {
         "args": [
           "char *dst",
@@ -1624,7 +1791,7 @@
       "required": true
     },
     {
-      "address": "0xF134",
+      "address": "0xE2A2",
       "api": {
         "args": [
           "char *dst",
@@ -1641,7 +1808,13 @@
       "required": true
     },
     {
-      "address": "0xD752",
+      "address": "0xE281",
+      "name": "_spectrum_streq",
+      "present": true,
+      "required": true
+    },
+    {
+      "address": "0xC2F8",
       "api": {
         "args": [
           "const char *text"
@@ -1657,7 +1830,7 @@
       "required": true
     },
     {
-      "address": "0xDA6A",
+      "address": "0xC4B2",
       "api": {
         "args": [
           "const char *text"
@@ -1673,7 +1846,7 @@
       "required": true
     },
     {
-      "address": "0xE383",
+      "address": "0xCBBF",
       "api": {
         "args": [],
         "asm_name": "_spectrum_gui_draw_status",
@@ -1687,7 +1860,7 @@
       "required": true
     },
     {
-      "address": "0xDB80",
+      "address": "0xC596",
       "api": {
         "args": [
           "uint8_t connected"
@@ -1703,7 +1876,7 @@
       "required": true
     },
     {
-      "address": "0xDBFB",
+      "address": "0xC607",
       "api": {
         "args": [
           "const char *text",
@@ -1720,7 +1893,7 @@
       "required": true
     },
     {
-      "address": "0xDC1F",
+      "address": "0xC62B",
       "api": {
         "args": [
           "const char *text"
@@ -1736,7 +1909,7 @@
       "required": true
     },
     {
-      "address": "0xDC30",
+      "address": "0xC63C",
       "api": {
         "args": [
           "const char *text"
@@ -1752,7 +1925,7 @@
       "required": true
     },
     {
-      "address": "0xE3EC",
+      "address": "0xD101",
       "api": {
         "args": [
           "const char *ply",
@@ -1769,7 +1942,21 @@
       "required": true
     },
     {
-      "address": "0xE436",
+      "address": "0xCBFC",
+      "api": {
+        "args": [],
+        "asm_name": "_spectrum_gui_side_panels_visible",
+        "calling_convention": "z88dk_c",
+        "kind": "function",
+        "name": "spectrum_gui_side_panels_visible",
+        "return": "uint8_t"
+      },
+      "name": "_spectrum_gui_side_panels_visible",
+      "present": true,
+      "required": true
+    },
+    {
+      "address": "0xD142",
       "api": {
         "args": [
           "char who",
@@ -1786,7 +1973,7 @@
       "required": true
     },
     {
-      "address": "0xE1A0",
+      "address": "0xC9DE",
       "api": {
         "args": [
           "const char *move"
@@ -1802,7 +1989,7 @@
       "required": true
     },
     {
-      "address": "0xE1D2",
+      "address": "0xCA10",
       "api": {
         "args": [
           "const char *move"
@@ -1818,7 +2005,7 @@
       "required": true
     },
     {
-      "address": "0xDD3C",
+      "address": "0xC6D9",
       "api": {
         "args": [
           "const char *text"
@@ -1834,43 +2021,7 @@
       "required": true
     },
     {
-      "address": "0xDD47",
-      "api": {
-        "args": [
-          "const char *text",
-          "uint8_t len",
-          "uint8_t cursor"
-        ],
-        "asm_name": "_spectrum_gui_set_input_edit",
-        "calling_convention": "z88dk_c",
-        "kind": "function",
-        "name": "spectrum_gui_set_input_edit",
-        "return": "void"
-      },
-      "name": "_spectrum_gui_set_input_edit",
-      "present": true,
-      "required": true
-    },
-    {
-      "address": "0xDD93",
-      "api": {
-        "args": [
-          "uint8_t pos",
-          "char c",
-          "uint8_t cursor"
-        ],
-        "asm_name": "_spectrum_gui_input_cell",
-        "calling_convention": "z88dk_c",
-        "kind": "function",
-        "name": "spectrum_gui_input_cell",
-        "return": "void"
-      },
-      "name": "_spectrum_gui_input_cell",
-      "present": true,
-      "required": true
-    },
-    {
-      "address": "0xDF99",
+      "address": "0xC8A7",
       "api": {
         "args": [],
         "asm_name": "_spectrum_gui_redraw_board_squares",
@@ -1884,7 +2035,7 @@
       "required": true
     },
     {
-      "address": "0xDF82",
+      "address": "0xC890",
       "api": {
         "args": [
           "uint8_t row",
@@ -1901,7 +2052,7 @@
       "required": true
     },
     {
-      "address": "0xDF82",
+      "address": "0xC890",
       "api": {
         "args": [
           "uint8_t row",
@@ -1918,7 +2069,7 @@
       "required": true
     },
     {
-      "address": "0xB5C5",
+      "address": "0xA282",
       "api": {
         "args": [],
         "asm_name": "_spectrum_net_runtime_clock_ready",
@@ -1932,7 +2083,7 @@
       "required": true
     },
     {
-      "address": "0xB594",
+      "address": "0xA244",
       "api": {
         "args": [
           "uint8_t hour",
@@ -1950,7 +2101,7 @@
       "required": true
     },
     {
-      "address": "0xB5CA",
+      "address": "0xA286",
       "api": {
         "args": [
           "uint16_t date",
@@ -1967,7 +2118,7 @@
       "required": true
     },
     {
-      "address": "0xB5E2",
+      "address": "0xA295",
       "api": {
         "args": [],
         "asm_name": "_spectrum_net_runtime_fat_date",
@@ -1981,7 +2132,7 @@
       "required": true
     },
     {
-      "address": "0xB5E6",
+      "address": "0xA299",
       "api": {
         "args": [],
         "asm_name": "_spectrum_net_runtime_fat_time",
@@ -1995,13 +2146,27 @@
       "required": true
     },
     {
-      "address": "0xC3DF",
+      "address": "0xA2B5",
+      "api": {
+        "args": [],
+        "asm_name": "_spectrum_net_runtime_fat_day_delta",
+        "calling_convention": "z88dk_c",
+        "kind": "function",
+        "name": "spectrum_net_runtime_fat_day_delta",
+        "return": "int16_t"
+      },
+      "name": "_spectrum_net_runtime_fat_day_delta",
+      "present": true,
+      "required": true
+    },
+    {
+      "address": "0xB066",
       "name": "_spectrum_net_last_ip",
       "present": true,
       "required": true
     },
     {
-      "address": "0xC6BB",
+      "address": "0xB38D",
       "api": {
         "args": [],
         "asm_name": "_spectrum_net_start_uart",
@@ -2015,7 +2180,7 @@
       "required": true
     },
     {
-      "address": "0xEB72",
+      "address": "0xD8B7",
       "api": {
         "args": [
           "const char *board"
@@ -2031,7 +2196,7 @@
       "required": true
     },
     {
-      "address": "0xEB8A",
+      "address": "0xD8CF",
       "api": {
         "args": [
           "const char *text"
@@ -2047,7 +2212,7 @@
       "required": true
     },
     {
-      "address": "0xEB90",
+      "address": "0xD8D5",
       "api": {
         "args": [
           "const char *text"
@@ -2063,7 +2228,7 @@
       "required": true
     },
     {
-      "address": "0xEBC6",
+      "address": "0xD8FF",
       "api": {
         "args": [
           "uint8_t connected"
@@ -2079,7 +2244,7 @@
       "required": true
     },
     {
-      "address": "0xEBD8",
+      "address": "0xD911",
       "api": {
         "args": [],
         "asm_name": "_spectrum_info_show_setup",
@@ -2093,7 +2258,7 @@
       "required": true
     },
     {
-      "address": "0xEBDE",
+      "address": "0xD917",
       "api": {
         "args": [],
         "asm_name": "_spectrum_info_show_game_setup",
@@ -2107,7 +2272,7 @@
       "required": true
     },
     {
-      "address": "0xEBFC",
+      "address": "0xD935",
       "api": {
         "args": [],
         "asm_name": "_spectrum_info_show_preflight",
@@ -2121,7 +2286,7 @@
       "required": true
     },
     {
-      "address": "0xEC08",
+      "address": "0xD941",
       "api": {
         "args": [
           "const char *line"
@@ -2137,7 +2302,7 @@
       "required": true
     },
     {
-      "address": "0xEE57",
+      "address": "0xDB95",
       "api": {
         "args": [
           "const char *moves"
@@ -2153,7 +2318,7 @@
       "required": true
     },
     {
-      "address": "0xEE82",
+      "address": "0xDBC0",
       "api": {
         "args": [
           "const char *line"
@@ -2169,21 +2334,7 @@
       "required": true
     },
     {
-      "address": "0xEEF5",
-      "api": {
-        "args": [],
-        "asm_name": "_spectrum_render_moves_scroll",
-        "calling_convention": "z88dk_c",
-        "kind": "function",
-        "name": "spectrum_render_moves_scroll",
-        "return": "void"
-      },
-      "name": "_spectrum_render_moves_scroll",
-      "present": true,
-      "required": true
-    },
-    {
-      "address": "0xEF3C",
+      "address": "0xDC7A",
       "api": {
         "args": [
           "const char *chat"
@@ -2199,7 +2350,7 @@
       "required": true
     },
     {
-      "address": "0xEF67",
+      "address": "0xDCA5",
       "api": {
         "args": [
           "const char *line"
@@ -2215,21 +2366,7 @@
       "required": true
     },
     {
-      "address": "0xEEFB",
-      "api": {
-        "args": [],
-        "asm_name": "_spectrum_render_chat_scroll",
-        "calling_convention": "z88dk_c",
-        "kind": "function",
-        "name": "spectrum_render_chat_scroll",
-        "return": "void"
-      },
-      "name": "_spectrum_render_chat_scroll",
-      "present": true,
-      "required": true
-    },
-    {
-      "address": "0xEC0E",
+      "address": "0xD947",
       "api": {
         "args": [
           "const char *spec"
@@ -2245,7 +2382,7 @@
       "required": true
     },
     {
-      "address": "0xEC14",
+      "address": "0xD94D",
       "api": {
         "args": [
           "const char *spec"
@@ -2261,7 +2398,7 @@
       "required": true
     },
     {
-      "address": "0xECFF",
+      "address": "0xDA38",
       "api": {
         "args": [
           "const char *spec"
@@ -2277,61 +2414,93 @@
       "required": true
     },
     {
-      "address": "0xEE3D",
+      "address": "0xDD6D",
+      "api": {
+        "args": [
+          "const char *text"
+        ],
+        "asm_name": "_spectrum_render_input",
+        "calling_convention": "fastcall",
+        "kind": "function",
+        "name": "spectrum_render_input",
+        "return": "void"
+      },
+      "name": "_spectrum_render_input",
+      "present": true,
+      "required": true
+    },
+    {
+      "address": "0xDD94",
+      "api": {
+        "args": [
+          "const char *spec"
+        ],
+        "asm_name": "_spectrum_render_input_cell",
+        "calling_convention": "fastcall",
+        "kind": "function",
+        "name": "spectrum_render_input_cell",
+        "return": "void"
+      },
+      "name": "_spectrum_render_input_cell",
+      "present": true,
+      "required": true
+    },
+    {
+      "address": "0xDB7B",
       "name": "compute_square_bc",
       "present": true,
       "required": true
     },
     {
-      "address": "0xF0BF",
+      "address": "0xDDF7",
       "name": "compute_attr_base",
       "present": true,
       "required": true
     },
     {
-      "address": "0xF083",
+      "address": "0xDDC1",
       "name": "set_square_attr_2x2",
       "present": true,
       "required": true
     },
     {
-      "address": "0xF0B9",
+      "address": "0xDDF1",
       "name": "compute_screen_base",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFBAD",
+      "address": "0xECFD",
       "name": "board_row",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFBAE",
+      "address": "0xECFE",
       "name": "board_col",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFBAA",
+      "address": "0xECFA",
       "name": "tmp_attr",
       "present": true,
       "required": true
     },
     {
-      "address": "0xECFA",
+      "address": "0xDA33",
       "name": "board_theme_hint_inks",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFB7E",
+      "address": "0xECC5",
       "name": "_spectrum_gui_board_flipped",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFB7E",
+      "address": "0xECC5",
       "api": {
         "asm_name": "_spectrum_board_view_flipped",
         "kind": "object",
@@ -2343,7 +2512,7 @@
       "required": true
     },
     {
-      "address": "0xFA08",
+      "address": "0xEB52",
       "name": "_netchesszx_board_theme_index",
       "present": true,
       "required": true
@@ -2355,7 +2524,7 @@
       "required": true
     },
     {
-      "address": "0xD1EF",
+      "address": "0xBD7E",
       "api": {
         "args": [],
         "asm_name": "_spectrum_board_reset",
@@ -2369,7 +2538,7 @@
       "required": true
     },
     {
-      "address": "0xD2A1",
+      "address": "0xBE27",
       "api": {
         "args": [],
         "asm_name": "_spectrum_board_cells",
@@ -2383,7 +2552,7 @@
       "required": true
     },
     {
-      "address": "0xD2C7",
+      "address": "0xBE41",
       "api": {
         "args": [
           "uint8_t row",
@@ -2400,7 +2569,7 @@
       "required": true
     },
     {
-      "address": "0xD4D2",
+      "address": "0xC029",
       "api": {
         "args": [
           "const char *move"
@@ -2416,331 +2585,489 @@
       "required": true
     },
     {
-      "address": "0xFB5E",
+      "address": "0xECBA",
       "name": "_side_to_move",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFB5F",
+      "address": "0xECBB",
       "name": "_castle_rights",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFB60",
+      "address": "0xECBC",
       "name": "_ep_square",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFB7A",
+      "address": "0x5FFB",
       "name": "_last_ply_seen",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFB7C",
+      "address": "0x5FFD",
       "name": "_move_line_count",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFB7D",
+      "address": "0x5FFE",
       "name": "_chat_line_count",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA58",
+      "address": "0xEB92",
       "name": "_setup_choice",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA5F",
+      "address": "0xEB99",
       "name": "_setup_focus_choice",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA66",
+      "address": "0xEBA0",
       "name": "_setup_focus_board_theme",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA67",
+      "address": "0xEBA1",
       "name": "_setup_defined_mask",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA69",
+      "address": "0xEBA3",
       "name": "_setup_visible_mask",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA6B",
+      "address": "0xEBA5",
       "name": "_setup_cursor",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA6C",
+      "address": "0xEBA6",
       "name": "_setup_room_editing",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA6D",
+      "address": "0xEBA7",
       "name": "_setup_edit_row",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA6E",
+      "address": "0xEBA8",
       "name": "_setup_port_text",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA74",
+      "address": "0xEBAE",
       "name": "_setup_timezone_text",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA78",
+      "address": "0xEBB2",
       "name": "_setup_timezone_value",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA79",
+      "address": "0xEBB3",
       "name": "_setup_config_dirty",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA7A",
+      "address": "0xEBB4",
       "name": "_setup_game_focus",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA7B",
+      "address": "0xEBB5",
       "name": "_setup_time_focus",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA7C",
+      "address": "0xEBB6",
       "name": "_setup_action_focus",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA7D",
+      "address": "0xEBB7",
       "name": "_setup_edit_was_dirty",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA7E",
+      "address": "0xEBB8",
       "name": "_setup_edit_backup",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA58",
+      "address": "0xEB92",
       "name": "_setup_config_record",
       "present": true,
       "required": true
     },
     {
-      "address": "0xBB62",
+      "address": "0xA7BD",
       "name": "_netchesszx_session_peer_ready",
       "present": true,
       "required": true
     },
     {
-      "address": "0xEBE4",
+      "address": "0xD91D",
+      "api": {
+        "args": [
+          "const char *spec"
+        ],
+        "asm_name": "_spectrum_render_ikkle_at",
+        "calling_convention": "fastcall",
+        "kind": "function",
+        "name": "spectrum_render_ikkle_at",
+        "return": "void"
+      },
       "name": "_spectrum_render_ikkle_at",
       "present": true,
       "required": true
     },
     {
-      "address": "0xEBF6",
+      "address": "0xD923",
+      "name": "_spectrum_render_ikkle_abs_at",
+      "present": true,
+      "required": true
+    },
+    {
+      "address": "0xD92F",
       "name": "_spectrum_render_fileui_frame",
       "present": true,
       "required": true
     },
     {
-      "address": "0xEBF0",
+      "address": "0xD929",
       "name": "_spectrum_render_fileui_select",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFB62",
+      "address": "0xECBE",
       "name": "_spectrum_fileui_count",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFB63",
+      "address": "0xECBF",
       "name": "_spectrum_fileui_used_mask",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA2A",
+      "address": "0xECD6",
       "name": "_local_input_len",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA2B",
+      "address": "0xECD7",
       "name": "_local_input_cursor",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA2C",
+      "address": "0xECD8",
       "name": "_local_input_mode",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA2D",
+      "address": "0xECD9",
       "name": "_input_history_count",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFA2E",
+      "address": "0xECDA",
       "name": "_input_history_pos",
       "present": true,
       "required": true
     },
     {
-      "address": "0xE8E7",
+      "address": "0xD60E",
       "name": "_spectrum_gui_edit_hide",
       "present": true,
       "required": true
     },
     {
-      "address": "0xE8DF",
+      "address": "0xD606",
       "name": "_spectrum_gui_edit_show",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFB8C",
+      "address": "0xECDC",
       "name": "_edit_buf",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFB8E",
+      "address": "0xECDE",
       "name": "_edit_max",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFB8F",
+      "address": "0xECDF",
       "name": "_edit_len",
       "present": true,
       "required": true
     },
     {
-      "address": "0xFB90",
+      "address": "0xECE0",
       "name": "_edit_pos",
       "present": true,
       "required": true
     },
     {
-      "address": "0xE892",
+      "address": null,
+      "name": "font_packed",
+      "present": false,
+      "required": false
+    },
+    {
+      "address": null,
+      "name": "font_lut",
+      "present": false,
+      "required": false
+    },
+    {
+      "address": "0x3F46",
+      "name": "_spectrum_game_stats",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0x3879",
+      "name": "piece_sprites_16x16",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xEB54",
+      "name": "_netchesszx_board_light_attr",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xEB87",
+      "name": "_spectrum_stats_undo",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xEB75",
+      "name": "_spectrum_journal_fd",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xEB76",
+      "name": "_spectrum_journal_pend",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xEB77",
+      "name": "_spectrum_journal_warning",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xEB78",
+      "name": "_spectrum_journal_count",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xEB7A",
+      "name": "_spectrum_journal_crc",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xEB7C",
+      "name": "_spectrum_rcv_cache",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xECC3",
+      "name": "_spectrum_gui_about_visible_state",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xECD0",
+      "name": "_spectrum_moves_header_shown",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xDC33",
+      "api": {
+        "args": [],
+        "asm_name": "_spectrum_render_moves_scroll",
+        "calling_convention": "z88dk_c",
+        "kind": "function",
+        "name": "spectrum_render_moves_scroll",
+        "return": "void"
+      },
+      "name": "_spectrum_render_moves_scroll",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xDC39",
+      "api": {
+        "args": [],
+        "asm_name": "_spectrum_render_chat_scroll",
+        "calling_convention": "z88dk_c",
+        "kind": "function",
+        "name": "spectrum_render_chat_scroll",
+        "return": "void"
+      },
+      "name": "_spectrum_render_chat_scroll",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xDE27",
+      "name": "compute_pixel_base",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xDE2D",
+      "name": "pixel_down_hl",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xECFB",
+      "name": "tmp_scan",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xED04",
+      "name": "piece_scan",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xD576",
       "name": "_netchess_after_prefix",
       "present": true,
       "required": false
     },
     {
-      "address": "0xE80C",
+      "address": "0xD4FC",
       "name": "_netchess_mqtt_session_parse_u16_token",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF7F0",
+      "address": "0xE94E",
       "name": "_NETCHESS_PROTO_ACK_PREFIX",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF7F5",
+      "address": "0xE953",
       "name": "_NETCHESS_PROTO_NACK_PREFIX",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF7FB",
+      "address": "0xE959",
       "name": "_NETCHESS_PROTO_MOVE_PREFIX",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF801",
+      "address": "0xE95F",
       "name": "_NETCHESS_PROTO_CHAT_PREFIX",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF807",
+      "address": "0xE965",
       "name": "_NETCHESS_PROTO_DRAW",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF80C",
+      "address": "0xE96A",
       "name": "_NETCHESS_PROTO_CANCEL_DRAW",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF818",
+      "address": "0xE976",
       "name": "_NETCHESS_PROTO_CANCEL_RESET",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF825",
+      "address": "0xA45C",
+      "name": "_netchess_proto_takeback_ply",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xE994",
       "name": "_NETCHESS_PROTO_ACK_RESIGN",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF83B",
+      "address": "0xE9AA",
       "name": "_NETCHESS_PROTO_NACK_RESET",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF846",
+      "address": "0xE9B5",
       "name": "_NETCHESS_PROTO_BYE",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF84A",
+      "address": "0xE9B9",
       "name": "_NETCHESS_PROTO_TAKEBACK_PREFIX",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFAB6",
+      "address": "0xEC13",
       "name": "_line_buf",
       "present": true,
       "required": false
@@ -2752,109 +3079,109 @@
       "required": false
     },
     {
-      "address": "0xFAE8",
+      "address": "0xEC45",
       "name": "_direct_rx_payload",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFB18",
+      "address": "0xEC75",
       "name": "_direct_rx_payload2",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFB48",
+      "address": "0xECA5",
       "name": "_direct_rx_link",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFB49",
+      "address": "0xECA6",
       "name": "_direct_rx_link2",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFB4A",
+      "address": "0xECA7",
       "name": "_direct_rx_count",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFB4B",
+      "address": "0xECA8",
       "name": "_direct_rx_head",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFB4C",
+      "address": "0xECA9",
       "name": "_direct_rx_payload_len",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFB4D",
+      "address": "0xECAA",
       "name": "_direct_ipd_remaining",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFB4F",
+      "address": "0xECAC",
       "name": "_direct_ipd_accept",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFB50",
+      "address": "0xECAD",
       "name": "_direct_ipd_link",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFB51",
+      "address": "0xECAE",
       "name": "_direct_link_closed",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFB52",
+      "address": "0xECAF",
       "name": "_direct_peer_valid",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA23",
+      "address": "0xEB72",
       "name": "_direct_intruder_link",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFAE7",
+      "address": "0xEC44",
       "name": "_active_link",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFAE6",
+      "address": "0xEC43",
       "name": "_line_pos",
       "present": true,
       "required": false
     },
     {
-      "address": "0xB585",
+      "address": "0xA235",
       "name": "_net_wait_frame",
       "present": true,
       "required": false
     },
     {
-      "address": "0xC3D0",
+      "address": "0xB057",
       "name": "_reset_line_buf",
       "present": true,
       "required": false
     },
     {
-      "address": "0xC3E3",
+      "address": "0xB06A",
       "name": "_read_line",
       "present": true,
       "required": false
@@ -2866,25 +3193,25 @@
       "required": false
     },
     {
-      "address": "0xC4B8",
+      "address": "0xB15F",
       "name": "_wait_for_ok",
       "present": true,
       "required": false
     },
     {
-      "address": "0xC518",
+      "address": "0xB1C3",
       "name": "_wait_for_prompt",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFB55",
+      "address": "0xECB2",
       "name": "_mqtt_next_id",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFB57",
+      "address": "0xECB4",
       "name": "_mqtt_stream_len",
       "present": true,
       "required": false
@@ -2908,19 +3235,19 @@
       "required": false
     },
     {
-      "address": "0xC53F",
+      "address": "0xB20D",
       "name": "_spectrum_net_at_cmd",
       "present": true,
       "required": false
     },
     {
-      "address": "0xC569",
+      "address": "0xB237",
       "name": "_spectrum_net_guard_wait",
       "present": true,
       "required": false
     },
     {
-      "address": "0xC5CD",
+      "address": "0xB29B",
       "name": "_spectrum_net_ensure_command_mode",
       "present": true,
       "required": false
@@ -2932,7 +3259,7 @@
       "required": false
     },
     {
-      "address": "0xC68B",
+      "address": "0xB34A",
       "api": {
         "args": [],
         "asm_name": "_spectrum_net_background_drain",
@@ -2946,43 +3273,43 @@
       "required": false
     },
     {
-      "address": "0xF908",
+      "address": "0xEA58",
       "name": "_spectrum_net_at_cipclose",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF914",
+      "address": "0xEA64",
       "name": "_spectrum_net_at_cipmode_0",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF921",
+      "address": "0xEA71",
       "name": "_spectrum_net_at_cipmux_0",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF92D",
+      "address": "0xEA7D",
       "name": "_spectrum_net_at_cipserver_0",
       "present": true,
       "required": false
     },
     {
-      "address": "0xC79A",
+      "address": "0xB480",
       "name": "_mqtt_enter_stream_mode",
       "present": true,
       "required": false
     },
     {
-      "address": "0xC7E2",
+      "address": "0xB4C8",
       "name": "_mqtt_abort_stream_mode",
       "present": true,
       "required": false
     },
     {
-      "address": "0xCA48",
+      "address": "0xB6B2",
       "name": "_mqtt_send_raw_packet",
       "present": true,
       "required": false
@@ -2994,8 +3321,50 @@
       "required": false
     },
     {
-      "address": "0xCAE9",
-      "name": "_mqtt_wait_packet_into",
+      "address": "0xB678",
+      "name": "_mqtt_read_stream_packet",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xB574",
+      "name": "_mqtt_consume_stream_packet",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xB661",
+      "name": "_mqtt_payload_slot",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xB71D",
+      "name": "_mqtt_puback_id",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xECB5",
+      "name": "_mqtt_stream_active",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xECB6",
+      "name": "_mqtt_payload_count",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xECB7",
+      "name": "_mqtt_payload_head",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xD598",
+      "name": "_netchesszx_asm_net_copy",
       "present": true,
       "required": false
     },
@@ -3030,55 +3399,55 @@
       "required": false
     },
     {
-      "address": "0xB5EA",
+      "address": "0xA2BD",
       "name": "_netchesszx_session_configure",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA01",
+      "address": "0xEB6B",
       "name": "_netchesszx_session_role",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA02",
+      "address": "0xEB6C",
       "name": "_netchesszx_transport",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA03",
+      "address": "0xEB6D",
       "name": "_netchesszx_local_color",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA04",
+      "address": "0xEB6E",
       "name": "_netchesszx_host_color",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA05",
+      "address": "0xEB6F",
       "name": "_netchesszx_host_color_ready",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA06",
+      "address": "0xEB50",
       "name": "_netchesszx_notation",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA07",
+      "address": "0xEB51",
       "name": "_netchesszx_movement_hints",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA09",
+      "address": "0xEB53",
       "name": "_netchesszx_piece_set_index",
       "present": true,
       "required": false
@@ -3090,122 +3459,134 @@
       "required": false
     },
     {
-      "address": "0xF7DC",
+      "address": "0xE90D",
       "name": "_netchesszx_mqtt_host",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFAA2",
+      "address": "0xEBE8",
       "name": "_netchesszx_mqtt_code",
       "present": true,
       "required": false
     },
     {
-      "address": "0xF7EE",
+      "address": "0xE91F",
       "name": "_netchesszx_mqtt_port",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA0C",
+      "address": "0xEB70",
       "name": "_netchesszx_mqtt_session_id",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA0E",
+      "address": "0xEB56",
       "name": "_netchesszx_direct_host",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA1E",
+      "address": "0xEB66",
       "name": "_netchesszx_direct_port",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA20",
+      "address": "0xEB68",
       "name": "_netchesszx_timezone",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA21",
+      "address": "0xEB69",
       "name": "_netchesszx_timezone_last",
       "present": true,
       "required": false
     },
     {
-      "address": "0xFA22",
+      "address": "0xEB6A",
       "name": "_netchesszx_rtc_available",
       "present": true,
       "required": false
     },
     {
-      "address": "0xCD6D",
+      "address": "0xB959",
       "name": "_spectrum_net_mqtt_out_suffix",
       "present": true,
       "required": false
     },
     {
-      "address": "0xCD77",
+      "address": "0xB963",
       "name": "_spectrum_net_mqtt_out_ack_suffix",
       "present": true,
       "required": false
     },
     {
-      "address": "0xCD72",
+      "address": "0xB95E",
       "name": "_spectrum_net_mqtt_in_suffix",
       "present": true,
       "required": false
     },
     {
-      "address": "0xCD7C",
+      "address": "0xB968",
       "name": "_spectrum_net_mqtt_in_ack_suffix",
       "present": true,
       "required": false
     },
     {
-      "address": "0xCD93",
+      "address": "0xB972",
       "name": "_spectrum_net_mqtt_peer_presence_suffix",
       "present": true,
       "required": false
     },
     {
-      "address": "0xCD81",
+      "address": "0xB96D",
       "name": "_spectrum_net_mqtt_presence_suffix",
       "present": true,
       "required": false
     },
     {
-      "address": "0xCD98",
+      "address": "0xB977",
       "name": "_spectrum_net_mqtt_presence_payload",
       "present": true,
       "required": false
     },
     {
-      "address": "0xCDE7",
+      "address": "0xB9B5",
       "name": "_spectrum_net_mqtt_setup_payload",
       "present": true,
       "required": false
     },
     {
-      "address": "0xC64C",
+      "address": "0xB31A",
       "name": "_spectrum_net_sync_time",
       "present": true,
       "required": false
     },
     {
-      "address": "0xCE70",
+      "address": "0xBA44",
       "name": "_spectrum_mqtt_subscribe",
       "present": true,
       "required": false
     },
     {
-      "address": "0xCEF2",
+      "address": "0xBAC6",
       "name": "_spectrum_mqtt_publish",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xBBA9",
+      "name": "_spectrum_mqtt_type",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xBBC6",
+      "name": "_spectrum_mqtt_parse_publish",
       "present": true,
       "required": false
     },
@@ -3444,7 +3825,7 @@
       "required": false
     }
   ],
-  "root": "C:\\dev\\NetChessZX-worktrees\\next-mmu-overlays",
+  "root": "/Users/ignaciomongegarcia/Developer/Retro/NetChessZX",
   "session_route_constants": [
     {
       "name": "SESSION_ROUTE_DEFAULT",
@@ -3483,12 +3864,12 @@
     }
   ],
   "sources": {
-    "lowram_map": "src\\spectrum\\lowram_map.h",
-    "map": "build\\nex\\SHATRANJ.map",
-    "overlay_api": "src\\spectrum\\overlay\\overlay_api.h",
-    "overlay_context": "src\\spectrum\\overlay\\overlay_context.h",
-    "overlay_header": "src\\spectrum\\overlay\\overlay.h",
-    "session_header": "src\\common\\session\\session.h"
+    "lowram_map": "src/spectrum/lowram_map.h",
+    "map": "build/nex/SHATRANJ.map",
+    "overlay_api": "src/spectrum/overlay/overlay_api.h",
+    "overlay_context": "src/spectrum/overlay/overlay_context.h",
+    "overlay_header": "src/spectrum/overlay/overlay.h",
+    "session_header": "src/common/session/session.h"
   },
   "version": 3
 }

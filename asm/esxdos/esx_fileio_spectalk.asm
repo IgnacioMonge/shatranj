@@ -1,5 +1,6 @@
 ; esxDOS FILE I/O - copied from SpectalkZX 60_protocol_storage.asm method.
 ; Parameter passing via globals; callers set esx_buf/esx_count before I/O.
+; esx_handle stores the raw esxDOS handle + 1; zero means open failed.
 
 IFDEF NETCHESSZX_NEXT_BANKING
 INCLUDE "asm/next/extension_bank_layout.asm"
@@ -44,6 +45,7 @@ _esx_fclose:
     push iy
     push ix
     ld a, (_esx_handle)
+    dec a
 IFDEF NETCHESSZX_NEXT_BANKING
     DEFB 0xed, 0x91, 0x51, 0xff
 ENDIF
@@ -57,7 +59,7 @@ ENDIF
     jr esx_pop_ix_iy_ret
 
 ; void esx_opendir(const char *path) __z88dk_fastcall
-; Output: _esx_handle = dir handle (0 on error). Preserves IY and IX.
+; Output: _esx_handle = dir handle + 1 (0 on error). Preserves IY and IX.
 _esx_opendir:
     push iy
     push ix
@@ -74,8 +76,9 @@ IFDEF NETCHESSZX_NEXT_BANKING
     DEFB 0xed, 0x91, 0x51, next_extension_page
 ENDIF
     jr nc, esx_open_ok
-    xor a
+    ld a, 0xff
 esx_open_ok:
+    inc a
     ld (_esx_handle), a
     jr esx_pop_ix_iy_ret
 
@@ -86,6 +89,7 @@ _esx_readdir:
     push iy
     push ix
     ld a, (_esx_handle)
+    dec a
     ld ix, (_esx_buf)
 IFDEF NETCHESSZX_NEXT_BANKING
     DEFB 0xed, 0x91, 0x51, 0xff
@@ -110,21 +114,26 @@ esx_pop_ix_iy_ret:
 
 ELSE
 
-; void esx_fopen(const char *path) __z88dk_fastcall
+; uint8_t esx_fopen(const char *path) __z88dk_fastcall
 ; Input: HL = path string
-; Output: _esx_handle = file handle (0 on error)
-; Preserves IY. Sets IX = HL (esxDOS needs both).
+; Output: _esx_handle = file handle + 1 (0 on error), L = 0 or esxDOS error
+; Preserves IY and IX. Sets IX = HL during esxDOS calls (esxDOS needs both).
 _esx_fopen:
     ld b, 0x01          ; FA_READ
     jr esx_open_common
 
 _esx_fcreate:
+IFDEF ESX_JOURNAL
+    ld b, 0x0F          ; FA_READ | FA_WRITE | FA_CREATE_AL: SAVE rereads TMP
+ELSE
     ld b, 0x0E          ; FA_WRITE | FA_CREATE_AL (0x02 write + 0x0C create/trunc)
+ENDIF
     jr esx_open_common
 
 _esx_fcreate_new:
     ld b, 0x06          ; FA_WRITE | FA_CREATE_NEW: never truncate an old file
 
+PUBLIC esx_open_common
 esx_open_common:
     push iy
     push ix
@@ -140,9 +149,14 @@ IFDEF NETCHESSZX_NEXT_BANKING
     DEFB 0xed, 0x91, 0x51, next_extension_page
 ENDIF
     jr nc, esx_open_ok
+    ld l, a
     xor a               ; error -> handle = 0
-esx_open_ok:
     ld (_esx_handle), a
+    jr esx_pop_ix_iy_ret
+esx_open_ok:
+    inc a
+    ld (_esx_handle), a
+    ld l, 0
     jr esx_pop_ix_iy_ret
 
 ; void esx_fread(void)
@@ -153,6 +167,7 @@ _esx_fread:
     push iy
     push ix
     ld a, (_esx_handle)
+    dec a
     ld ix, (_esx_buf)
     ld bc, (_esx_count)
 IFDEF NETCHESSZX_NEXT_BANKING
@@ -173,6 +188,7 @@ _esx_fclose:
     push iy
     push ix
     ld a, (_esx_handle)
+    dec a
 IFDEF NETCHESSZX_NEXT_BANKING
     DEFB 0xed, 0x91, 0x51, 0xff
 ENDIF
@@ -193,6 +209,7 @@ _esx_fwrite:
     push iy
     push ix
     ld a, (_esx_handle)
+    dec a
     ld ix, (_esx_buf)
     ld bc, (_esx_count)
 IFDEF NETCHESSZX_NEXT_BANKING

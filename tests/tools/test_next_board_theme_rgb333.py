@@ -2,6 +2,9 @@
 import re
 import unittest
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+from asm_source import read_asm
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -9,7 +12,7 @@ SCREEN = ROOT / "asm" / "spectrum" / "screen.asm"
 LOADER = ROOT / "asm" / "next" / "overlay_loader_next.asm"
 GRAPHICS_BANK = ROOT / "asm" / "next" / "graphics_bank_next.asm"
 GRAPHICS_LAYOUT = ROOT / "asm" / "next" / "extension_bank_layout.asm"
-GEN_ASSETS = ROOT / "tools" / "gen_assets.py"
+UI_THEME = ROOT / "assets/next/ui_theme.asm"
 BUILD_SPRITES = ROOT / "tools" / "build_next_piece_sprites.py"
 SPRITE_PALETTE_BIN = ROOT / "assets" / "next" / "lichess_sprite_palette.bin"
 SPRITE_BIN = ROOT / "assets" / "next" / "lichess_piece_sprites.bin"
@@ -19,16 +22,17 @@ APP = ROOT / "src" / "spectrum" / "app" / "app.c"
 
 
 def block(text: str, start: str, end: str) -> str:
-    return text[text.index(start) : text.index(end, text.index(start))]
+    return text[text.rindex(start) : text.index(end, text.rindex(start))]
 
 
 class NextBoardThemeRgb333Tests(unittest.TestCase):
     def setUp(self) -> None:
-        self.screen = SCREEN.read_text(encoding="utf-8")
+        self.screen = read_asm(ROOT / "asm/next/screen.asm")
+        self.classic = read_asm(SCREEN)
         self.loader = LOADER.read_text(encoding="utf-8")
         self.graphics_bank = GRAPHICS_BANK.read_text(encoding="utf-8")
         self.graphics_layout = GRAPHICS_LAYOUT.read_text(encoding="utf-8")
-        self.gen_assets = GEN_ASSETS.read_text(encoding="utf-8")
+        self.ui_theme = UI_THEME.read_text(encoding="ascii")
         self.build_sprites = BUILD_SPRITES.read_text(encoding="utf-8")
         self.sprite_palette_bin = SPRITE_PALETTE_BIN.read_bytes()
         self.sprite_bin = SPRITE_BIN.read_bytes()
@@ -127,16 +131,16 @@ class NextBoardThemeRgb333Tests(unittest.TestCase):
 
     def test_clean_classic_canvas_skips_redundant_square_clears(self) -> None:
         initial = block(
-            self.screen,
+            self.classic,
             "_spectrum_render_board:",
             "_spectrum_render_board_area:",
         )
         restore = block(
-            self.screen,
+            self.classic,
             "_spectrum_restore_game_center:",
             "restore_game_center_canvas:",
         )
-        clean = block(self.screen, "draw_board_clean:", "draw_board:")
+        clean = block(self.classic, "draw_board_clean:", "draw_board:")
 
         self.assertIn("call draw_board_clean", initial)
         self.assertIn("call draw_board_clean", restore)
@@ -145,29 +149,38 @@ class NextBoardThemeRgb333Tests(unittest.TestCase):
         self.assertIn("dec (hl)", clean)
 
     def test_sent_cursor_move_does_not_clear_hints_twice(self) -> None:
+        transitions = (ROOT / "src/spectrum/session/transitions.inc").read_text(
+            encoding="utf-8"
+        )
+        ports = (ROOT / "src/spectrum/app/session_ports.h").read_text(
+            encoding="utf-8"
+        )
         send = block(
-            self.app,
+            transitions,
             "static uint8_t send_local_move(const char *move)",
-            "static uint8_t retry_pending_outgoing(void)",
+            "\n}\n",
         )
         cursor = block(
-            self.app,
-            "static uint8_t cursor_select_or_move(uint8_t key)",
-            "static uint8_t restore_transfer_pending(void)",
+            (ROOT / "src/spectrum/ui/board_interaction.c").read_text(encoding="utf-8"),
+            "uint8_t spectrum_ux_board_activate(void)",
+            "\n}\n",
         )
-        sent = cursor[cursor.index("move_rc = send_local_move(move);") :]
+        sent = cursor[cursor.index("move_rc = spectrum_ux_move_intent(") :]
 
-        self.assertEqual(send.count("movement_hints_clear();"), 1)
+        self.assertEqual(send.count("SESSION_APP_CLEAR_MOVE_HINTS();"), 1)
+        self.assertIn(
+            "#define SESSION_APP_CLEAR_MOVE_HINTS() movement_hints_clear()", ports
+        )
         self.assertNotIn("movement_hints_clear();", sent)
 
     def test_standard_ula_groups_and_menu_tables_stay_on_main_contract(self) -> None:
         self.assertIn(
-            "NEXT_BOARD_LIGHT_ATTRS = [0x78, 0x6F, 0x66, 0x77, 0x37]",
-            self.gen_assets,
+            "    DEFB 0x78, 0x6f, 0x66, 0x77, 0x37",
+            self.ui_theme,
         )
         self.assertIn(
-            "NEXT_BOARD_DARK_ATTRS = [0x07, 0x4D, 0x20, 0x56, 0x52]",
-            self.gen_assets,
+            "    DEFB 0x07, 0x4d, 0x20, 0x56, 0x52",
+            self.ui_theme,
         )
         table = block(
             self.build_sprites,
@@ -256,7 +269,10 @@ class NextBoardThemeRgb333Tests(unittest.TestCase):
         )
         self.assertEqual(len(self.sprite_palette_bin), 160 * 2 + len(values))
         self.assertEqual(self.sprite_palette_bin[-len(values) :], bytes(values))
-        self.assertIn("ld e, 192", self.graphics_bank)
+        self.assertIn(
+            "DEFB 0xed, 0x91, nextreg_palette_index, 192",
+            self.graphics_bank,
+        )
         init = block(
             self.graphics_bank,
             "ngb_sprite_system_init:",
@@ -286,12 +302,14 @@ class NextBoardThemeRgb333Tests(unittest.TestCase):
         )
         self.assertRegex(
             swatch,
-            r"IFDEF NETCHESSZX_NEXT\s+;[^\n]*\s+ELSE\s+or 0x40\s+ENDIF",
+            r"IFDEF NETCHESSZX_NEXT\s+;[^\n]*\s+ELSE\s+or NETCHESSZX_SETUP_BOARD_SWATCH_FOCUS_BIT\s+ENDIF",
         )
         self.assertIn(
-            "cp 0x37\n    jr nz, menu_config_board_swatch_attr_ready\n    ld a, 0xc1",
+            "cp NEXT_BOARD_WOOD_ATTR\n    jr nz, menu_config_board_swatch_attr_ready\n    ld a, NEXT_BOARD_WOOD_SWATCH_ATTR",
             self.menu_config,
         )
+        self.assertIn("NEXT_BOARD_WOOD_ATTR EQU 0x37", self.screen)
+        self.assertIn("NEXT_BOARD_WOOD_SWATCH_ATTR EQU 0xc1", self.screen)
         paint = block(
             self.menu_config,
             "_menu_config_paint_attrs_ovl_entry:",
@@ -299,7 +317,7 @@ class NextBoardThemeRgb333Tests(unittest.TestCase):
         )
         self.assertNotIn("ld a, 0x68", paint)
         self.assertIn(
-            'DEFB 16, "BOARD  ", 127, "   ", 127, "   ", 127, "   ", '
+            'DEFB NETCHESSZX_SETUP_SCREEN_ROW_BOARD, "BOARD  ", 127, "   ", 127, "   ", 127, "   ", '
             '127, "   ", 127, 0',
             self.menu_config,
         )
@@ -316,7 +334,7 @@ class NextBoardThemeRgb333Tests(unittest.TestCase):
         self.assertIn("jp su_after_game_select", select)
 
         apply_action = block(
-            self.app,
+            (ROOT / "src/spectrum/ui/setup.c").read_text(encoding="utf-8"),
             "if (force_dirty & SETUP_MASK_BOARD)",
             "if (action == NETCHESSZX_SETUP_ACTION_SET)",
         )
@@ -329,10 +347,12 @@ class NextBoardThemeRgb333Tests(unittest.TestCase):
             apply_action,
         )
         self.assertIn(
-            "netchesszx_board_theme_apply(board_theme);",
+            "spectrum_presentation_apply_theme(board_theme);",
             apply_action,
         )
-        self.assertIn("spectrum_gui_restore_board_area();", apply_action)
+        policy = (ROOT / "src/spectrum/ui/presentation_next.h").read_text()
+        self.assertIn("netchesszx_board_theme_apply(theme);", policy)
+        self.assertIn("spectrum_gui_restore_board_area();", policy)
         self.assertNotIn("spectrum_gui_redraw_board_squares();", apply_action)
 
 

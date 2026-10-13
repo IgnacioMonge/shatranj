@@ -68,7 +68,7 @@
 #define NETCHESSZX_LOWRAM_SPXN_NET_STATE_END \
     (NETCHESSZX_LOWRAM_SPXN_DIRECT_3S_POLLS_ADDR + 1u)
 #ifdef NETCHESSZX_NEXT_BANKING
-#define NETCHESSZX_LOWRAM_XFS_DIR_SCRATCH_ADDR 0x3b2bu
+#define NETCHESSZX_LOWRAM_XFS_DIR_SCRATCH_ADDR 0x3b78u
 #else
 #define NETCHESSZX_LOWRAM_XFS_DIR_SCRATCH_ADDR 0x662bu
 #endif
@@ -88,6 +88,38 @@
 #define NETCHESSZX_LOWRAM_LOCAL_INPUT_SIZE 0x2b
 #define NETCHESSZX_LOWRAM_INPUT_HISTORY_ADDR 0x5edd
 #define NETCHESSZX_LOWRAM_INPUT_HISTORY_SIZE 0x40
+/* The status-line notice text (NETCHESSZX_NOTICE_TEXT_SIZE, gui.c) fills the
+   bytes between input history and the status buffer. */
+#define NETCHESSZX_LOWRAM_NOTICE_TEXT_ADDR 0x5f1du
+#define NETCHESSZX_LOWRAM_NOTICE_TEXT_SIZE 29u
+#define NETCHESSZX_LOWRAM_NOTICE_TEXT_END \
+    (NETCHESSZX_LOWRAM_NOTICE_TEXT_ADDR + NETCHESSZX_LOWRAM_NOTICE_TEXT_SIZE)
+/* Player identity: the local "MNAME <name>" advisory line (17 bytes; CONFIG
+   loads the name, Setup rebuilds the prefix) and the peer's accepted name
+   (11 bytes, cleared with the peer). Classic and Spectranext use the slack
+   between the MQTT stream (0x64fa + 223) and the MQTT packet/ABOUT work;
+   Next follows the timer-roll arena in its permanent MMU1 page. Neither
+   survives power-off; neither costs resident BSS. check_lowmem_layout.py
+   proves the linked neighbours on every build. */
+#ifdef NETCHESSZX_NEXT_BANKING
+#define NETCHESSZX_LOWRAM_PLAYER_NAME_LINE_ADDR 0x3f2au
+#else
+#define NETCHESSZX_LOWRAM_PLAYER_NAME_LINE_ADDR 0x65d9u
+#endif
+#define NETCHESSZX_LOWRAM_PLAYER_NAME_LINE_SIZE 17u
+#define NETCHESSZX_LOWRAM_PEER_NAME_ADDR \
+    (NETCHESSZX_LOWRAM_PLAYER_NAME_LINE_ADDR + \
+     NETCHESSZX_LOWRAM_PLAYER_NAME_LINE_SIZE)
+#define NETCHESSZX_LOWRAM_PEER_NAME_SIZE 11u
+#define NETCHESSZX_LOWRAM_PEER_NAME_END \
+    (NETCHESSZX_LOWRAM_PEER_NAME_ADDR + NETCHESSZX_LOWRAM_PEER_NAME_SIZE)
+/* Current-game statistics: timing (19), single-move undo (9), captures (5);
+   see common/chess/game_stats.h. Classic ends exactly at the transient
+   MQTT/ABOUT buffer, 0x6616 (that buffer ends 0x67f2, below the slot). */
+#define NETCHESSZX_LOWRAM_GAME_STATS_ADDR NETCHESSZX_LOWRAM_PEER_NAME_END
+#define NETCHESSZX_LOWRAM_GAME_STATS_SIZE 33u
+#define NETCHESSZX_LOWRAM_GAME_STATS_END \
+    (NETCHESSZX_LOWRAM_GAME_STATS_ADDR + NETCHESSZX_LOWRAM_GAME_STATS_SIZE)
 #define NETCHESSZX_LOWRAM_STATUS_ADDR 0x5f3a
 #define NETCHESSZX_LOWRAM_STATUS_SIZE 0x26
 #define NETCHESSZX_LOWRAM_STATUS_TEXT_END 0x5f5f
@@ -105,12 +137,27 @@
 #define NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_SIZE 8u
 #define NETCHESSZX_LOWRAM_HINTED_ROWS_ADDR 0x5ff0
 #define NETCHESSZX_LOWRAM_HINTED_ROWS_SIZE 8u
+#define NETCHESSZX_LOWRAM_GUI_STATE_ADDR 0x5ff8u
+#define NETCHESSZX_LOWRAM_NOTICE_TICKS_ADDR \
+    NETCHESSZX_LOWRAM_GUI_STATE_ADDR
+#define NETCHESSZX_LOWRAM_NOTICE_ERROR_ADDR \
+    (NETCHESSZX_LOWRAM_NOTICE_TICKS_ADDR + 1u)
+#define NETCHESSZX_LOWRAM_NOTICE_SUCCESS_ADDR \
+    (NETCHESSZX_LOWRAM_NOTICE_ERROR_ADDR + 1u)
+#define NETCHESSZX_LOWRAM_LAST_PLY_SEEN_ADDR \
+    (NETCHESSZX_LOWRAM_NOTICE_SUCCESS_ADDR + 1u)
+#define NETCHESSZX_LOWRAM_MOVE_LINE_COUNT_ADDR \
+    (NETCHESSZX_LOWRAM_LAST_PLY_SEEN_ADDR + 2u)
+#define NETCHESSZX_LOWRAM_CHAT_LINE_COUNT_ADDR \
+    (NETCHESSZX_LOWRAM_MOVE_LINE_COUNT_ADDR + 1u)
+#define NETCHESSZX_LOWRAM_GUI_STATE_END \
+    (NETCHESSZX_LOWRAM_CHAT_LINE_COUNT_ADDR + 1u)
 
 /* Shared only by the currently loaded overlay. ABOUT input and Next sprite
    staging reuse adjacent/overlapping bytes outside overlay-call lifetime;
    no overlay may retain this pointer after returning to resident code. */
 #ifdef NETCHESSZX_NEXT_BANKING
-#define NETCHESSZX_NEXT_OVERLAY_SCRATCH_ADDR 0x3c2bu
+#define NETCHESSZX_NEXT_OVERLAY_SCRATCH_ADDR 0x3c78u
 #define NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR \
     NETCHESSZX_NEXT_OVERLAY_SCRATCH_ADDR
 #else
@@ -120,6 +167,37 @@
 #define NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_END \
     (NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR + \
      NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_SIZE)
+
+/* Nibble-blit state, a persistent 5-byte menu-label cache and one 8-byte
+   strip. Classic/Spectranext reuse ABOUT's dead post-load tail; Next follows
+   its transient 512-byte palette stage. */
+#ifdef NETCHESSZX_NEXT_BANKING
+#define NETCHESSZX_LOWRAM_TIMER_ROLL_ADDR 0x3f18u
+#else
+#define NETCHESSZX_LOWRAM_TIMER_ROLL_ADDR 0x67cbu
+#endif
+#define NETCHESSZX_LOWRAM_TIMER_ROLL_SIZE 18u
+#define NETCHESSZX_LOWRAM_TIMER_ROLL_END \
+    (NETCHESSZX_LOWRAM_TIMER_ROLL_ADDR + NETCHESSZX_LOWRAM_TIMER_ROLL_SIZE)
+
+/* Independent roll phases, the 16-bit hardware-frame anchor, TURN fractional
+   origin and the three-byte top-menu state fill the pre-hints gap. */
+#define NETCHESSZX_LOWRAM_TIMER_ROLL_STATE_ADDR 0x5fe8u
+#define NETCHESSZX_LOWRAM_TIMER_ROLL_STATE_SIZE 8u
+#define NETCHESSZX_LOWRAM_TIMER_ROLL_STATE_END \
+    (NETCHESSZX_LOWRAM_TIMER_ROLL_STATE_ADDR + \
+     NETCHESSZX_LOWRAM_TIMER_ROLL_STATE_SIZE)
+#define NETCHESSZX_LOWRAM_TIME_LAST_FRAME_ADDR 0x5feau
+#define NETCHESSZX_LOWRAM_TIME_MOVE_PHASE_ADDR 0x5fecu
+#define NETCHESSZX_LOWRAM_MENU_VISIBLE_ADDR 0x5fedu
+#define NETCHESSZX_LOWRAM_MENU_FOCUS_ADDR 0x5feeu
+#define NETCHESSZX_LOWRAM_MENU_ITEM_ADDR 0x5fefu
+
+/* DIRECT reuses the inactive MQTT stream.  Two bytes retain the unread
+   suffix position; the following 160 bytes stage one cartridge recv. */
+#define NETCHESSZX_LOWRAM_SPXN_DIRECT_PENDING_CURSOR_ADDR 0x652bu
+#define NETCHESSZX_LOWRAM_SPXN_DIRECT_PENDING_LENGTH_ADDR 0x652cu
+#define NETCHESSZX_LOWRAM_SPXN_DIRECT_PENDING_DATA_ADDR 0x652du
 
 #define NETCHESSZX_LOWRAM_MOVE_LOG_END \
     (NETCHESSZX_LOWRAM_MOVE_LOG_ADDR + NETCHESSZX_LOWRAM_MOVE_LOG_SIZE)
@@ -200,6 +278,24 @@
 #if NETCHESSZX_LOWRAM_INPUT_HISTORY_END > NETCHESSZX_LOWRAM_STATUS_ADDR
 #error "low-RAM input history overlaps status buffer"
 #endif
+#if NETCHESSZX_LOWRAM_INPUT_HISTORY_END != NETCHESSZX_LOWRAM_NOTICE_TEXT_ADDR
+#error "low-RAM notice text must follow input history"
+#endif
+#if NETCHESSZX_LOWRAM_NOTICE_TEXT_END != NETCHESSZX_LOWRAM_STATUS_ADDR
+#error "low-RAM notice text must end at the status buffer"
+#endif
+#ifdef NETCHESSZX_NEXT_BANKING
+#if NETCHESSZX_LOWRAM_PLAYER_NAME_LINE_ADDR != NETCHESSZX_LOWRAM_TIMER_ROLL_END
+#error "Next player identity must follow the timer-roll arena"
+#endif
+#if NETCHESSZX_LOWRAM_PEER_NAME_END > 0x4000u
+#error "Next player identity exceeds the permanent low-RAM page"
+#endif
+#else
+#if NETCHESSZX_LOWRAM_PEER_NAME_END > NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR
+#error "player identity overlaps overlay scratch"
+#endif
+#endif
 #if NETCHESSZX_LOWRAM_STATUS_TEXT_END + 1 != NETCHESSZX_LOWRAM_STATUS_END
 #error "low-RAM status text end must be final status byte"
 #endif
@@ -221,17 +317,52 @@
 #if NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_END > NETCHESSZX_LOWRAM_HINTED_ROWS_ADDR
 #error "low-RAM overlay context overlaps hinted rows"
 #endif
-#if NETCHESSZX_LOWRAM_HINTED_ROWS_END > 0x6000
-#error "low-RAM hinted rows exceed reserved page"
+#if NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_END != \
+    NETCHESSZX_LOWRAM_TIMER_ROLL_STATE_ADDR
+#error "timer roll state must follow the overlay context"
+#endif
+#if NETCHESSZX_LOWRAM_TIMER_ROLL_STATE_END > NETCHESSZX_LOWRAM_HINTED_ROWS_ADDR
+#error "timer roll state overlaps hinted rows"
+#endif
+#if NETCHESSZX_LOWRAM_TIME_MOVE_PHASE_ADDR + 1 != \
+    NETCHESSZX_LOWRAM_MENU_VISIBLE_ADDR
+#error "top-menu state must follow the TURN phase"
+#endif
+#if NETCHESSZX_LOWRAM_MENU_VISIBLE_ADDR + 1 != \
+    NETCHESSZX_LOWRAM_MENU_FOCUS_ADDR || \
+    NETCHESSZX_LOWRAM_MENU_FOCUS_ADDR + 1 != \
+    NETCHESSZX_LOWRAM_MENU_ITEM_ADDR || \
+    NETCHESSZX_LOWRAM_MENU_ITEM_ADDR + 1 != \
+    NETCHESSZX_LOWRAM_HINTED_ROWS_ADDR
+#error "top-menu state must fill the fixed low-RAM gap"
+#endif
+#if NETCHESSZX_LOWRAM_HINTED_ROWS_END != NETCHESSZX_LOWRAM_GUI_STATE_ADDR
+#error "low-RAM GUI state must follow hinted rows"
+#endif
+#if NETCHESSZX_LOWRAM_GUI_STATE_END != 0x5fffu
+#error "low-RAM GUI state must end at reserved-page limit"
 #endif
 #ifdef NETCHESSZX_NEXT_BANKING
-#define NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_LIMIT 0x3ccbu
+#define NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_LIMIT 0x3d18u
 #else
 #define NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_LIMIT 0x6800u
 #endif
 #if NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_END > \
     NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_LIMIT
 #error "overlay-only scratch overlaps overlay code slot"
+#endif
+#ifdef NETCHESSZX_NEXT_BANKING
+#if NETCHESSZX_LOWRAM_TIMER_ROLL_END > 0x4000u
+#error "timer roll arena exceeds the permanent low-RAM page"
+#endif
+#else
+#if NETCHESSZX_LOWRAM_TIMER_ROLL_ADDR != \
+    NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_END
+#error "timer roll arena must follow overlay scratch"
+#endif
+#if NETCHESSZX_LOWRAM_TIMER_ROLL_END > 0x6800u
+#error "timer roll arena overlaps the Classic overlay slot"
+#endif
 #endif
 
 #endif

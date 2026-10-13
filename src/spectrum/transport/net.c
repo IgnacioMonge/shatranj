@@ -1,6 +1,6 @@
 #include "spectrum/transport/net.h"
 
-#include "spectrum/config/session.h"
+#include "spectrum/session/identity.h"
 #include "spectrum/platform/net_runtime.h"
 #include "spectrum/transport/mqtt_min.h"
 #ifdef NETCHESSZX_SPECTRANEXT
@@ -23,6 +23,9 @@
 #ifdef NETCHESSZX_SDCC_IY
 void netchesszx_asm_net_copy(uint8_t *dst, const uint8_t *src, uint16_t len);
 void netchesszx_asm_net_move(uint8_t *dst, const uint8_t *src, uint16_t len);
+#ifndef NETCHESSZX_SPECTRANEXT
+uint8_t netchesszx_asm_direct_pop(void);
+#endif
 #define net_copy netchesszx_asm_net_copy
 #define net_move netchesszx_asm_net_move
 #else
@@ -45,7 +48,19 @@ static void net_move(uint8_t *dst, const uint8_t *src, uint16_t len)
 #define WAIT_MED 500
 #define WAIT_POLL 2
 #define MQTT_STREAM_BACKGROUND_DRAIN_BUDGET 64u
-#define SPECTRUM_NET_MQTT_READ_TIMEOUT (-4)
+
+#ifndef NETCHESSZX_SPECTRANEXT
+#ifdef NETCHESSZX_HOST_TEST
+static char direct_rx_spill[SPECTRUM_NET_PAYLOAD_MAX + 1u];
+#define DIRECT_RX_SPILL direct_rx_spill
+#else
+#define DIRECT_RX_SPILL ((char *)SPECTRUM_MQTT_RUNTIME_ASSETS_END)
+#endif
+#if (SPECTRUM_MQTT_RUNTIME_ASSETS_END + SPECTRUM_NET_PAYLOAD_MAX + 1u) > \
+    SPECTRUM_MQTT_SCRATCH_BASE
+#error "DIRECT spill exceeds inactive MQTT stream storage"
+#endif
+#endif
 
 #if defined(NETCHESSZX_SPECTRANEXT) && defined(NETCHESSZX_FIXED_LOW_RAM)
 #define SPXN_NET_AT(address) __at(address)
@@ -54,10 +69,16 @@ static void net_move(uint8_t *dst, const uint8_t *src, uint16_t len)
 #endif
 
 SPXN_NET_AT(NETCHESSZX_LOWRAM_SPXN_ACTIVE_LINK_ADDR) uint8_t active_link;
+#ifdef NETCHESSZX_HIGH_SCRATCH
+/* Classic: the esxDOS loader owns both slots above the IM2 vector. */
+extern char direct_rx_payload[SPECTRUM_NET_PAYLOAD_MAX];
+extern char direct_rx_payload2[SPECTRUM_NET_PAYLOAD_MAX];
+#else
 SPXN_NET_AT(NETCHESSZX_LOWRAM_SPXN_DIRECT_RX_ADDR)
 char direct_rx_payload[SPECTRUM_NET_PAYLOAD_MAX];
 SPXN_NET_AT(NETCHESSZX_LOWRAM_SPXN_DIRECT_RX2_ADDR)
 char direct_rx_payload2[SPECTRUM_NET_PAYLOAD_MAX];
+#endif
 #ifndef NETCHESSZX_SPECTRANEXT
 uint8_t direct_rx_link;
 uint8_t direct_rx_link2;
@@ -82,8 +103,6 @@ uint8_t direct_peer_valid;
    none. The DIRECT overlay closes it without dropping the active session. */
 uint8_t direct_intruder_link = 0xffu;
 #endif
-static SPXN_NET_AT(NETCHESSZX_LOWRAM_SPXN_ACTIVITY_ADDR)
-uint8_t net_link_activity;
 static SPXN_NET_AT(NETCHESSZX_LOWRAM_SPXN_FLAGS_ADDR)
 uint8_t net_payload_flags;
 static uint8_t clock_retry_pending;
@@ -97,6 +116,21 @@ static uint8_t clock_retry_pending;
 #ifdef NETCHESSZX_SPECTRANEXT
 SPXN_NET_AT(NETCHESSZX_LOWRAM_SPXN_DIRECT_3S_POLLS_ADDR)
 uint8_t net_uart_direct_idle_ticks;
+#ifdef NETCHESSZX_HOST_TEST
+uint8_t spxn_direct_pending_cursor;
+uint8_t spxn_direct_pending_length;
+uint8_t spxn_direct_pending_scratch[SPECTRUM_MQTT_PACKET_MAX];
+#define NET_DIRECT_PENDING_CURSOR spxn_direct_pending_cursor
+#define NET_DIRECT_PENDING_LENGTH spxn_direct_pending_length
+#define NET_DIRECT_PENDING_SCRATCH spxn_direct_pending_scratch
+#else
+#define NET_DIRECT_PENDING_CURSOR \
+    (*(uint8_t *)NETCHESSZX_LOWRAM_SPXN_DIRECT_PENDING_CURSOR_ADDR)
+#define NET_DIRECT_PENDING_LENGTH \
+    (*(uint8_t *)NETCHESSZX_LOWRAM_SPXN_DIRECT_PENDING_LENGTH_ADDR)
+#define NET_DIRECT_PENDING_SCRATCH \
+    ((void *)NETCHESSZX_LOWRAM_SPXN_DIRECT_PENDING_DATA_ADDR)
+#endif
 #endif
 
 static void direct_reset_rx_state(void);
@@ -181,9 +215,25 @@ static void spectrum_net_transport_drain(void)
 #ifdef NETCHESSZX_SPECTRANEXT
     if (netchesszx_transport_is_mqtt()) {
         (void)mqtt_drain_uart_budget(MQTT_STREAM_BACKGROUND_DRAIN_BUDGET);
+    } else if (NET_DIRECT_PENDING_LENGTH == 0u) {
+        uint8_t events = (uint8_t)spxn_poll();
+
+        if ((events & SPXN_POLLNVAL) != 0u) {
+            direct_link_closed = 1u;
+        } else if ((events & SPXN_POLLIN) != 0u) {
+            uint8_t got = (uint8_t)spxn_recv(
+                NET_DIRECT_PENDING_SCRATCH, SPECTRUM_MQTT_PACKET_MAX);
+
+            if (got == 0u || got > SPECTRUM_MQTT_PACKET_MAX) {
+                direct_link_closed = 1u;
+            } else {
+                NET_DIRECT_PENDING_CURSOR = 0u;
+                NET_DIRECT_PENDING_LENGTH = got;
+            }
+        } else if ((events & SPXN_POLLHUP) != 0u) {
+            direct_link_closed = 1u;
+        }
     }
-    /* DIRECT is drained by its overlay; the cartridge buffers bytes while
-       resident code is between overlay calls. */
     return;
 #else
     if (!netchesszx_transport_is_mqtt()) {
@@ -219,14 +269,6 @@ void spectrum_net_background_drain_clock(void)
         }
     }
     spectrum_net_transport_drain();
-}
-
-uint8_t spectrum_net_link_activity(void)
-{
-    uint8_t activity = net_link_activity;
-
-    net_link_activity = 0u;
-    return activity;
 }
 
 uint8_t spectrum_net_payload_flags(void)
@@ -273,6 +315,8 @@ static void direct_reset_rx_state(void)
     direct_rx_payload_len = 0u;
 #ifdef NETCHESSZX_SPECTRANEXT
     direct_rx_discard = 0u;
+    NET_DIRECT_PENDING_CURSOR = 0u;
+    NET_DIRECT_PENDING_LENGTH = 0u;
     direct_link_closed = 0u;
 #else
     direct_ipd_remaining = 0u;
@@ -329,8 +373,49 @@ static int16_t direct_read_payload(char *payload, uint8_t payload_cap)
     spectrum_overlay_context[0] = (uint8_t)payload_addr;
     spectrum_overlay_context[1] = (uint8_t)(payload_addr >> 8);
     spectrum_overlay_context[2] = payload_cap;
+#ifndef NETCHESSZX_SPECTRANEXT
+    if (direct_rx_count != 0u &&
+        (direct_intruder_link == 0xffu || direct_ipd_remaining != 0u)) {
+#ifdef NETCHESSZX_SDCC_IY
+        link = netchesszx_asm_direct_pop();
+#else
+        const char *source = direct_rx_head == 0u ? direct_rx_payload
+                             : (direct_rx_head == 1u ? direct_rx_payload2
+                                                    : DIRECT_RX_SPILL);
+        uint8_t n = 0u;
+
+        if (payload_cap != 0u) {
+            while (source[n] != '\0' &&
+                   n < (uint8_t)(payload_cap - 1u)) {
+                payload[n] = source[n];
+                ++n;
+            }
+            payload[n] = '\0';
+        }
+        link = direct_rx_head == 0u ? direct_rx_link
+               : (direct_rx_head == 1u ? direct_rx_link2
+                                       : (uint8_t)DIRECT_RX_SPILL[
+                                             SPECTRUM_NET_PAYLOAD_MAX]);
+        --direct_rx_count;
+        if (++direct_rx_head >= SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT) {
+            direct_rx_head = 0u;
+        }
+#endif
+        goto read_done;
+    }
+#endif
     link = spectrum_overlay_exec_cached(SPECTRUM_OVL_DIRECT,
                                          SPECTRUM_OVL_DIRECT_READ);
+    goto read_done; /* keep the label used when the direct path is compiled out */
+read_done:
+#ifdef NETCHESSZX_NEXT
+    if (spectrum_uart_error()) {
+        if (payload_cap != 0u) {
+            payload[0] = '\0';
+        }
+        return -2;
+    }
+#endif
     if (link == 0u && payload_cap != 0u && payload[0] == '\0') {
         return SPECTRUM_NET_READ_TIMEOUT;
     }
@@ -378,8 +463,17 @@ spectrum_mqtt_broker_keepalive_t mqtt_broker_keepalive;
 #if SPECTRUM_MQTT_SCRATCH_BASE < (MQTT_STREAM_BASE + MQTT_STREAM_MAX)
 #error "MQTT scratch overlaps mqtt_stream"
 #endif
+#ifndef NETCHESSZX_NEXT_BANKING
+/* Classic/Spectranext player identity lives between the stream and scratch. */
+#if NETCHESSZX_LOWRAM_PLAYER_NAME_LINE_ADDR < (MQTT_STREAM_BASE + MQTT_STREAM_MAX)
+#error "player identity overlaps mqtt_stream"
+#endif
+#if NETCHESSZX_LOWRAM_PEER_NAME_END > SPECTRUM_MQTT_SCRATCH_BASE
+#error "player identity overlaps MQTT packet scratch"
+#endif
+#endif
 #ifdef NETCHESSZX_NEXT_BANKING
-#define SPECTRUM_MQTT_SCRATCH_LIMIT 0x3b2bu
+#define SPECTRUM_MQTT_SCRATCH_LIMIT 0x3b78u
 #else
 #define SPECTRUM_MQTT_SCRATCH_LIMIT 0x6800u
 #endif
@@ -397,38 +491,23 @@ static __at(MQTT_STREAM_BASE) uint8_t mqtt_stream[MQTT_STREAM_MAX];
 #define mqtt_discard_remaining \
     (((mqtt_stream_active & MQTT_STREAM_DISCARDING) != 0u) \
          ? mqtt_stream_len : 0u)
-#define MQTT_PAYLOAD_QUEUE_COUNT 3u
 #define MQTT_PAYLOAD_SLOT_SIZE (SPECTRUM_NET_PAYLOAD_MAX + 2u)
 #if (MQTT_PAYLOAD_QUEUE_COUNT * MQTT_PAYLOAD_SLOT_SIZE) > SPECTRUM_MQTT_PACKET_MAX
 #error "MQTT payload queue exceeds inactive packet scratch"
 #endif
 
 static void mqtt_reset_session_state(void);
-static void mqtt_puback_id(uint16_t packet_id) __z88dk_fastcall;
 
-uint8_t spectrum_net_mqtt_publish_setup(uint8_t mode) NETCHESSZX_FASTCALL
-{
-    spectrum_overlay_context[0] = mode;
-    return spectrum_overlay_exec_cached(SPECTRUM_OVL_MQTT_TX,
-                                        SPECTRUM_OVL_MQTT_TX_PUBLISH_SETUP);
-}
-
-uint8_t spectrum_net_mqtt_activate_side(void)
+uint8_t spectrum_net_mqtt_subscribe_side(void)
 {
     return spectrum_overlay_exec(SPECTRUM_OVL_MQTT_CONNECT,
                                  SPECTRUM_OVL_MQTT_CONNECT_ACTIVATE);
 }
 
-uint8_t spectrum_net_mqtt_probe_seat(void)
+uint8_t spectrum_net_mqtt_subscribe_seat(void)
 {
     return spectrum_overlay_exec(SPECTRUM_OVL_MQTT_CONNECT,
                                  SPECTRUM_OVL_MQTT_CONNECT_PROBE_SEAT);
-}
-
-uint8_t spectrum_net_mqtt_publish_presence(void)
-{
-    return spectrum_overlay_exec_cached(SPECTRUM_OVL_MQTT_TX,
-                                        SPECTRUM_OVL_MQTT_TX_PUBLISH_PRESENCE);
 }
 
 uint8_t mqtt_enter_stream_mode(void)
@@ -589,6 +668,11 @@ static int16_t mqtt_take_stream_packet(void)
     uint8_t header_len;
     uint8_t b;
 
+    /* In discard mode, stream_len counts unread body bytes, not buffered data. */
+    if ((mqtt_stream_active & MQTT_STREAM_DISCARDING) != 0u) {
+        return 0;
+    }
+
     /* Keep the last byte when no header survives: it may be the first byte of
        the next fragmented packet. Compact only once after discarded garbage. */
     while (mqtt_stream_len >= 2u) {
@@ -615,9 +699,10 @@ static int16_t mqtt_take_stream_packet(void)
             return 0;
         }
         b = (uint8_t)MQTT_STREAM[2u];
-        if ((b & 0x80u) != 0u || b > 1u) {
-            mqtt_consume_stream_packet(1u);
-            return 0;
+        if (b > 1u) {
+            /* The 8-bit discard counter cannot preserve this packet boundary. */
+            mqtt_abort_stream_mode();
+            return -2;
         }
         remaining = (uint8_t)(remaining + (uint8_t)(b << 7));
         header_len = 3u;
@@ -655,62 +740,29 @@ static uint8_t *mqtt_payload_slot(uint8_t slot) __z88dk_fastcall
 
 static int16_t mqtt_read_stream_packet(void)
 {
-    int16_t got = mqtt_take_stream_packet();
+    int16_t got;
+    uint8_t filled;
 
+#ifdef NETCHESSZX_NEXT
+    if (spectrum_uart_error()) {
+        return -2;
+    }
+#endif
+    got = mqtt_take_stream_packet();
     if (got != 0) {
         return got;
     }
-    if (!mqtt_fill_stream(WAIT_POLL)) {
+    filled = mqtt_fill_stream(WAIT_POLL);
+#ifdef NETCHESSZX_NEXT
+    if (spectrum_uart_error()) {
+        return -2;
+    }
+#endif
+    if (!filled) {
         return SPECTRUM_NET_MQTT_READ_TIMEOUT;
     }
     got = mqtt_take_stream_packet();
     return got == 0 ? SPECTRUM_NET_MQTT_READ_TIMEOUT : got;
-}
-
-static uint8_t mqtt_queue_publish_payload(const uint8_t *packet, uint8_t len)
-{
-    uint8_t *slot;
-    uint8_t tail;
-    uint16_t packet_id;
-    uint8_t flags;
-    int16_t payload_len;
-
-    if (mqtt_payload_count >= MQTT_PAYLOAD_QUEUE_COUNT) {
-        return 0u;
-    }
-    tail = (uint8_t)(mqtt_payload_head + mqtt_payload_count);
-    if (tail >= MQTT_PAYLOAD_QUEUE_COUNT) {
-        tail = (uint8_t)(tail - MQTT_PAYLOAD_QUEUE_COUNT);
-    }
-    slot = mqtt_payload_slot(tail);
-    payload_len = spectrum_mqtt_parse_publish(packet,
-                                              len,
-                                              (char *)(slot + 2u),
-                                               SPECTRUM_NET_PAYLOAD_MAX,
-                                               &packet_id,
-                                               &flags);
-    mqtt_puback_id(packet_id);
-    if (payload_len < 0) {
-        return 1u;
-    }
-    slot[0u] = (uint8_t)payload_len;
-    slot[1u] = flags;
-    ++mqtt_payload_count;
-    return 1u;
-}
-
-static uint8_t mqtt_stash_packet(const uint8_t *packet, uint8_t len)
-{
-    uint8_t type = spectrum_mqtt_type(packet, len);
-
-    if (type == SPECTRUM_MQTT_PUBLISH && mqtt_queue_publish_payload(packet, len)) {
-        return 1u;
-    }
-    if (type == SPECTRUM_MQTT_PINGRESP && len <= 2u) {
-        net_link_activity = 1u;
-        return 1u;
-    }
-    return type == SPECTRUM_MQTT_PUBACK;
 }
 
 uint8_t mqtt_send_raw_packet(const uint8_t *packet, uint8_t len)
@@ -763,39 +815,6 @@ static void mqtt_puback_id(uint16_t packet_id) __z88dk_fastcall
     ack[2u] = (uint8_t)(packet_id >> 8);
     ack[3u] = (uint8_t)packet_id;
     (void)mqtt_send_raw_packet(ack, 4u);
-}
-
-uint8_t mqtt_wait_packet_into(uint8_t *packet, uint8_t wanted, uint16_t frames)
-{
-    while (frames-- != 0u) {
-        int16_t got = mqtt_read_stream_packet();
-
-        if (got == SPECTRUM_NET_MQTT_READ_TIMEOUT) {
-            net_wait_frame();
-            continue;
-        }
-        if (got <= 0) {
-            return 0u;
-        }
-        {
-            uint8_t type = spectrum_mqtt_type(MQTT_STREAM, (uint16_t)got);
-
-            if (wanted == 0u || type == wanted) {
-                net_copy(packet, MQTT_STREAM, (uint8_t)got);
-                mqtt_consume_stream_packet((uint8_t)got);
-                return 1u;
-            }
-            if ((uint16_t)got <= SPECTRUM_MQTT_PACKET_MAX) {
-                uint8_t stashed = mqtt_stash_packet(MQTT_STREAM, (uint8_t)got);
-
-                mqtt_consume_stream_packet((uint8_t)got);
-                if (!stashed) {
-                    return 0u;
-                }
-            }
-        }
-    }
-    return 0u;
 }
 
 static void mqtt_reset_session_state(void)
@@ -858,9 +877,10 @@ uint8_t spectrum_net_sync_time(void)
 }
 #endif
 
-uint8_t spectrum_net_mqtt_start(void)
+uint8_t spectrum_net_mqtt_connect(uint8_t flags) NETCHESSZX_FASTCALL
 {
     mqtt_reset_session_state();
+    spectrum_overlay_context[NETCHESSZX_MQTT_CONNECT_CTX_FLAGS] = flags;
     return spectrum_overlay_exec(SPECTRUM_OVL_MQTT_CONNECT,
                                  SPECTRUM_OVL_MQTT_CONNECT_START);
 }
@@ -875,6 +895,11 @@ int16_t spectrum_net_mqtt_read_payload(char *payload, uint8_t payload_cap)
     uint8_t flags;
 
     net_payload_flags = 0u;
+#ifdef NETCHESSZX_NEXT
+    if (spectrum_uart_error()) {
+        return -2;
+    }
+#endif
     if (mqtt_payload_count != 0u) {
         slot = mqtt_payload_slot(mqtt_payload_head);
         mqtt_payload_head = (uint8_t)(mqtt_payload_head + 1u);
@@ -906,7 +931,6 @@ int16_t spectrum_net_mqtt_read_payload(char *payload, uint8_t payload_cap)
 
     if (spectrum_mqtt_type(packet, (uint16_t)got) == SPECTRUM_MQTT_PINGRESP &&
         (uint16_t)got <= 2u) {
-        net_link_activity = 1u;
         mqtt_consume_stream_packet((uint8_t)got);
         return SPECTRUM_NET_READ_TIMEOUT;
     }
@@ -934,16 +958,6 @@ int16_t spectrum_net_mqtt_read_payload(char *payload, uint8_t payload_cap)
     return 0;
 }
 
-uint8_t spectrum_net_mqtt_send_text(const char *text) NETCHESSZX_FASTCALL
-{
-    uint16_t text_addr = (uint16_t)text;
-
-    spectrum_overlay_context[0] = (uint8_t)text_addr;
-    spectrum_overlay_context[1] = (uint8_t)(text_addr >> 8);
-    return spectrum_overlay_exec_cached(SPECTRUM_OVL_MQTT_TX,
-                                        SPECTRUM_OVL_MQTT_TX_SEND_TEXT);
-}
-
 int16_t spectrum_net_read_payload(char *payload, uint8_t payload_cap)
 {
     net_payload_flags = 0u;
@@ -957,19 +971,7 @@ uint8_t spectrum_net_send_text(const char *text) NETCHESSZX_FASTCALL
 {
     spectrum_net_background_drain_clock();
     if (netchesszx_transport_is_mqtt()) {
-        return spectrum_net_mqtt_send_text(text);
+        return spectrum_net_mqtt_publish(text);
     }
     return direct_send_text(text);
-}
-
-uint8_t spectrum_net_send_ping(void)
-{
-    spectrum_net_background_drain_clock();
-    if (netchesszx_transport_is_mqtt()) {
-        /* Application-level PING on the out topic: the peer answers ACK PING,
-           so the session miss counter measures PEER liveness, not broker
-           liveness. The periodic PUBLISH also satisfies broker keepalive. */
-        return spectrum_net_mqtt_send_text(NETCHESS_PROTO_PING);
-    }
-    return direct_send_text(NETCHESS_PROTO_PING);
 }

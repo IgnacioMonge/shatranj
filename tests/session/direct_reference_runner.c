@@ -105,6 +105,59 @@ static const DirectParityStep mach_pre_ready_steps[] = {
     { 0, DIRECT_PARITY_IN_LINK_DOWN, 1u, 0u, 0u, 0u, 0u }
 };
 
+static const uint8_t name_valid[] = "MNAME IGNACIO";
+static const uint8_t name_lowercase[] = "MNAME ignacio";
+static const uint8_t name_too_long[] = "MNAME CONSTANTINO";
+static const uint8_t name_trailing[] = "MNAME PEPE ";
+static const uint8_t name_pre_ready[] = "MNAME PEPE";
+
+static const DirectParityStep name_valid_steps[] = {
+    { 0, DIRECT_PARITY_IN_LINK_UP, 1u, 0u, 0u, 0u, 0u },
+    { host_smoke_hello, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(host_smoke_hello) - 1u), 0u, 0u, 0u },
+    { mach_pc, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(mach_pc) - 1u), 0u, 0u, 0u },
+    { name_valid, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(name_valid) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_LINK_DOWN, 1u, 0u, 0u, 0u, 0u }
+};
+
+static const DirectParityObservation name_valid_expected[] = {
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 28u, 0u,
+      "HELLO DIRECT HOST WHITE=HOST" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 28u, 0u,
+      "HELLO DIRECT HOST WHITE=HOST" },
+    { DIRECT_PARITY_OBS_READY, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_GAME, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_GAME_PLATFORM, 0u, NETCHESS_PLAT_PC, "" },
+    { DIRECT_PARITY_OBS_GAME, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_GAME_PEER_NAME, 7u, 0u, "IGNACIO" },
+    { DIRECT_PARITY_OBS_ENDED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" }
+};
+
+#define NAME_REJECT_STEPS(name, payload) \
+    static const DirectParityStep name[] = { \
+        { 0, DIRECT_PARITY_IN_LINK_UP, 1u, 0u, 0u, 0u, 0u }, \
+        { host_smoke_hello, DIRECT_PARITY_IN_RX, 1u, \
+          (uint8_t)(sizeof(host_smoke_hello) - 1u), 0u, 0u, 0u }, \
+        { (payload), DIRECT_PARITY_IN_RX, 1u, \
+          (uint8_t)(sizeof(payload) - 1u), 0u, 0u, 0u }, \
+        { 0, DIRECT_PARITY_IN_LINK_DOWN, 1u, 0u, 0u, 0u, 0u } \
+    }
+
+NAME_REJECT_STEPS(name_lowercase_steps, name_lowercase);
+NAME_REJECT_STEPS(name_too_long_steps, name_too_long);
+NAME_REJECT_STEPS(name_trailing_steps, name_trailing);
+
+static const DirectParityStep name_pre_ready_steps[] = {
+    { 0, DIRECT_PARITY_IN_LINK_UP, 1u, 0u, 0u, 0u, 0u },
+    { name_pre_ready, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(name_pre_ready) - 1u), 0u, 0u, 0u },
+    { host_smoke_hello, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(host_smoke_hello) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_LINK_DOWN, 1u, 0u, 0u, 0u, 0u }
+};
+
 static const uint8_t chat_send_fail_text[] = "hello";
 static const uint8_t chat_send_fail_wire[] = "CHAT hello";
 
@@ -613,6 +666,48 @@ static const DirectParityObservation takeback_local_ack_expected[] = {
 };
 
 static const uint8_t remote_takeback[] = "TAKEBACK 1";
+static const uint8_t cancel_takeback[] = "CANCEL TAKEBACK 1";
+
+static const DirectParityStep takeback_remote_cancel_steps[] = {
+    { 0, DIRECT_PARITY_IN_LINK_UP, 1u, 0u, 0u, 0u, 0u },
+    { guest_smoke_hello, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(guest_smoke_hello) - 1u), 0u, 0u, 0u },
+    { remote_start, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(remote_start) - 1u), 0u, 0u, 0u },
+    { remote_move, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(remote_move) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_DOMAIN, 1u, 0u, 1u,
+      DIRECT_PARITY_RESULT_ACCEPTED, 0u },
+    { remote_takeback, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(remote_takeback) - 1u), 0u, 0u, 0u },
+    { cancel_takeback, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(cancel_takeback) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_DECISION, 1u, 0u, 0u,
+      DIRECT_PARITY_DECISION_ACCEPT, 1u },
+    { cancel_takeback, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(cancel_takeback) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_LINK_DOWN, 1u, 0u, 0u, 0u, 0u }
+};
+
+static const DirectParityObservation takeback_remote_cancel_expected[] = {
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 18u, 0u, "HELLO DIRECT GUEST" },
+    { DIRECT_PARITY_OBS_SIDE, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_COLOR_BLACK, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 18u, 0u, "HELLO DIRECT GUEST" },
+    { DIRECT_PARITY_OBS_READY, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 14u, 0u, "ACK GAME START" },
+    { DIRECT_PARITY_OBS_STARTED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_GAME, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_GAME_REMOTE_MOVE, 4u, 1u, "e2e4" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 5u, 0u, "ACK 1" },
+    { DIRECT_PARITY_OBS_DECISION, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_REQUEST_TAKEBACK, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 6u, 0u, "NACK 1" },
+    { DIRECT_PARITY_OBS_CONTROL_RESULT, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_REQUEST_TAKEBACK, 0u, DIRECT_PARITY_RESULT_EXPIRED, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 6u, 0u, "NACK 1" },
+    { DIRECT_PARITY_OBS_ENDED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" }
+};
 
 static const DirectParityStep takeback_remote_accept_steps[] = {
     { 0, DIRECT_PARITY_IN_LINK_UP, 1u, 0u, 0u, 0u, 0u },
@@ -702,6 +797,56 @@ static const DirectParityObservation takeback_reject_retry_expected[] = {
     { DIRECT_PARITY_OBS_DECISION, DIRECT_PARITY_LINK_NONE,
       DIRECT_PARITY_REQUEST_TAKEBACK, 0u, 0u, "" },
     { DIRECT_PARITY_OBS_SEND, 1u, 0u, 6u, 0u, "NACK 1" },
+    { DIRECT_PARITY_OBS_DECISION, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_REQUEST_TAKEBACK, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_GAME, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_GAME_TAKEBACK, 0u, 1u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 5u, 0u, "ACK 1" },
+    { DIRECT_PARITY_OBS_ENDED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" }
+};
+
+/* The peer's TAKEBACK stays unanswered past one reply period, then a crossed
+   NACK of that ply arrives. A request the peer made is not ours to resend,
+   and a NACK cannot answer it: the decision stays open until the user
+   answers, and the accepted takeback is ACKed with its own ply. */
+static const uint8_t remote_takeback_crossed_nack[] = "NACK 1";
+
+static const DirectParityStep takeback_remote_slow_answer_steps[] = {
+    { 0, DIRECT_PARITY_IN_LINK_UP, 1u, 0u, 0u, 0u, 0u },
+    { guest_smoke_hello, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(guest_smoke_hello) - 1u), 0u, 0u, 0u },
+    { remote_start, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(remote_start) - 1u), 0u, 0u, 0u },
+    { remote_move, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(remote_move) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_DOMAIN, 1u, 0u, 1u,
+      DIRECT_PARITY_RESULT_ACCEPTED, 0u },
+    { remote_takeback, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(remote_takeback) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 126u, 0u, 0u },
+    { remote_takeback_crossed_nack, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(remote_takeback_crossed_nack) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_DECISION, 1u, 0u, 0u,
+      DIRECT_PARITY_DECISION_ACCEPT, 0u },
+    { 0, DIRECT_PARITY_IN_DOMAIN, 1u, 0u, 1u,
+      DIRECT_PARITY_RESULT_ACCEPTED, 0u },
+    { 0, DIRECT_PARITY_IN_LINK_DOWN, 1u, 0u, 0u, 0u, 0u }
+};
+
+static const DirectParityObservation takeback_remote_slow_answer_expected[] = {
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 18u, 0u,
+      "HELLO DIRECT GUEST" },
+    { DIRECT_PARITY_OBS_SIDE, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_COLOR_BLACK, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 18u, 0u,
+      "HELLO DIRECT GUEST" },
+    { DIRECT_PARITY_OBS_READY, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 14u, 0u,
+      "ACK GAME START" },
+    { DIRECT_PARITY_OBS_STARTED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_GAME, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_GAME_REMOTE_MOVE, 4u, 1u, "e2e4" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 5u, 0u, "ACK 1" },
     { DIRECT_PARITY_OBS_DECISION, DIRECT_PARITY_LINK_NONE,
       DIRECT_PARITY_REQUEST_TAKEBACK, 0u, 0u, "" },
     { DIRECT_PARITY_OBS_GAME, DIRECT_PARITY_LINK_NONE,
@@ -901,6 +1046,34 @@ static const DirectParityObservation restore_local_active_expected[] = {
       DIRECT_PARITY_GAME_LOCAL_MOVE, 4u, 3u, "d2d4" },
     { DIRECT_PARITY_OBS_CONTROL_RESULT, DIRECT_PARITY_LINK_NONE,
       DIRECT_PARITY_REQUEST_MOVE, 2u, DIRECT_PARITY_RESULT_ACCEPTED, "d4" },
+    { DIRECT_PARITY_OBS_ENDED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" }
+};
+
+static const DirectParityStep restore_second_chunk_send_fail_steps[] = {
+    { 0, DIRECT_PARITY_IN_LINK_UP, 1u, 0u, 0u, 0u, 0u },
+    { host_smoke_hello, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(host_smoke_hello) - 1u), 0u, 0u, 0u },
+    { restore_active_2, DIRECT_PARITY_IN_LOCAL, 1u,
+      (uint8_t)(sizeof(restore_active_2) - 1u), 2u,
+      DIRECT_PARITY_REQUEST_RESTORE, DIRECT_PARITY_PHASE_ACTIVE },
+    { restore_rs01_active, DIRECT_PARITY_IN_SEND_FAIL, 1u,
+      (uint8_t)(sizeof(restore_rs01_active) - 1u), 0u, 0u, 0u },
+    { restore_ry, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(restore_ry) - 1u), 0u, 0u, 0u }
+};
+
+static const DirectParityObservation restore_second_chunk_send_fail_expected[] = {
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 28u, 0u,
+      "HELLO DIRECT HOST WHITE=HOST" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 28u, 0u,
+      "HELLO DIRECT HOST WHITE=HOST" },
+    { DIRECT_PARITY_OBS_READY, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 2u, 0u, "RQ" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 35u, 0u,
+      "RS00 uazam4iIiIgAAAAAAAAAAAAAAAAAAA" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 35u, 0u,
+      "RS01 AAEREREUI1YyR8_wIAAQEAAAAAOwF2" },
+    { DIRECT_PARITY_OBS_CLOSE, 1u, 0u, 0u, 0u, "" },
     { DIRECT_PARITY_OBS_ENDED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" }
 };
 
@@ -1321,6 +1494,7 @@ static const DirectParityObservation restore_partial_reconnect_expected[] = {
 
 static const uint8_t draw_payload[] = "DRAW";
 static const uint8_t reset_payload[] = "RESET";
+static const uint8_t ack_reset_payload[] = "ACK RESET";
 
 static const DirectParityStep draw_rematch_guest_steps[] = {
     { 0, DIRECT_PARITY_IN_LINK_UP, 1u, 0u, 0u, 0u, 0u },
@@ -1334,9 +1508,12 @@ static const DirectParityStep draw_rematch_guest_steps[] = {
       DIRECT_PARITY_DECISION_ACCEPT, 0u },
     { reset_payload, DIRECT_PARITY_IN_RX, 1u,
       (uint8_t)(sizeof(reset_payload) - 1u), 0u, 0u, 0u },
-    { 0, DIRECT_PARITY_IN_LINK_DOWN, 1u, 0u, 0u, 0u, 0u }
+    { 0, DIRECT_PARITY_IN_DECISION, 1u, 0u, 0u,
+      DIRECT_PARITY_DECISION_REJECT, 0u }
 };
 
+/* A 1.2 host sends RESET after every agreed DRAW. Declining a new game
+   after OVER ends the session on both clients: NACK, then BYE. */
 static const DirectParityObservation draw_rematch_guest_expected[] = {
     { DIRECT_PARITY_OBS_SEND, 1u, 0u, 18u, 0u,
       "HELLO DIRECT GUEST" },
@@ -1353,10 +1530,58 @@ static const DirectParityObservation draw_rematch_guest_expected[] = {
     { DIRECT_PARITY_OBS_SEND, 1u, 0u, 8u, 0u, "ACK DRAW" },
     { DIRECT_PARITY_OBS_CONTROL, DIRECT_PARITY_LINK_NONE,
       DIRECT_PARITY_REQUEST_DRAW, 0u, DIRECT_PARITY_RESULT_ACCEPTED, "" },
-    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 9u, 0u, "ACK RESET" },
-    { DIRECT_PARITY_OBS_CONTROL, DIRECT_PARITY_LINK_NONE,
-      DIRECT_PARITY_REQUEST_RESET, 0u, DIRECT_PARITY_RESULT_ACCEPTED, "" },
+    { DIRECT_PARITY_OBS_DECISION, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_REQUEST_RESET, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 10u, 0u, "NACK RESET" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 3u, 0u, "BYE" },
+    { DIRECT_PARITY_OBS_CLOSE, 1u, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_ENDED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" }
+};
+
+static const DirectParityStep draw_reject_latch_guest_steps[] = {
+    { 0, DIRECT_PARITY_IN_LINK_UP, 1u, 0u, 0u, 0u, 0u },
+    { guest_smoke_hello, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(guest_smoke_hello) - 1u), 0u, 0u, 0u },
+    { remote_start, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(remote_start) - 1u), 0u, 0u, 0u },
+    { draw_payload, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(draw_payload) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_DECISION, 1u, 0u, 0u,
+      DIRECT_PARITY_DECISION_REJECT, 0u },
+    { draw_payload, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(draw_payload) - 1u), 0u, 0u, 0u },
+    { remote_move, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(remote_move) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_DOMAIN, 1u, 0u, 1u,
+      DIRECT_PARITY_RESULT_ACCEPTED, 0u },
+    { draw_payload, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(draw_payload) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_LINK_DOWN, 1u, 0u, 0u, 0u, 0u }
+};
+
+/* A DRAW retransmission can cross the NACK on the wire and is
+   indistinguishable from a repeated offer: a rejected DRAW stays rejected,
+   without a second prompt, until the position changes. */
+static const DirectParityObservation draw_reject_latch_guest_expected[] = {
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 18u, 0u,
+      "HELLO DIRECT GUEST" },
+    { DIRECT_PARITY_OBS_SIDE, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_COLOR_BLACK, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 18u, 0u,
+      "HELLO DIRECT GUEST" },
+    { DIRECT_PARITY_OBS_READY, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 14u, 0u,
+      "ACK GAME START" },
     { DIRECT_PARITY_OBS_STARTED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_DECISION, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_REQUEST_DRAW, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 9u, 0u, "NACK DRAW" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 9u, 0u, "NACK DRAW" },
+    { DIRECT_PARITY_OBS_GAME, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_GAME_REMOTE_MOVE, 4u, 1u, "e2e4" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 5u, 0u, "ACK 1" },
+    { DIRECT_PARITY_OBS_DECISION, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_REQUEST_DRAW, 0u, 0u, "" },
     { DIRECT_PARITY_OBS_ENDED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" }
 };
 
@@ -1546,6 +1771,8 @@ static const DirectParityStep draw_crossed_steps[] = {
       (uint8_t)(sizeof(draw_payload) - 1u), 0u, 0u, 0u },
     { reset_payload, DIRECT_PARITY_IN_RX, 1u,
       (uint8_t)(sizeof(reset_payload) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_DECISION, 1u, 0u, 0u,
+      DIRECT_PARITY_DECISION_ACCEPT, 0u },
     { 0, DIRECT_PARITY_IN_LINK_DOWN, 1u, 0u, 0u, 0u, 0u }
 };
 
@@ -1567,12 +1794,82 @@ static const DirectParityObservation draw_crossed_expected[] = {
     { DIRECT_PARITY_OBS_SEND, 1u, 0u, 8u, 0u, "ACK DRAW" },
     { DIRECT_PARITY_OBS_CONTROL_RESULT, DIRECT_PARITY_LINK_NONE,
       DIRECT_PARITY_REQUEST_DRAW, 0u, DIRECT_PARITY_RESULT_ACCEPTED, "" },
-    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 5u, 0u, "RESET" },
     { DIRECT_PARITY_OBS_SEND, 1u, 0u, 8u, 0u, "ACK DRAW" },
+    { DIRECT_PARITY_OBS_DECISION, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_REQUEST_RESET, 0u, 0u, "" },
     { DIRECT_PARITY_OBS_SEND, 1u, 0u, 9u, 0u, "ACK RESET" },
-    { DIRECT_PARITY_OBS_CONTROL_RESULT, DIRECT_PARITY_LINK_NONE,
+    { DIRECT_PARITY_OBS_CONTROL, DIRECT_PARITY_LINK_NONE,
       DIRECT_PARITY_REQUEST_RESET, 0u, DIRECT_PARITY_RESULT_ACCEPTED, "" },
     { DIRECT_PARITY_OBS_STARTED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_ENDED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" }
+};
+
+/* Only the host asks for a new game after OVER. */
+static const DirectParityStep draw_crossed_reset_send_fail_steps[] = {
+    { 0, DIRECT_PARITY_IN_LINK_UP, 1u, 0u, 0u, 0u, 0u },
+    { host_smoke_hello, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(host_smoke_hello) - 1u), 0u, 0u, 0u },
+    { start_host_request, DIRECT_PARITY_IN_LOCAL, 1u, 0u, 0u,
+      DIRECT_PARITY_REQUEST_START, 0u },
+    { start_host_ack, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(start_host_ack) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_LOCAL, 1u, 0u, 0u,
+      DIRECT_PARITY_REQUEST_DRAW, 0u },
+    { draw_payload, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(draw_payload) - 1u), 0u, 0u, 0u },
+    { reset_payload, DIRECT_PARITY_IN_SEND_FAIL, 1u,
+      (uint8_t)(sizeof(reset_payload) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_LOCAL, 1u, 0u, 0u,
+      DIRECT_PARITY_REQUEST_RESET, 0u }
+};
+
+static const DirectParityObservation draw_crossed_reset_send_fail_expected[] = {
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 28u, 0u,
+      "HELLO DIRECT HOST WHITE=HOST" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 28u, 0u,
+      "HELLO DIRECT HOST WHITE=HOST" },
+    { DIRECT_PARITY_OBS_READY, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 21u, 0u,
+      "GAME START WHITE=HOST" },
+    { DIRECT_PARITY_OBS_STARTED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 4u, 0u, "DRAW" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 8u, 0u, "ACK DRAW" },
+    { DIRECT_PARITY_OBS_CONTROL_RESULT, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_REQUEST_DRAW, 0u, DIRECT_PARITY_RESULT_ACCEPTED, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 5u, 0u, "RESET" },
+    { DIRECT_PARITY_OBS_CLOSE, 1u, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_ENDED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" }
+};
+
+static const DirectParityStep remote_reset_hostile_ack_steps[] = {
+    { 0, DIRECT_PARITY_IN_LINK_UP, 1u, 0u, 0u, 0u, 0u },
+    { guest_smoke_hello, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(guest_smoke_hello) - 1u), 0u, 0u, 0u },
+    { remote_start, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(remote_start) - 1u), 0u, 0u, 0u },
+    { reset_payload, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(reset_payload) - 1u), 0u, 0u, 0u },
+    { ack_reset_payload, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(ack_reset_payload) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_DECISION, 1u, 0u, 0u,
+      DIRECT_PARITY_DECISION_REJECT, 0u },
+    { 0, DIRECT_PARITY_IN_LINK_DOWN, 1u, 0u, 0u, 0u, 0u }
+};
+
+static const DirectParityObservation remote_reset_hostile_ack_expected[] = {
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 18u, 0u,
+      "HELLO DIRECT GUEST" },
+    { DIRECT_PARITY_OBS_SIDE, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_COLOR_BLACK, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 18u, 0u,
+      "HELLO DIRECT GUEST" },
+    { DIRECT_PARITY_OBS_READY, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 14u, 0u,
+      "ACK GAME START" },
+    { DIRECT_PARITY_OBS_STARTED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_DECISION, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_REQUEST_RESET, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 10u, 0u, "NACK RESET" },
     { DIRECT_PARITY_OBS_ENDED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" }
 };
 
@@ -1624,6 +1921,8 @@ static const DirectParityStep resign_crossed_steps[] = {
       (uint8_t)(sizeof(resign_payload) - 1u), 0u, 0u, 0u },
     { reset_payload, DIRECT_PARITY_IN_RX, 1u,
       (uint8_t)(sizeof(reset_payload) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_DECISION, 1u, 0u, 0u,
+      DIRECT_PARITY_DECISION_ACCEPT, 0u },
     { 0, DIRECT_PARITY_IN_LINK_DOWN, 1u, 0u, 0u, 0u, 0u }
 };
 
@@ -1647,6 +1946,8 @@ static const DirectParityObservation resign_crossed_expected[] = {
     { DIRECT_PARITY_OBS_SEND, 1u, 0u, 10u, 0u, "ACK RESIGN" },
     { DIRECT_PARITY_OBS_CONTROL_RESULT, DIRECT_PARITY_LINK_NONE,
       DIRECT_PARITY_REQUEST_RESIGN, 0u, DIRECT_PARITY_RESULT_ACCEPTED, "" },
+    { DIRECT_PARITY_OBS_DECISION, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_REQUEST_RESET, 0u, 0u, "" },
     { DIRECT_PARITY_OBS_SEND, 1u, 0u, 9u, 0u, "ACK RESET" },
     { DIRECT_PARITY_OBS_CONTROL, DIRECT_PARITY_LINK_NONE,
       DIRECT_PARITY_REQUEST_RESET, 0u, DIRECT_PARITY_RESULT_ACCEPTED, "" },
@@ -1690,15 +1991,8 @@ static const DirectParityStep cancel_local_reset_steps[] = {
     { cancel_ack_ping, DIRECT_PARITY_IN_RX, 1u,
       (uint8_t)(sizeof(cancel_ack_ping) - 1u), 0u, 0u, 0u },
     CANCEL_WAIT_KEEPALIVE_5,
-    CANCEL_WAIT_KEEPALIVE_5,
-    CANCEL_WAIT_KEEPALIVE_5,
-    CANCEL_WAIT_KEEPALIVE_5,
-    CANCEL_WAIT_KEEPALIVE_5,
-    CANCEL_WAIT_KEEPALIVE_5,
-    CANCEL_WAIT_KEEPALIVE_5,
-    CANCEL_WAIT_KEEPALIVE,
-    CANCEL_WAIT_KEEPALIVE,
-    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 200u, 0u, 0u },
+    /* Cross 60 s at both frame rates despite reply-period rounding. */
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 260u, 0u, 0u },
     { nack_reset_payload, DIRECT_PARITY_IN_RX, 1u,
       (uint8_t)(sizeof(nack_reset_payload) - 1u), 0u, 0u, 0u },
     { 0, DIRECT_PARITY_IN_LINK_DOWN, 1u, 0u, 0u, 0u, 0u }
@@ -1721,8 +2015,85 @@ static const DirectParityObservation cancel_local_reset_expected[] = {
     { DIRECT_PARITY_OBS_SEND, 1u, 0u, 5u, 0u, "RESET" },
     { DIRECT_PARITY_OBS_SEND, 1u, 0u, 12u, 0u, "CANCEL RESET" },
     { DIRECT_PARITY_OBS_CONTROL_RESULT, DIRECT_PARITY_LINK_NONE,
+      DIRECT_PARITY_REQUEST_RESET, 0u, DIRECT_PARITY_RESULT_CANCELLED, "" },
+    { DIRECT_PARITY_OBS_CONTROL_RESULT, DIRECT_PARITY_LINK_NONE,
       DIRECT_PARITY_REQUEST_RESET, 10u, DIRECT_PARITY_RESULT_CANCELLED,
       "NACK RESET" },
+    { DIRECT_PARITY_OBS_ENDED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" }
+};
+
+static const uint8_t continue_peer_move[] = "MOVE 2 e7e5";
+static const uint8_t late_takeback_ack[] = "ACK 1";
+static const DirectParityStep takeback_unconfirmed_continue_steps[] = {
+    { 0, DIRECT_PARITY_IN_LINK_UP, 1u, 0u, 0u, 0u, 0u },
+    { host_smoke_hello, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(host_smoke_hello) - 1u), 0u, 0u, 0u },
+    { start_host_request, DIRECT_PARITY_IN_LOCAL, 1u, 0u, 0u,
+      DIRECT_PARITY_REQUEST_START, 0u },
+    { start_host_ack, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(start_host_ack) - 1u), 0u, 0u, 0u },
+    { local_move, DIRECT_PARITY_IN_LOCAL, 1u, 4u, 0u, DIRECT_PARITY_REQUEST_MOVE, 0u },
+    { local_move_ack, DIRECT_PARITY_IN_RX, 1u, 8u, 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_LOCAL, 1u, 0u, 1u, DIRECT_PARITY_REQUEST_TAKEBACK, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 126u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 126u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 126u, 0u, 0u },
+    { cancel_ack_ping, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(cancel_ack_ping) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 126u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 126u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 126u, 0u, 0u },
+    { cancel_ack_ping, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(cancel_ack_ping) - 1u), 0u, 0u, 0u },
+    CANCEL_WAIT_KEEPALIVE_5,
+    /* Cross 60 s at both frame rates despite reply-period rounding. */
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 260u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 126u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 126u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 126u, 0u, 0u },
+    { cancel_ack_ping, DIRECT_PARITY_IN_RX, 1u, 8u, 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 126u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 126u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 126u, 0u, 0u },
+    { continue_peer_move, DIRECT_PARITY_IN_RX, 1u, 11u, 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_DOMAIN, 1u, 0u, 2u, DIRECT_PARITY_RESULT_ACCEPTED, 0u },
+    { late_takeback_ack, DIRECT_PARITY_IN_RX, 1u, 5u, 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_LOCAL, 1u, 0u, 0u, DIRECT_PARITY_REQUEST_DRAW, 0u },
+    { (const uint8_t *)"NACK DRAW", DIRECT_PARITY_IN_RX, 1u, 9u, 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_LINK_DOWN, 1u, 0u, 0u, 0u, 0u }
+};
+
+static const DirectParityObservation takeback_unconfirmed_continue_expected[] = {
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 28u, 0u,
+      "HELLO DIRECT HOST WHITE=HOST" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 28u, 0u,
+      "HELLO DIRECT HOST WHITE=HOST" },
+    { DIRECT_PARITY_OBS_READY, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 21u, 0u,
+      "GAME START WHITE=HOST" },
+    { DIRECT_PARITY_OBS_STARTED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 11u, 0u, "MOVE 1 d2d4" },
+    { DIRECT_PARITY_OBS_GAME, DIRECT_PARITY_LINK_NONE, DIRECT_PARITY_GAME_LOCAL_MOVE, 4u, 1u, "d2d4" },
+    { DIRECT_PARITY_OBS_CONTROL_RESULT, DIRECT_PARITY_LINK_NONE, DIRECT_PARITY_REQUEST_MOVE, 2u, DIRECT_PARITY_RESULT_ACCEPTED, "d4" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 10u, 0u, "TAKEBACK 1" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 10u, 0u, "TAKEBACK 1" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 10u, 0u, "TAKEBACK 1" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 10u, 0u, "TAKEBACK 1" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 10u, 0u, "TAKEBACK 1" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 10u, 0u, "TAKEBACK 1" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 17u, 0u, "CANCEL TAKEBACK 1" },
+    { DIRECT_PARITY_OBS_CONTROL_RESULT, DIRECT_PARITY_LINK_NONE, DIRECT_PARITY_REQUEST_TAKEBACK, 0u, DIRECT_PARITY_RESULT_CANCELLED, "" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 17u, 0u, "CANCEL TAKEBACK 1" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 17u, 0u, "CANCEL TAKEBACK 1" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 17u, 0u, "CANCEL TAKEBACK 1" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 17u, 0u, "CANCEL TAKEBACK 1" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 17u, 0u, "CANCEL TAKEBACK 1" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 17u, 0u, "CANCEL TAKEBACK 1" },
+    { DIRECT_PARITY_OBS_GAME, DIRECT_PARITY_LINK_NONE, DIRECT_PARITY_GAME_REMOTE_MOVE, 4u, 2u, "e7e5" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 5u, 0u, "ACK 2" },
+    { DIRECT_PARITY_OBS_SEND, 1u, 0u, 4u, 0u, "DRAW" },
+    { DIRECT_PARITY_OBS_CONTROL_RESULT, DIRECT_PARITY_LINK_NONE, DIRECT_PARITY_REQUEST_DRAW,
+      9u, DIRECT_PARITY_RESULT_REJECTED, "NACK DRAW" },
     { DIRECT_PARITY_OBS_ENDED, DIRECT_PARITY_LINK_NONE, 0u, 0u, 0u, "" }
 };
 
@@ -1861,6 +2232,21 @@ static const DirectParityStep liveness_host_loss_steps[] = {
     { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 450u, 0u, 0u }
 };
 
+static const uint8_t liveness_garbage[] = "GARBAGE";
+static const uint8_t liveness_malformed_move[] = "MOVE nope";
+
+static const DirectParityStep liveness_invalid_payload_steps[] = {
+    { 0, DIRECT_PARITY_IN_LINK_UP, 1u, 0u, 0u, 0u, 0u },
+    { host_smoke_hello, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(host_smoke_hello) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 450u, 0u, 0u },
+    { liveness_garbage, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(liveness_garbage) - 1u), 0u, 0u, 0u },
+    { liveness_malformed_move, DIRECT_PARITY_IN_RX, 1u,
+      (uint8_t)(sizeof(liveness_malformed_move) - 1u), 0u, 0u, 0u },
+    { 0, DIRECT_PARITY_IN_TIMEOUT, 1u, 0u, 450u, 0u, 0u }
+};
+
 static const DirectParityObservation liveness_host_loss_expected[] = {
     { DIRECT_PARITY_OBS_SEND, 1u, 0u, 28u, 0u,
       "HELLO DIRECT HOST WHITE=HOST" },
@@ -1970,6 +2356,16 @@ const DirectParityScenario direct_parity_scenarios[] = {
                     DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("mach-pre-ready", mach_pre_ready_steps, host_smoke_expected,
                     DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
+    DIRECT_SCENARIO("name-valid", name_valid_steps, name_valid_expected,
+                    DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
+    DIRECT_SCENARIO("name-lowercase", name_lowercase_steps, host_smoke_expected,
+                    DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
+    DIRECT_SCENARIO("name-too-long", name_too_long_steps, host_smoke_expected,
+                    DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
+    DIRECT_SCENARIO("name-trailing", name_trailing_steps, host_smoke_expected,
+                    DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
+    DIRECT_SCENARIO("name-pre-ready", name_pre_ready_steps, host_smoke_expected,
+                    DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("chat-local-rearms-liveness", chat_rearms_liveness_steps, chat_rearms_liveness_expected,
                     DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("chat-send-fail", chat_send_fail_steps, chat_send_fail_expected,
@@ -2012,13 +2408,21 @@ const DirectParityScenario direct_parity_scenarios[] = {
                     DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("takeback-remote-accept", takeback_remote_accept_steps, takeback_remote_accept_expected,
                     DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
+    DIRECT_SCENARIO("takeback-remote-cancel", takeback_remote_cancel_steps,
+                    takeback_remote_cancel_expected,
+                    DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("takeback-reject-retry", takeback_reject_retry_steps, takeback_reject_retry_expected,
+                    DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
+    DIRECT_SCENARIO("takeback-remote-slow-answer", takeback_remote_slow_answer_steps,
+                    takeback_remote_slow_answer_expected,
                     DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("takeback-move-inflight", takeback_move_inflight_steps, takeback_move_inflight_expected,
                     DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("takeback-latch-next-move", takeback_latch_next_move_steps, takeback_latch_next_move_expected,
                     DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("restore-local-active", restore_local_active_steps, restore_local_active_expected,
+                    DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
+    DIRECT_SCENARIO("restore-second-chunk-send-fail", restore_second_chunk_send_fail_steps, restore_second_chunk_send_fail_expected,
                     DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("restore-guest-local-active", restore_guest_local_active_steps, restore_guest_local_active_expected,
                     DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
@@ -2042,6 +2446,9 @@ const DirectParityScenario direct_parity_scenarios[] = {
                     DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("draw-rematch-guest", draw_rematch_guest_steps, draw_rematch_guest_expected,
                     DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
+    DIRECT_SCENARIO("draw-reject-latch-guest", draw_reject_latch_guest_steps,
+                    draw_reject_latch_guest_expected,
+                    DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("reset-after-reset", reset_after_reset_steps, reset_after_reset_expected,
                     DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("reset-crossed-active", reset_crossed_active_steps, reset_crossed_active_expected,
@@ -2052,10 +2459,16 @@ const DirectParityScenario direct_parity_scenarios[] = {
                     DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("draw-crossed", draw_crossed_steps, draw_crossed_expected,
                     DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
+    DIRECT_SCENARIO("draw-crossed-reset-send-fail", draw_crossed_reset_send_fail_steps, draw_crossed_reset_send_fail_expected,
+                    DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
+    DIRECT_SCENARIO("remote-reset-hostile-ack", remote_reset_hostile_ack_steps, remote_reset_hostile_ack_expected,
+                    DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("resign-remote-duplicate", resign_remote_duplicate_steps, resign_remote_duplicate_expected,
                     DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("resign-crossed", resign_crossed_steps, resign_crossed_expected,
                     DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
+    DIRECT_SCENARIO("takeback-unconfirmed-continue", takeback_unconfirmed_continue_steps,
+                    takeback_unconfirmed_continue_expected, DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("cancel-local-reset-host", cancel_local_reset_steps, cancel_local_reset_expected,
                     DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("cancel-remote-draw-guest", cancel_remote_draw_steps, cancel_remote_draw_expected,
@@ -2067,6 +2480,8 @@ const DirectParityScenario direct_parity_scenarios[] = {
     DIRECT_SCENARIO("liveness-guest-loss", liveness_guest_loss_steps, liveness_guest_loss_expected,
                     DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("liveness-host-loss", liveness_host_loss_steps, liveness_host_loss_expected,
+                    DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
+    DIRECT_SCENARIO("liveness-invalid-payload", liveness_invalid_payload_steps, liveness_host_loss_expected,
                     DIRECT_PARITY_ROLE_HOST, DIRECT_PARITY_COLOR_WHITE),
     DIRECT_SCENARIO("liveness-prompt-loss", liveness_prompt_loss_steps, liveness_prompt_loss_expected,
                     DIRECT_PARITY_ROLE_GUEST, DIRECT_PARITY_COLOR_WHITE),
@@ -2182,13 +2597,11 @@ static uint8_t collect_actions(DirectReferenceRunner *runner,
                 runner->pending_send_length = 0u;
                 runner->pending_tx_id = action->data.send.tx_id;
                 *tx_pending = 1u;
-            } else if (runner->fail_length != 0u) {
-                if (runner->fail_payload == 0 ||
-                    runner->fail_length != action->data.send.length ||
-                    memcmp(runner->fail_payload, action->data.send.payload,
-                           runner->fail_length) != 0) {
-                    return 0u;
-                }
+            } else if (runner->fail_length != 0u &&
+                       runner->fail_payload != 0 &&
+                       runner->fail_length == action->data.send.length &&
+                       memcmp(runner->fail_payload, action->data.send.payload,
+                              runner->fail_length) == 0) {
                 runner->fail_payload = 0;
                 runner->fail_length = 0u;
                 *tx_result = SESSION_TX_FAILED;
@@ -2243,6 +2656,11 @@ static uint8_t collect_actions(DirectReferenceRunner *runner,
             } else if (action->data.game.kind == SESSION_DELIVER_PLATFORM) {
                 observation = DIRECT_PARITY_OBS_GAME;
                 code = DIRECT_PARITY_GAME_PLATFORM;
+                value = action->data.game.value;
+            } else if (action->data.game.kind ==
+                       SESSION_DELIVER_PEER_NAME) {
+                observation = DIRECT_PARITY_OBS_GAME;
+                code = DIRECT_PARITY_GAME_PEER_NAME;
                 value = action->data.game.value;
             } else if (action->data.game.kind == SESSION_DELIVER_RESTORE) {
                 const uint8_t *phase;
@@ -2442,6 +2860,7 @@ uint8_t direct_reference_run(const DirectParityScenario *scenario,
     DirectReferenceRunner runner;
     SessionConfig config;
     uint8_t i;
+    uint8_t leave_after;
 
     if (scenario == 0 || trace == 0) {
         return 0u;
@@ -2577,8 +2996,26 @@ uint8_t direct_reference_run(const DirectParityScenario *scenario,
         } else {
             return 0u;
         }
+        /* Shell policy shared by both clients: declining a new game after
+           OVER ends the session, so the desktop shell follows the NACK with
+           its local BYE exactly as the Spectrum leaves to Setup. */
+        leave_after = (uint8_t)(
+            step->type == DIRECT_PARITY_IN_DECISION &&
+            step->request == DIRECT_PARITY_DECISION_REJECT &&
+            runner.state.phase == SESSION_PHASE_OVER &&
+            runner.state.pending_control == SESSION_REQUEST_RESET);
         if (!run_event(&runner, &event, trace)) {
             return 0u;
+        }
+        if (leave_after) {
+            memset(&event, 0, sizeof(event));
+            event.type = SESSION_EV_LOCAL_REQUEST;
+            event.data.local.request = SESSION_REQUEST_BYE;
+            event.data.local.phase = runner.state.phase;
+            if (runner.pending_tx_id != 0u ||
+                !run_event(&runner, &event, trace)) {
+                return 0u;
+            }
         }
     }
     return (uint8_t)(runner.fail_length == 0u &&

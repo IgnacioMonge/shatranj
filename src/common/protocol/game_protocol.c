@@ -14,6 +14,7 @@ const char NETCHESS_PROTO_CHAT_PREFIX[] = "CHAT ";
 const char NETCHESS_PROTO_DRAW[] = "DRAW";
 const char NETCHESS_PROTO_CANCEL_DRAW[] = "CANCEL DRAW";
 const char NETCHESS_PROTO_CANCEL_RESET[] = "CANCEL RESET";
+const char NETCHESS_PROTO_CANCEL_TAKEBACK_PREFIX[] = "CANCEL TAKEBACK ";
 const char NETCHESS_PROTO_ACK_RESIGN[] = "ACK RESIGN";
 const char NETCHESS_PROTO_GAME_START[] = "GAME START";
 const char NETCHESS_PROTO_NACK_RESET[] = "NACK RESET";
@@ -39,6 +40,13 @@ const char *netchess_after_prefix(const char *text, const char *prefix)
         }
     }
     return text;
+}
+
+unsigned char netchess_text_is(const char *text, const char *token)
+{
+    const char *tail = netchess_after_prefix(text, token);
+
+    return (unsigned char)(tail != 0 && *tail == '\0');
 }
 #endif
 

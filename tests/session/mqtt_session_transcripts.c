@@ -35,36 +35,39 @@
 
 #define OBS_SEND(text, route_value, retain_value, id) \
     {(text), 0u, MQTT_OBSERVE_SEND, 0u, 0u, (route_value), \
-     (retain_value), (id)}
+     (retain_value), (id), 0u}
 #define OBS_SEND_NACK_COMPAT(text, route_value, retain_value, id) \
     {(text), 0u, MQTT_OBSERVE_SEND, 0u, \
      MQTT_OBSERVE_DETAIL_NACK_COMPAT, (route_value), \
-     (retain_value), (id)}
+     (retain_value), (id), 0u}
 #define OBS_TIMER_SET(timer, ticks) \
-    {0, (ticks), MQTT_OBSERVE_TIMER_SET, (timer), 0u, 0u, 0u, 0u}
+    {0, (ticks), MQTT_OBSERVE_TIMER_SET, (timer), 0u, 0u, 0u, 0u, 0u}
 #define OBS_TIMER_CANCEL(timer) \
-    {0, 0u, MQTT_OBSERVE_TIMER_CANCEL, (timer), 0u, 0u, 0u, 0u}
+    {0, 0u, MQTT_OBSERVE_TIMER_CANCEL, (timer), 0u, 0u, 0u, 0u, 0u}
 #define OBS_INTERNAL_TIMER_SET(timer, ticks) \
     {0, (ticks), MQTT_OBSERVE_TIMER_SET, (timer), \
-     MQTT_OBSERVE_DETAIL_INTERNAL, 0u, 0u, 0u}
+     MQTT_OBSERVE_DETAIL_INTERNAL, 0u, 0u, 0u, 0u}
 #define OBS_INTERNAL_TIMER_CANCEL(timer) \
     {0, 0u, MQTT_OBSERVE_TIMER_CANCEL, (timer), \
-     MQTT_OBSERVE_DETAIL_INTERNAL, 0u, 0u, 0u}
+     MQTT_OBSERVE_DETAIL_INTERNAL, 0u, 0u, 0u, 0u}
 #define OBS_CLOSE(id) \
-    {0, 0u, MQTT_OBSERVE_LINK_CLOSE, 0u, 0u, 0u, 0u, (id)}
+    {0, 0u, MQTT_OBSERVE_LINK_CLOSE, 0u, 0u, 0u, 0u, (id), 0u}
 #define OBS_SESSION(status) \
-    {0, 0u, MQTT_OBSERVE_SESSION, (status), 0u, 0u, 0u, 0u}
+    {0, 0u, MQTT_OBSERVE_SESSION, (status), 0u, 0u, 0u, 0u, 0u}
+#define OBS_SESSION_END(reason) \
+    {0, 0u, MQTT_OBSERVE_SESSION, SESSION_CHANGED_ENDED, 0u, 0u, 0u, 0u, \
+     (reason)}
 #define OBS_SIDE(color_value, sid) \
-    {0, (sid), MQTT_OBSERVE_SIDE, (color_value), 0u, 0u, 0u, 0u}
+    {0, (sid), MQTT_OBSERVE_SIDE, (color_value), 0u, 0u, 0u, 0u, 0u}
 #define OBS_DECISION(control_value, number) \
-    {0, (number), MQTT_OBSERVE_DECISION, (control_value), 0u, 0u, 0u, 0u}
+    {0, (number), MQTT_OBSERVE_DECISION, (control_value), 0u, 0u, 0u, 0u, 0u}
 #define OBS_GAME(kind_value, result_value, number, text) \
     {(text), (number), MQTT_OBSERVE_GAME, (kind_value), (result_value), \
-     0u, 0u, 0u}
+     0u, 0u, 0u, 0u}
 
 #define NO_OBSERVATIONS {{0}}, 0u
 #define NO_STATE_CHANGE \
-    {{0, 0u, MQTT_OBSERVE_STATE_UNCHANGED, 0u, 0u, 0u, 0u, 0u}}, 1u
+    {{0, 0u, MQTT_OBSERVE_STATE_UNCHANGED, 0u, 0u, 0u, 0u, 0u, 0u}}, 1u
 
 #define GUEST_READY_PREFIX \
     {"guest link up", EV_LINK_UP(1u), NO_OBSERVATIONS}, \
@@ -152,6 +155,39 @@ static const MqttTranscriptStep mach_platform_steps[] = {
         "malformed MACH is ignored",
         EV_RX("MACH PC ", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
         NO_STATE_CHANGE
+    },
+    {
+        "live game MNAME emits typed peer name",
+        EV_RX("MNAME IGNACIO", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {OBS_GAME(SESSION_DELIVER_PEER_NAME, 0u, 0u, "IGNACIO")},
+        1u
+    },
+    {
+        "ten-character MNAME emits typed peer name",
+        EV_RX("MNAME ZX-81_2026", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {OBS_GAME(SESSION_DELIVER_PEER_NAME, 0u, 0u, "ZX-81_2026")},
+        1u
+    },
+    {
+        "lowercase MNAME is ignored",
+        EV_RX("MNAME ignacio", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        NO_STATE_CHANGE
+    },
+    {
+        "eleven-character MNAME is ignored",
+        EV_RX("MNAME CONSTANTINO", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        NO_STATE_CHANGE
+    },
+    {
+        "empty MNAME is ignored",
+        EV_RX("MNAME ", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        NO_STATE_CHANGE
+    },
+    {
+        "retained MNAME is ignored",
+        EV_RX("MNAME PEPE", SESSION_ROUTE_GAME,
+              SESSION_RX_LIVE | SESSION_RX_RETAINED, 1u),
+        NO_STATE_CHANGE
     }
 };
 
@@ -160,6 +196,11 @@ static const MqttTranscriptStep mach_pre_ready_steps[] = {
     {
         "pre-ready game MACH is ignored",
         EV_RX("MACH ZX", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        NO_STATE_CHANGE
+    },
+    {
+        "pre-ready game MNAME is ignored",
+        EV_RX("MNAME PEPE", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
         NO_STATE_CHANGE
     }
 };
@@ -1120,6 +1161,47 @@ static const MqttTranscriptStep start_role_guards_steps[] = {
     }
 };
 
+static const MqttTranscriptStep start_guest_busy_steps[] = {
+    GUEST_ACTIVE_PREFIX,
+    {
+        "local reset occupies guest",
+        EV_LOCAL(SESSION_REQUEST_RESET, 0u, 0, SESSION_PHASE_ACTIVE),
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("RESET", SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "reset handoff arms reply",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+        },
+        2u
+    },
+    {
+        "occupied guest refuses game start on control route",
+        EV_RX("GAME START", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {
+            OBS_SEND("NACK GAME START BUSY", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        2u
+    },
+    {
+        "busy start reply completion rearms liveness",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        2u
+    }
+};
+
 static const MqttTranscriptStep move_local_ack_steps[] = {
     GUEST_ACTIVE_PREFIX,
     {
@@ -1866,8 +1948,8 @@ static const MqttTranscriptStep restore_wait_ry_retry_limit_steps[] = {
     RESTORE_RQ_RETRY,
     RESTORE_RQ_RETRY,
     {
-        "restore permission exhaustion cancels without disconnecting",
-        EV_TIMEOUT(SESSION_TIMER_CONTROL),
+        "restore human deadline cancels without disconnecting",
+        EV_TIMEOUT(SESSION_TIMER_DECISION),
         {
             OBS_SEND("RN", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD,
@@ -1960,6 +2042,74 @@ static const MqttTranscriptStep restore_guest_local_active_steps[] = {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
             OBS_GAME(SESSION_DELIVER_RESTORE, 0u, 2u, RESTORE_ACTIVE),
             OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        3u
+    }
+};
+
+static const MqttTranscriptStep restore_second_chunk_tx_fail_steps[] = {
+    GUEST_ACTIVE_PREFIX,
+    {
+        "guest restore requests permission",
+        EV_LOCAL(SESSION_REQUEST_RESTORE, 2u, RESTORE_ACTIVE,
+                 SESSION_PHASE_ACTIVE),
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("RQ", SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD,
+                          SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "guest restore request completion arms reply",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+        },
+        2u
+    },
+    {
+        "guest restore permission sends first half",
+        EV_RX("RY", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_SEND(RESTORE_RS00, SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD,
+                          SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "guest first restore half completion sends second half",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_SEND(RESTORE_RS01_ACTIVE, SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD,
+                          SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "failed second restore half publishes offline cleanup",
+        EV_TX_FAILED,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_SEND("F B 77", SESSION_ROUTE_PRESENCE, 1u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD,
+                          SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "offline cleanup closes failed restore",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_CLOSE(1u),
+            OBS_SESSION(SESSION_CHANGED_ENDED)
         },
         3u
     }
@@ -2656,49 +2806,42 @@ static const MqttTranscriptStep control_local_draw_crossed_steps[] = {
         3u
     },
     {
-        "crossed draw handoff advances to reset",
+        "crossed draw handoff leaves game over",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
-            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT,
-                     SESSION_CONTROL_ACCEPTED,
-                     SESSION_REQUEST_DRAW, 0),
-            OBS_SEND("RESET", SESSION_ROUTE_GAME, 0u, 1u),
-            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
-        },
-        4u
-    },
-    {
-        "crossed draw reset handoff",
-        EV_TX_OK,
-        {
-            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
-            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u),
+            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT, SESSION_CONTROL_ACCEPTED, SESSION_REQUEST_DRAW, 0),
             OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
         },
         3u
     },
     {
-        "crossed reset is acked after draw",
+        "manual restart asks consent",
         EV_RX("RESET", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
         {
-            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_DECISION(SESSION_REQUEST_RESET, 0u),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        2u
+    },
+    {
+        "manual restart accepted",
+        EV_DECISION(SESSION_DECISION_ACCEPT),
+        {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
             OBS_SEND("ACK RESET", SESSION_ROUTE_ACK, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
-        4u
+        3u
     },
     {
-        "crossed reset handoff starts board",
+        "consented reset handoff starts board",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
-            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT,
-                     SESSION_CONTROL_ACCEPTED,
-                     SESSION_REQUEST_RESET, 0),
+            OBS_GAME(SESSION_DELIVER_CONTROL, 0u, SESSION_REQUEST_RESET, 0),
             OBS_SESSION(SESSION_CHANGED_STARTED),
-            OBS_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
         },
         4u
     },
@@ -2722,14 +2865,147 @@ static const MqttTranscriptStep control_local_draw_crossed_steps[] = {
         2u
     },
     {
-        "draw nack is typed",
-        EV_RX("NACK DRAW", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        "draw nack with reason is typed",
+        EV_RX("NACK DRAW BUSY", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
             OBS_GAME(SESSION_DELIVER_CONTROL_RESULT,
                      SESSION_CONTROL_REJECTED,
-                     SESSION_REQUEST_DRAW, "NACK DRAW"),
+                     SESSION_REQUEST_DRAW, "NACK DRAW BUSY"),
             OBS_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        3u
+    },
+    {
+        "local draw sends again",
+        EV_LOCAL(SESSION_REQUEST_DRAW, 0u, 0, SESSION_PHASE_ACTIVE),
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("DRAW", SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "local draw handoff waits for application ack",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+        },
+        2u
+    },
+    {
+        "local draw application ack leaves game over",
+        EV_RX("ACK DRAW", SESSION_ROUTE_ACK, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT,
+                     SESSION_CONTROL_ACCEPTED, SESSION_REQUEST_DRAW, 0),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        3u
+    },
+    {
+        "accepted local draw duplicate is reacked",
+        EV_RX("DRAW", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("ACK DRAW", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "local draw duplicate handoff leaves game over",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        2u
+    }
+};
+
+static const MqttTranscriptStep control_crossed_draw_reset_tx_fail_steps[] = {
+    HOST_ACTIVE_PREFIX,
+    {
+        "local draw sends",
+        EV_LOCAL(SESSION_REQUEST_DRAW, 0u, 0, SESSION_PHASE_ACTIVE),
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("DRAW", SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "draw handoff arms reply",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+        },
+        2u
+    },
+    {
+        "crossed draw is acked",
+        EV_RX("DRAW", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_SEND("ACK DRAW", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "crossed draw handoff leaves game over",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT, SESSION_CONTROL_ACCEPTED, SESSION_REQUEST_DRAW, 0),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        3u
+    },
+    {
+        "manual reset sends",
+        EV_LOCAL(SESSION_REQUEST_RESET, 0u, 0, SESSION_PHASE_OVER),
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("RESET", SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "failed crossed-draw reset publishes offline cleanup",
+        EV_TX_FAILED,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_SEND("F W 77", SESSION_ROUTE_PRESENCE, 1u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "seat release handoff clears retained metadata",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_SEND("", SESSION_ROUTE_META, 1u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD,
+                          SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "offline cleanup closes failed crossed draw",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_CLOSE(1u),
+            OBS_SESSION(SESSION_CHANGED_ENDED)
         },
         3u
     }
@@ -2763,7 +3039,28 @@ static const MqttTranscriptStep control_remote_draw_steps[] = {
         3u
     },
     {
-        "draw nack handoff clears latch",
+        "draw nack handoff keeps the rejection",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        2u
+    },
+    /* A retransmission that crossed the NACK looks like a repeated offer:
+       the same position answers NACK DRAW again without a second prompt. */
+    {
+        "rejected draw in same position is renacked",
+        EV_RX("DRAW", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("NACK DRAW", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "renack handoff rearms liveness",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
@@ -2772,7 +3069,37 @@ static const MqttTranscriptStep control_remote_draw_steps[] = {
         2u
     },
     {
-        "rejected draw prompts again",
+        "remote move changes the position",
+        EV_RX("MOVE 1 e2e4 e4", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_GAME(SESSION_DELIVER_REMOTE_MOVE, 2u, 1u, "e2e4"),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+        },
+        3u
+    },
+    {
+        "remote move accepted",
+        EV_GAME_RESULT(SESSION_GAME_ACCEPTED, 1u, 0),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_SEND("ACK 1", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        4u
+    },
+    {
+        "remote move ack handoff",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        2u
+    },
+    {
+        "draw after a move prompts again",
         EV_RX("DRAW", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
         {
             OBS_DECISION(SESSION_REQUEST_DRAW, 0u),
@@ -2791,27 +3118,32 @@ static const MqttTranscriptStep control_remote_draw_steps[] = {
         3u
     },
     {
-        "draw ack handoff enters rematch reset",
+        "draw ack handoff leaves game over",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
             OBS_GAME(SESSION_DELIVER_CONTROL, 0u, SESSION_REQUEST_DRAW, 0),
-            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
         },
-        4u
+        3u
+    },
+    {
+        "obsolete draw control timeout is inert",
+        EV_TIMEOUT(SESSION_TIMER_CONTROL),
+        NO_STATE_CHANGE
     },
     {
         "accepted draw duplicate is reacked",
         EV_RX("DRAW", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
         {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
             OBS_SEND("ACK DRAW", SESSION_ROUTE_ACK, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
-        2u
+        3u
     },
     {
-        "duplicate draw ack preserves reset wait",
+        "reply handoff preserves finished game",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
@@ -2820,18 +3152,45 @@ static const MqttTranscriptStep control_remote_draw_steps[] = {
         2u
     },
     {
-        "peer reset completes accepted draw",
+        "accepted draw duplicate is reacked",
+        EV_RX("DRAW", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("ACK DRAW", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "reply handoff preserves finished game",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        2u
+    },
+    {
+        "manual restart asks consent",
         EV_RX("RESET", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
         {
-            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_DECISION(SESSION_REQUEST_RESET, 0u),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        2u
+    },
+    {
+        "manual restart accepted",
+        EV_DECISION(SESSION_DECISION_ACCEPT),
+        {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
             OBS_SEND("ACK RESET", SESSION_ROUTE_ACK, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
-        4u
+        3u
     },
     {
-        "rematch reset handoff starts board",
+        "consented reset handoff starts board",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
@@ -2844,7 +3203,7 @@ static const MqttTranscriptStep control_remote_draw_steps[] = {
 };
 
 static const MqttTranscriptStep control_local_resign_steps[] = {
-    GUEST_ACTIVE_PREFIX,
+    HOST_ACTIVE_PREFIX,
     {
         "local resign sends",
         EV_LOCAL(SESSION_REQUEST_RESIGN, 0u, 0, SESSION_PHASE_ACTIVE),
@@ -2902,20 +3261,27 @@ static const MqttTranscriptStep control_local_resign_steps[] = {
         2u
     },
     {
-        "resign app ack starts automatic reset",
+        "resign app ack leaves game over",
         EV_RX("ACK RESIGN", SESSION_ROUTE_ACK, SESSION_RX_LIVE, 1u),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
-            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT,
-                     SESSION_CONTROL_ACCEPTED,
-                     SESSION_REQUEST_RESIGN, 0),
+            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT, SESSION_CONTROL_ACCEPTED, SESSION_REQUEST_RESIGN, 0),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        3u
+    },
+    {
+        "manual reset sends",
+        EV_LOCAL(SESSION_REQUEST_RESET, 0u, 0, SESSION_PHASE_OVER),
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
             OBS_SEND("RESET", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
-        4u
+        3u
     },
     {
-        "automatic reset handoff arms reply",
+        "manual reset handoff arms reply",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
@@ -2925,7 +3291,7 @@ static const MqttTranscriptStep control_local_resign_steps[] = {
         3u
     },
     {
-        "automatic reset ack starts new game",
+        "manual reset ack starts new game",
         EV_RX("ACK RESET", SESSION_ROUTE_ACK, SESSION_RX_LIVE, 1u),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
@@ -2982,8 +3348,17 @@ static const MqttTranscriptStep control_remote_resign_steps[] = {
         2u
     },
     {
-        "post-resign reset is accepted without a decision",
+        "manual restart asks consent",
         EV_RX("RESET", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
+        {
+            OBS_DECISION(SESSION_REQUEST_RESET, 0u),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        2u
+    },
+    {
+        "manual restart accepted",
+        EV_DECISION(SESSION_DECISION_ACCEPT),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
             OBS_SEND("ACK RESET", SESSION_ROUTE_ACK, 0u, 1u),
@@ -2992,7 +3367,7 @@ static const MqttTranscriptStep control_remote_resign_steps[] = {
         3u
     },
     {
-        "automatic reset ack handoff starts board",
+        "consented reset handoff starts board",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
@@ -3049,8 +3424,17 @@ static const MqttTranscriptStep control_crossed_resign_steps[] = {
         3u
     },
     {
-        "crossed guest accepts host reset without a decision",
+        "manual restart asks consent",
         EV_RX("RESET", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
+        {
+            OBS_DECISION(SESSION_REQUEST_RESET, 0u),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        2u
+    },
+    {
+        "manual restart accepted",
+        EV_DECISION(SESSION_DECISION_ACCEPT),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
             OBS_SEND("ACK RESET", SESSION_ROUTE_ACK, 0u, 1u),
@@ -3059,7 +3443,7 @@ static const MqttTranscriptStep control_crossed_resign_steps[] = {
         3u
     },
     {
-        "crossed reset ack handoff starts guest board",
+        "consented reset handoff starts board",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
@@ -3104,20 +3488,27 @@ static const MqttTranscriptStep control_crossed_resign_host_steps[] = {
         3u
     },
     {
-        "crossed resign host starts automatic reset",
+        "crossed host resign leaves game over",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
-            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT,
-                     SESSION_CONTROL_ACCEPTED,
-                     SESSION_REQUEST_RESIGN, 0),
+            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT, SESSION_CONTROL_ACCEPTED, SESSION_REQUEST_RESIGN, 0),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        3u
+    },
+    {
+        "manual reset sends",
+        EV_LOCAL(SESSION_REQUEST_RESET, 0u, 0, SESSION_PHASE_OVER),
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
             OBS_SEND("RESET", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
-        4u
+        3u
     },
     {
-        "crossed host reset handoff arms reply",
+        "manual reset handoff arms reply",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
@@ -3127,7 +3518,7 @@ static const MqttTranscriptStep control_crossed_resign_host_steps[] = {
         3u
     },
     {
-        "crossed host reset ack starts new game",
+        "manual host reset ack starts new game",
         EV_RX("ACK RESET", SESSION_ROUTE_ACK, SESSION_RX_LIVE, 1u),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
@@ -3238,6 +3629,69 @@ static const MqttTranscriptStep control_local_takeback_steps[] = {
             OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
         },
         3u
+    }
+};
+
+static const MqttTranscriptStep control_remote_takeback_cancel_steps[] = {
+    GUEST_ACTIVE_REMOTE_ONE_PLY_PREFIX,
+    {
+        "remote takeback opens its decision",
+        EV_RX("TAKEBACK 1", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
+        {
+            OBS_DECISION(SESSION_REQUEST_TAKEBACK, 1u),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        2u
+    },
+    {
+        "retained cancellation cannot close the prompt",
+        EV_RX("CANCEL TAKEBACK 1", SESSION_ROUTE_CONTROL, SESSION_RX_RETAINED, 1u),
+        NO_STATE_CHANGE
+    },
+    {
+        "requester withdrawal rejects without applying",
+        EV_RX("CANCEL TAKEBACK 1", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("NACK 1", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "withdrawal handoff closes the decision and keeps the game",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT, SESSION_CONTROL_EXPIRED,
+                     SESSION_REQUEST_TAKEBACK, 0),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        3u
+    },
+    {
+        "stale Y after withdrawal is inert",
+        EV_DECISION_ID(SESSION_DECISION_ACCEPT, 2u),
+        NO_STATE_CHANGE
+    },
+    {
+        "duplicate withdrawal is nacked without undoing",
+        EV_RX("CANCEL TAKEBACK 1", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("NACK 1", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "duplicate reply keeps the session live",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        2u
     }
 };
 
@@ -3380,7 +3834,7 @@ static const MqttTranscriptStep control_remote_takeback_steps[] = {
 };
 
 static const MqttTranscriptStep control_busy_crossing_steps[] = {
-    GUEST_ACTIVE_PREFIX,
+    HOST_ACTIVE_PREFIX,
     {
         "pending move sends",
         EV_LOCAL(SESSION_REQUEST_MOVE, 0u, "e2e4", SESSION_PHASE_ACTIVE),
@@ -3488,20 +3942,29 @@ static const MqttTranscriptStep control_busy_crossing_steps[] = {
         NO_STATE_CHANGE
     },
     {
-        "resign ack starts reset after move preemption",
+        "resign ack leaves game over after move preemption",
         EV_RX("ACK RESIGN", SESSION_ROUTE_ACK, SESSION_RX_LIVE, 1u),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
             OBS_GAME(SESSION_DELIVER_CONTROL_RESULT,
                      SESSION_CONTROL_ACCEPTED,
                      SESSION_REQUEST_RESIGN, 0),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        3u
+    },
+    {
+        "manual reset after move-preempting resignation",
+        EV_LOCAL(SESSION_REQUEST_RESET, 0u, 0, SESSION_PHASE_OVER),
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
             OBS_SEND("RESET", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
-        4u
+        3u
     },
     {
-        "preempted resign reset handoff arms reply",
+        "manual reset handoff arms reply",
         EV_TX_OK,
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
@@ -3511,7 +3974,7 @@ static const MqttTranscriptStep control_busy_crossing_steps[] = {
         3u
     },
     {
-        "preempted resign reset ack starts game",
+        "manual reset ack starts game",
         EV_RX("ACK RESET", SESSION_ROUTE_ACK, SESSION_RX_LIVE, 1u),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
@@ -3531,7 +3994,7 @@ static const MqttTranscriptStep liveness_idle_ack_steps[] = {
         "idle timeout sends app ping",
         EV_TIMEOUT(SESSION_TIMER_LIVENESS),
         {
-            OBS_SEND("PING", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("PING", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         2u
@@ -3573,7 +4036,7 @@ static const MqttTranscriptStep liveness_idle_ack_steps[] = {
         "next idle interval sends next ping",
         EV_TIMEOUT(SESSION_TIMER_LIVENESS),
         {
-            OBS_SEND("PING", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("PING", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         2u
@@ -3586,7 +4049,7 @@ static const MqttTranscriptStep liveness_peer_timeout_steps[] = {
         "idle timeout sends ping",
         EV_TIMEOUT(SESSION_TIMER_LIVENESS),
         {
-            OBS_SEND("PING", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("PING", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         2u
@@ -3618,7 +4081,7 @@ static const MqttTranscriptStep liveness_host_peer_timeout_steps[] = {
         EV_TIMEOUT(SESSION_TIMER_LIVENESS),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SEND("PING", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("PING", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         3u
@@ -3659,7 +4122,7 @@ static const MqttTranscriptStep liveness_host_peer_release_fail_steps[] = {
         EV_TIMEOUT(SESSION_TIMER_LIVENESS),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SEND("PING", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("PING", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         3u
@@ -3737,6 +4200,11 @@ static const MqttTranscriptStep liveness_ping_during_control_steps[] = {
         2u
     },
     {
+        "chat is blocked while a move is pending",
+        EV_LOCAL(SESSION_REQUEST_CHAT, 0u, "blocked", SESSION_PHASE_ACTIVE),
+        NO_STATE_CHANGE
+    },
+    {
         "ping during control wait is acked",
         EV_RX("PING", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
         {
@@ -3789,16 +4257,81 @@ static const MqttTranscriptStep liveness_ping_during_control_steps[] = {
             OBS_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
         },
         2u
+    },
+    {
+        "second local move starts control wait",
+        EV_LOCAL(SESSION_REQUEST_MOVE, 0u, "e7e5", SESSION_PHASE_ACTIVE),
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_SEND("MOVE 2 e7e5", SESSION_ROUTE_GAME, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        3u
+    },
+    {
+        "second move handoff arms control timer",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+        },
+        2u
+    },
+    {
+        "second ping during control wait is acked",
+        EV_RX("PING", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
+        {
+            OBS_SEND("ACK PING", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        2u
+    },
+    {
+        "second ping handoff preserves both timers",
+        EV_TX_OK,
+        {
+            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u)
+        },
+        2u
+    },
+    {
+        "next remote move delivers both moves atomically",
+        EV_RX("MOVE 3 g1f3", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_GAME(SESSION_DELIVER_LOCAL_MOVE, 0u, 2u, "e7e5"),
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_GAME(SESSION_DELIVER_REMOTE_MOVE, 1u, 3u, "g1f3"),
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u)
+        },
+        5u
+    },
+    {
+        "accepted collision move sends app ack",
+        EV_GAME_RESULT(SESSION_GAME_ACCEPTED, 3u, 0),
+        {
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+            OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+            OBS_SEND("ACK 3", SESSION_ROUTE_ACK, 0u, 1u),
+            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
+        },
+        4u
     }
 };
 
 static const MqttTranscriptStep liveness_activity_steps[] = {
     GUEST_ACTIVE_PREFIX,
     {
+        "unsolicited reset ACK neither accepts reset nor credits liveness",
+        EV_RX("ACK RESET", SESSION_ROUTE_ACK, SESSION_RX_LIVE, 1u),
+        NO_STATE_CHANGE
+    },
+    {
         "idle timeout sends ping",
         EV_TIMEOUT(SESSION_TIMER_LIVENESS),
         {
-            OBS_SEND("PING", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("PING", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         2u
@@ -3825,7 +4358,7 @@ static const MqttTranscriptStep liveness_activity_steps[] = {
         "activity-reset idle sends a fresh ping",
         EV_TIMEOUT(SESSION_TIMER_LIVENESS),
         {
-            OBS_SEND("PING", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("PING", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         2u
@@ -3838,7 +4371,7 @@ static const MqttTranscriptStep liveness_tx_guard_steps[] = {
         "idle timeout sends ping",
         EV_TIMEOUT(SESSION_TIMER_LIVENESS),
         {
-            OBS_SEND("PING", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("PING", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         2u
@@ -3871,7 +4404,7 @@ static const MqttTranscriptStep liveness_tx_failed_steps[] = {
         "idle timeout sends ping before immediate failure",
         EV_TIMEOUT(SESSION_TIMER_LIVENESS),
         {
-            OBS_SEND("PING", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("PING", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         2u
@@ -4039,7 +4572,7 @@ static const MqttTranscriptStep link_loss_pending_decision_steps[] = {
         EV_LINK_DOWN(1u),
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SESSION(SESSION_CHANGED_ENDED)
+            OBS_SESSION_END(SESSION_END_REASON_TRANSPORT_LOST)
         },
         2u
     },
@@ -4194,7 +4727,7 @@ static const MqttTranscriptStep bye_local_handshake_steps[] = {
         "local bye may preempt before peer ready",
         EV_LOCAL(SESSION_REQUEST_BYE, 0u, 0, SESSION_PHASE_HANDSHAKE),
         {
-            OBS_SEND("BYE", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("BYE", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         2u
@@ -4217,7 +4750,7 @@ static const MqttTranscriptStep bye_local_empty_room_steps[] = {
         "local bye may leave an empty room",
         EV_LOCAL(SESSION_REQUEST_BYE, 0u, 0, SESSION_PHASE_HANDSHAKE),
         {
-            OBS_SEND("BYE", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("BYE", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         2u
@@ -4228,7 +4761,7 @@ static const MqttTranscriptStep bye_local_empty_room_steps[] = {
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
             OBS_CLOSE(1u),
-            OBS_SESSION(SESSION_CHANGED_ENDED)
+            OBS_SESSION_END(SESSION_END_REASON_LOCAL_BYE)
         },
         3u
     }
@@ -4260,7 +4793,7 @@ static const MqttTranscriptStep bye_local_success_steps[] = {
         EV_LOCAL(SESSION_REQUEST_BYE, 0u, 0, SESSION_PHASE_ACTIVE),
         {
             OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
-            OBS_SEND("BYE", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("BYE", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         3u
@@ -4299,7 +4832,7 @@ static const MqttTranscriptStep bye_local_host_success_steps[] = {
         EV_LOCAL(SESSION_REQUEST_BYE, 0u, 0, SESSION_PHASE_ACTIVE),
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SEND("BYE", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("BYE", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         3u
@@ -4343,7 +4876,7 @@ static const MqttTranscriptStep bye_local_failed_steps[] = {
         EV_LOCAL(SESSION_REQUEST_BYE, 0u, 0, SESSION_PHASE_ACTIVE),
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SEND("BYE", SESSION_ROUTE_CONTROL, 0u, 1u),
+            OBS_SEND("BYE", SESSION_ROUTE_GAME, 0u, 1u),
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS)
         },
         3u
@@ -4391,7 +4924,7 @@ static const MqttTranscriptStep bye_remote_steps[] = {
         EV_RX("BYE", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
         {
             OBS_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
-            OBS_SESSION(SESSION_CHANGED_ENDED)
+            OBS_SESSION_END(SESSION_END_REASON_REMOTE_BYE)
         },
         2u
     },
@@ -4534,7 +5067,7 @@ static const MqttTranscriptStep bye_remote_host_release_fail_steps[] = {
         2u \
     }
 
-#define CONTROL_CANCEL_LOCAL_STEPS(prefix, request, text, cancel, nack) \
+#define CONTROL_CANCEL_LOCAL_STEPS(prefix, request, text, cancel, nack, bad_nack) \
     prefix, \
     { \
         "local control starts", \
@@ -4554,6 +5087,11 @@ static const MqttTranscriptStep bye_remote_host_release_fail_steps[] = {
             OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u) \
         }, \
         2u \
+    }, \
+    { \
+        "nack target suffix does not finish control", \
+        EV_RX((bad_nack), SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u), \
+        NO_STATE_CHANGE \
     }, \
     { \
         "chat remains available while control is pending", \
@@ -4584,18 +5122,16 @@ static const MqttTranscriptStep bye_remote_host_release_fail_steps[] = {
     CONTROL_CANCEL_RETRY(text), \
     CONTROL_CANCEL_RETRY(text), \
     { \
-        "retry ladder opens five minute grace", \
+        "retry ladder keeps the original human deadline", \
         EV_TIMEOUT(SESSION_TIMER_CONTROL), \
         { \
-            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, \
-                                   SESSION_CONTROL_CANCEL_TICKS), \
             OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u) \
         }, \
-        2u \
+        1u \
     }, \
     { \
-        "grace expiry sends cancellation", \
-        EV_TIMEOUT(SESSION_TIMER_CONTROL), \
+        "human deadline sends cancellation", \
+        EV_TIMEOUT(SESSION_TIMER_DECISION), \
         { \
             OBS_SEND((cancel), SESSION_ROUTE_GAME, 0u, 1u), \
             OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) \
@@ -4607,43 +5143,12 @@ static const MqttTranscriptStep bye_remote_host_release_fail_steps[] = {
         EV_TX_OK, \
         { \
             OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), \
-            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u) \
+            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u), \
+            OBS_GAME(SESSION_DELIVER_CONTROL_RESULT, SESSION_CONTROL_CANCELLED, (request), 0) \
         }, \
-        2u \
+        3u \
     }, \
     CONTROL_CANCEL_RETRY(cancel), \
-    CONTROL_CANCEL_RETRY(cancel), \
-    CONTROL_CANCEL_RETRY(cancel), \
-    CONTROL_CANCEL_RETRY(cancel), \
-    CONTROL_CANCEL_RETRY(cancel), \
-    { \
-        "cancellation retry ladder returns to grace", \
-        EV_TIMEOUT(SESSION_TIMER_CONTROL), \
-        { \
-            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, \
-                                   SESSION_CONTROL_CANCEL_TICKS), \
-            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u) \
-        }, \
-        2u \
-    }, \
-    { \
-        "second grace expiry resends cancellation", \
-        EV_TIMEOUT(SESSION_TIMER_CONTROL), \
-        { \
-            OBS_SEND((cancel), SESSION_ROUTE_GAME, 0u, 1u), \
-            OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) \
-        }, \
-        2u \
-    }, \
-    { \
-        "second cancellation handoff awaits confirmation", \
-        EV_TX_OK, \
-        { \
-            OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), \
-            OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u) \
-        }, \
-        2u \
-    }, \
     { \
         "nack confirms cancellation without ending session", \
         EV_RX((nack), SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u), \
@@ -4656,16 +5161,122 @@ static const MqttTranscriptStep bye_remote_host_release_fail_steps[] = {
         3u \
     }
 
+static const MqttTranscriptStep draw_unconfirmed_local_move_steps[] = {
+    GUEST_ACTIVE_REMOTE_ONE_PLY_PREFIX,
+    { "offer draw on our turn", EV_LOCAL(SESSION_REQUEST_DRAW, 0u, 0, SESSION_PHASE_ACTIVE),
+      { OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS), OBS_SEND("DRAW", SESSION_ROUTE_GAME, 0u, 1u),
+        OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) }, 3u },
+    { "offer handoff", EV_TX_OK,
+      { OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u) }, 2u },
+    CONTROL_CANCEL_RETRY("DRAW"),
+    CONTROL_CANCEL_RETRY("DRAW"),
+    CONTROL_CANCEL_RETRY("DRAW"),
+    CONTROL_CANCEL_RETRY("DRAW"),
+    CONTROL_CANCEL_RETRY("DRAW"),
+    { "offer retry limit keeps decision waiting", EV_TIMEOUT(SESSION_TIMER_CONTROL),
+      { OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u) }, 1u },
+    { "offer reaches real deadline", EV_TIMEOUT(SESSION_TIMER_DECISION),
+      { OBS_SEND("CANCEL DRAW", SESSION_ROUTE_GAME, 0u, 1u),
+        OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) }, 2u },
+    { "withdrawal releases UI", EV_TX_OK,
+      { OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u),
+        OBS_GAME(SESSION_DELIVER_CONTROL_RESULT, SESSION_CONTROL_CANCELLED, SESSION_REQUEST_DRAW, 0) }, 3u },
+    { "unconfirmed withdrawal permits a local move", EV_LOCAL(SESSION_REQUEST_MOVE, 0u, "e7e5", SESSION_PHASE_ACTIVE),
+      { OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS), OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL),
+        OBS_SEND("MOVE 2 e7e5", SESSION_ROUTE_GAME, 0u, 1u),
+        OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) }, 4u },
+    { "move handoff", EV_TX_OK,
+      { OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u) }, 2u },
+    { "confirmed MOVE retires withdrawal", EV_RX("ACK 2", SESSION_ROUTE_ACK, SESSION_RX_LIVE, 1u),
+      { OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL), OBS_GAME(SESSION_DELIVER_LOCAL_MOVE, 0u, 2u, "e7e5"),
+        OBS_GAME(SESSION_DELIVER_CONTROL_RESULT, SESSION_CONTROL_ACCEPTED, SESSION_REQUEST_MOVE, 0),
+        OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u) }, 4u },
+    { "old draw acceptance cannot end the continued game", EV_RX("ACK DRAW", SESSION_ROUTE_ACK, SESSION_RX_LIVE, 1u),
+      { OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u) }, 1u }
+};
+
+static const MqttTranscriptStep takeback_remote_deadline_steps[] = {
+    GUEST_ACTIVE_REMOTE_ONE_PLY_PREFIX,
+    { "remote undo opens a real-time decision", EV_RX("TAKEBACK 1", SESSION_ROUTE_CONTROL, SESSION_RX_LIVE, 1u),
+      { OBS_DECISION(SESSION_REQUEST_TAKEBACK, 1u), OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u) }, 2u },
+    { "remote deadline closes the question even when CANCEL is lost", EV_TIMEOUT(SESSION_TIMER_DECISION),
+      { OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS), OBS_SEND("NACK 1", SESSION_ROUTE_ACK, 0u, 1u),
+        OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) }, 3u },
+    { "expired decision handoff preserves the board", EV_TX_OK,
+      { OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD),
+        OBS_GAME(SESSION_DELIVER_CONTROL_RESULT, SESSION_CONTROL_EXPIRED, SESSION_REQUEST_TAKEBACK, 0),
+        OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u) }, 3u },
+    { "late Yes is inert", EV_DECISION_ID(SESSION_DECISION_ACCEPT, 1u), NO_STATE_CHANGE },
+    { "receiver can now make its next move", EV_LOCAL(SESSION_REQUEST_MOVE, 0u, "e7e5", SESSION_PHASE_ACTIVE),
+      { OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS), OBS_SEND("MOVE 2 e7e5", SESSION_ROUTE_GAME, 0u, 1u),
+        OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) }, 3u },
+    { "next move handoff", EV_TX_OK,
+      { OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u) }, 2u },
+    { "next move committed", EV_RX("ACK 2", SESSION_ROUTE_ACK, SESSION_RX_LIVE, 1u),
+      { OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL), OBS_GAME(SESSION_DELIVER_LOCAL_MOVE, 0u, 2u, "e7e5"),
+        OBS_GAME(SESSION_DELIVER_CONTROL_RESULT, SESSION_CONTROL_ACCEPTED, SESSION_REQUEST_MOVE, 0),
+        OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u) }, 4u }
+};
+
+static const MqttTranscriptStep takeback_unconfirmed_continue_steps[] = {
+    GUEST_ACTIVE_ONE_PLY_PRIVATE_PREFIX,
+    { "request own undo", EV_LOCAL(SESSION_REQUEST_TAKEBACK, 1u, 0, SESSION_PHASE_ACTIVE),
+      { OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+        OBS_SEND("TAKEBACK 1", SESSION_ROUTE_GAME, 0u, 1u),
+        OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) }, 3u },
+    { "request handed off", EV_TX_OK,
+      { OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u) }, 2u },
+    CONTROL_CANCEL_RETRY("TAKEBACK 1"),
+    CONTROL_CANCEL_RETRY("TAKEBACK 1"),
+    CONTROL_CANCEL_RETRY("TAKEBACK 1"),
+    CONTROL_CANCEL_RETRY("TAKEBACK 1"),
+    CONTROL_CANCEL_RETRY("TAKEBACK 1"),
+    { "60 seconds withdraw without undo", EV_TIMEOUT(SESSION_TIMER_DECISION),
+      { OBS_SEND("CANCEL TAKEBACK 1", SESSION_ROUTE_GAME, 0u, 1u),
+        OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) }, 2u },
+    { "withdrawal releases requesting UI", EV_TX_OK,
+      { OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u),
+        OBS_GAME(SESSION_DELIVER_CONTROL_RESULT, SESSION_CONTROL_CANCELLED, SESSION_REQUEST_TAKEBACK, 0) }, 3u },
+    CONTROL_CANCEL_RETRY("CANCEL TAKEBACK 1"),
+    CONTROL_CANCEL_RETRY("CANCEL TAKEBACK 1"),
+    CONTROL_CANCEL_RETRY("CANCEL TAKEBACK 1"),
+    CONTROL_CANCEL_RETRY("CANCEL TAKEBACK 1"),
+    CONTROL_CANCEL_RETRY("CANCEL TAKEBACK 1"),
+    CONTROL_CANCEL_RETRY("CANCEL TAKEBACK 1"),
+    { "live link still answers PING", EV_RX("PING", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+      { OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+        OBS_SEND("ACK PING", SESSION_ROUTE_ACK, 0u, 1u),
+        OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) }, 3u },
+    { "PING handoff", EV_TX_OK,
+      { OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u) }, 2u },
+    { "peer continues instead of confirming CANCEL", EV_RX("MOVE 2 e7e5", SESSION_ROUTE_GAME, SESSION_RX_LIVE, 1u),
+      { OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL), OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS),
+        OBS_GAME(SESSION_DELIVER_REMOTE_MOVE, 2u, 2u, "e7e5"),
+        OBS_INTERNAL_TIMER_SET(SESSION_TIMER_CONTROL, 125u) }, 4u },
+    { "next move commits on original position", EV_GAME_RESULT(SESSION_GAME_ACCEPTED, 2u, 0),
+      { OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS), OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_CONTROL), OBS_SEND("ACK 2", SESSION_ROUTE_ACK, 0u, 1u),
+        OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) }, 4u },
+    { "move confirmed", EV_TX_OK,
+      { OBS_TIMER_CANCEL(SESSION_TIMER_TX_GUARD), OBS_INTERNAL_TIMER_SET(SESSION_TIMER_LIVENESS, 250u) }, 2u },
+    { "late ACK of expired undo cannot rewind the new position", EV_RX("ACK 1", SESSION_ROUTE_ACK, SESSION_RX_LIVE, 1u),
+      NO_STATE_CHANGE },
+    { "new request after continued play", EV_LOCAL(SESSION_REQUEST_DRAW, 0u, 0, SESSION_PHASE_ACTIVE),
+      { OBS_INTERNAL_TIMER_CANCEL(SESSION_TIMER_LIVENESS), OBS_SEND("DRAW", SESSION_ROUTE_GAME, 0u, 1u),
+        OBS_TIMER_SET(SESSION_TIMER_TX_GUARD, SESSION_TX_GUARD_TICKS) }, 3u }
+};
+
 static const MqttTranscriptStep control_cancel_local_reset_steps[] = {
     CONTROL_CANCEL_LOCAL_STEPS(GUEST_ACTIVE_PREFIX,
                                SESSION_REQUEST_RESET,
-                               "RESET", "CANCEL RESET", "NACK RESET")
+                               "RESET", "CANCEL RESET", "NACK RESET",
+                               "NACK RESETX")
 };
 
 static const MqttTranscriptStep control_cancel_local_draw_steps[] = {
     CONTROL_CANCEL_LOCAL_STEPS(HOST_ACTIVE_PREFIX,
                                SESSION_REQUEST_DRAW,
-                               "DRAW", "CANCEL DRAW", "NACK DRAW")
+                               "DRAW", "CANCEL DRAW", "NACK DRAW",
+                               "NACK DRAWX")
 };
 
 #define CONTROL_CANCEL_REMOTE_STEPS(prefix, request, text, cancel, nack) \
@@ -4719,6 +5330,15 @@ static const MqttTranscriptStep control_cancel_remote_reset_steps[] = {
 };
 
 const MqttTranscript mqtt_session_transcripts[] = {
+    { "mqtt-draw-unconfirmed-local-move", draw_unconfirmed_local_move_steps,
+      0u, SESSION_ROLE_GUEST, SESSION_COLOR_UNKNOWN,
+      (uint8_t)(sizeof(draw_unconfirmed_local_move_steps) / sizeof(draw_unconfirmed_local_move_steps[0])) },
+    { "mqtt-takeback-remote-deadline", takeback_remote_deadline_steps,
+      0u, SESSION_ROLE_GUEST, SESSION_COLOR_UNKNOWN,
+      (uint8_t)(sizeof(takeback_remote_deadline_steps) / sizeof(takeback_remote_deadline_steps[0])) },
+    { "mqtt-takeback-unconfirmed-continue", takeback_unconfirmed_continue_steps,
+      0u, SESSION_ROLE_GUEST, SESSION_COLOR_UNKNOWN,
+      (uint8_t)(sizeof(takeback_unconfirmed_continue_steps) / sizeof(takeback_unconfirmed_continue_steps[0])) },
     {
         "mqtt-mach-valid-unknown-malformed",
         mach_platform_steps,
@@ -4851,7 +5471,16 @@ const MqttTranscript mqtt_session_transcripts[] = {
         SESSION_ROLE_GUEST,
         SESSION_COLOR_UNKNOWN,
         (uint8_t)(sizeof(start_role_guards_steps) /
-                  sizeof(start_role_guards_steps[0]))
+                   sizeof(start_role_guards_steps[0]))
+    },
+    {
+        "mqtt-start-guest-busy",
+        start_guest_busy_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(start_guest_busy_steps) /
+                  sizeof(start_guest_busy_steps[0]))
     },
     {
         "mqtt-move-local-app-ack",
@@ -4969,6 +5598,15 @@ const MqttTranscript mqtt_session_transcripts[] = {
         SESSION_COLOR_UNKNOWN,
         (uint8_t)(sizeof(restore_guest_local_active_steps) /
                   sizeof(restore_guest_local_active_steps[0]))
+    },
+    {
+        "mqtt-restore-second-chunk-tx-fail",
+        restore_second_chunk_tx_fail_steps,
+        0u,
+        SESSION_ROLE_GUEST,
+        SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(restore_second_chunk_tx_fail_steps) /
+                  sizeof(restore_second_chunk_tx_fail_steps[0]))
     },
     {
         "mqtt-restore-host-remote-apply",
@@ -5106,6 +5744,15 @@ const MqttTranscript mqtt_session_transcripts[] = {
                   sizeof(control_local_draw_crossed_steps[0]))
     },
     {
+        "mqtt-control-crossed-draw-reset-tx-fail",
+        control_crossed_draw_reset_tx_fail_steps,
+        77u,
+        SESSION_ROLE_HOST,
+        SESSION_COLOR_WHITE,
+        (uint8_t)(sizeof(control_crossed_draw_reset_tx_fail_steps) /
+                  sizeof(control_crossed_draw_reset_tx_fail_steps[0]))
+    },
+    {
         "mqtt-control-remote-draw",
         control_remote_draw_steps,
         0u,
@@ -5117,9 +5764,9 @@ const MqttTranscript mqtt_session_transcripts[] = {
     {
         "mqtt-control-local-resign",
         control_local_resign_steps,
-        0u,
-        SESSION_ROLE_GUEST,
-        SESSION_COLOR_UNKNOWN,
+        77u,
+        SESSION_ROLE_HOST,
+        SESSION_COLOR_WHITE,
         (uint8_t)(sizeof(control_local_resign_steps) /
                   sizeof(control_local_resign_steps[0]))
     },
@@ -5169,11 +5816,20 @@ const MqttTranscript mqtt_session_transcripts[] = {
                   sizeof(control_remote_takeback_steps[0]))
     },
     {
-        "mqtt-control-busy-crossing",
-        control_busy_crossing_steps,
+        "mqtt-control-remote-takeback-cancel",
+        control_remote_takeback_cancel_steps,
         0u,
         SESSION_ROLE_GUEST,
         SESSION_COLOR_UNKNOWN,
+        (uint8_t)(sizeof(control_remote_takeback_cancel_steps) /
+                  sizeof(control_remote_takeback_cancel_steps[0]))
+    },
+    {
+        "mqtt-control-busy-crossing",
+        control_busy_crossing_steps,
+        77u,
+        SESSION_ROLE_HOST,
+        SESSION_COLOR_WHITE,
         (uint8_t)(sizeof(control_busy_crossing_steps) /
                   sizeof(control_busy_crossing_steps[0]))
     },

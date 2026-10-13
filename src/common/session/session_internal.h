@@ -3,8 +3,21 @@
 
 #include "common/session/session.h"
 
+/* Withdrawal remains correlated until a peer reply or its next MOVE. */
+static inline uint8_t session_withdrawing(const SessionState *state)
+{
+    return (uint8_t)(state->pending_origin == 1u && state->pending_request_id == 0u &&
+        ((state->pending_control == SESSION_REQUEST_TAKEBACK && state->takeback_cancel_pending) ||
+         ((state->pending_control == SESSION_REQUEST_DRAW ||
+           state->pending_control == SESSION_REQUEST_RESET) && state->pending_value == 2u)));
+}
+
+void session_yield_withdrawal(SessionState *state, SessionAction *actions,
+                             uint8_t *count);
+
 #define SESSION_RESTORE_PHASE_NONE 0u
 #define SESSION_RESTORE_PHASE_APPLIED 4u
+#define SESSION_RESTORE_PHASE_WAIT_APPROVAL 1u
 
 uint8_t session_text_length(const char *text);
 uint8_t session_text_equal(const uint8_t *payload,
@@ -13,11 +26,16 @@ uint8_t session_text_equal(const uint8_t *payload,
 uint8_t session_text_prefix(const uint8_t *payload,
                             uint8_t length,
                             const char *prefix);
+uint8_t session_text_token(const uint8_t *payload,
+                           uint8_t length,
+                           const char *token);
 uint8_t session_slice_valid(const uint8_t *payload, uint8_t length);
 uint8_t session_fixed_slice_valid(const uint8_t *payload, uint8_t length);
 uint8_t session_parse_mach(const uint8_t *payload,
                            uint8_t length,
                            uint8_t *platform);
+/* Counted "MNAME <name>" slice -> name length (0 when invalid). */
+uint8_t session_parse_name(const uint8_t *payload, uint8_t length);
 char *session_u16_text(char *out, uint16_t value);
 uint16_t session_parse_u16(const char *text);
 uint8_t session_emit_timer_cancel(SessionState *state,

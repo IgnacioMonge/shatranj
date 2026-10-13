@@ -30,6 +30,7 @@ static mock_config_file_t *mock_read_file;
 static mock_config_file_t *mock_write_file;
 static mock_config_file_t *mock_unlink_fail_file;
 static uint8_t mock_alt_open_count;
+static uint8_t mock_open_error = 5u;
 
 static mock_config_file_t *mock_file_for_path(const char *path)
 {
@@ -42,13 +43,14 @@ static mock_config_file_t *mock_file_for_path(const char *path)
     return &mock_primary;
 }
 
-void esx_fopen(const char *path)
+uint8_t esx_fopen(const char *path)
 {
     mock_read_file = mock_file_for_path(path);
     if (mock_read_file == &mock_alt) {
         ++mock_alt_open_count;
     }
     esx_handle = mock_read_file->present;
+    return esx_handle ? 0u : mock_open_error;
 }
 
 void esx_fcreate(const char *path)
@@ -134,14 +136,15 @@ static void mock_config_files_reset(void)
     mock_unlink_fail_file = NULL;
     mock_alt_open_count = 0u;
     mock_close_result = 0u;
+    mock_open_error = 5u;
 }
 
 static void mock_config_file_set(mock_config_file_t *file,
                                  const uint8_t *record)
 {
     file->present = 1u;
-    file->size = NETCHESSZX_APP_CONFIG_SIZE;
-    memcpy(file->data, record, NETCHESSZX_APP_CONFIG_SIZE);
+    file->size = NETCHESSZX_APP_CONFIG_FILE_SIZE;
+    memcpy(file->data, record, NETCHESSZX_APP_CONFIG_FILE_SIZE);
 }
 
 static void config_runtime_sentinel(void)
@@ -158,6 +161,63 @@ static void config_runtime_sentinel(void)
     netchesszx_direct_port = 1234u;
     strcpy(netchesszx_mqtt_code, "NC1234");
     strcpy(netchesszx_direct_host, "10.0.0.1");
+    strcpy(netchesszx_player_name, "SENTINEL");
+}
+
+static void test_config_player_name(const uint8_t *valid_record)
+{
+    uint8_t ctx[SPECTRUM_OVERLAY_CONTEXT_SIZE] = {0u};
+
+    CHECK(strcmp((const char *)valid_record + NETCHESSZX_APP_CONFIG_NAME_OFF,
+                 "IGNACIO") == 0);
+
+    /* 1.3 file: record plus the name tail. */
+    mock_config_files_reset();
+    mock_config_file_set(&mock_primary, valid_record);
+    CHECK(mock_primary.size == NETCHESSZX_APP_CONFIG_FILE_SIZE);
+    config_runtime_sentinel();
+    CHECK(config_load_ovl(ctx) == SPECTRUM_CONFIG_STATE_SAVED);
+    CHECK(strcmp(netchesszx_player_name, "IGNACIO") == 0);
+    CHECK(strncmp(netchesszx_player_name_line, NETCHESS_PROTO_NAME_PREFIX,
+                  NETCHESS_PROTO_NAME_PREFIX_LEN) == 0);
+
+    /* 1.2 file: the bare 46-byte record loads with no name. */
+    mock_config_files_reset();
+    mock_config_file_set(&mock_primary, valid_record);
+    mock_primary.size = NETCHESSZX_APP_CONFIG_SIZE;
+    config_runtime_sentinel();
+    CHECK(config_load_ovl(ctx) == SPECTRUM_CONFIG_STATE_SAVED);
+    CHECK(netchesszx_player_name[0] == '\0');
+    CHECK(netchesszx_direct_port == 65535u);
+    CHECK(strcmp(netchesszx_direct_host, "255.255.255.255") == 0);
+
+    /* Any other length is invalid. */
+    mock_config_files_reset();
+    mock_config_file_set(&mock_primary, valid_record);
+    mock_primary.size = NETCHESSZX_APP_CONFIG_SIZE + 1u;
+    config_runtime_sentinel();
+    CHECK(config_load_ovl(ctx) == SPECTRUM_CONFIG_STATE_INVALID);
+    /* The tail sits outside the record CRC and is copied raw, terminator
+       byte included, so TIME_CONFIG init (time_config_vector.asm) can drop a
+       name that lost its NUL instead of CONFIG truncating it. */
+    mock_config_files_reset();
+    mock_config_file_set(&mock_primary, valid_record);
+    memset(mock_primary.data + NETCHESSZX_APP_CONFIG_NAME_OFF, 'Z',
+           NETCHESS_PLAYER_NAME_SIZE);
+    config_runtime_sentinel();
+    CHECK(config_load_ovl(ctx) == SPECTRUM_CONFIG_STATE_SAVED);
+    CHECK(memcmp(netchesszx_player_name, "ZZZZZZZZZZZ",
+                 NETCHESS_PLAYER_NAME_SIZE) == 0);
+    /* A full-length name keeps its terminator in the last byte. */
+    mock_config_files_reset();
+    mock_config_file_set(&mock_primary, valid_record);
+    memset(mock_primary.data + NETCHESSZX_APP_CONFIG_NAME_OFF, 'Z',
+           NETCHESS_PLAYER_NAME_MAX);
+    mock_primary.data[NETCHESSZX_APP_CONFIG_NAME_OFF +
+                      NETCHESS_PLAYER_NAME_MAX] = '\0';
+    config_runtime_sentinel();
+    CHECK(config_load_ovl(ctx) == SPECTRUM_CONFIG_STATE_SAVED);
+    CHECK(strcmp(netchesszx_player_name, "ZZZZZZZZZZ") == 0);
 }
 
 static void check_game_setup_unchanged(void)
@@ -182,6 +242,15 @@ static void test_config_load_paths(const uint8_t *valid_record)
     CHECK(netchesszx_transport == NETCHESSZX_TRANSPORT_MQTT);
     CHECK(netchesszx_timezone == NETCHESSZX_TIME_RTC);
     CHECK(netchesszx_direct_port == NETCHESSZX_PORT);
+    check_game_setup_unchanged();
+
+    mock_config_files_reset();
+    mock_open_error = 6u;
+    config_runtime_sentinel();
+    CHECK(config_load_ovl(ctx) == SPECTRUM_CONFIG_STATE_IO);
+    CHECK(ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT] ==
+          SPECTRUM_OVL_SAVELOAD_ERR_IO);
+    CHECK(netchesszx_timezone == NETCHESSZX_TIME_RTC);
     check_game_setup_unchanged();
 
     mock_config_files_reset();
@@ -254,11 +323,12 @@ int main(void)
     netchesszx_direct_port = 65535u;
     strcpy(netchesszx_mqtt_code, "NC1234");
     strcpy(netchesszx_direct_host, "255.255.255.255");
+    strcpy(netchesszx_player_name, "IGNACIO");
 
     config_pack(record);
     CHECK(netchesszx_app_config_validate(record));
     memcpy(valid_record, record, sizeof(valid_record));
-    CHECK(record[NETCHESSZX_APP_CONFIG_SIZE] == 0u);
+    CHECK(record[NETCHESSZX_APP_CONFIG_FILE_SIZE] == 0u);
     CHECK((record[NETCHESSZX_APP_CONFIG_FLAGS_OFF] &
            NETCHESSZX_APP_CONFIG_FLAG_ROLE) != 0u);
     CHECK((record[NETCHESSZX_APP_CONFIG_FLAGS_OFF] &
@@ -277,6 +347,7 @@ int main(void)
     check_game_setup_unchanged();
 
     test_config_load_paths(valid_record);
+    test_config_player_name(valid_record);
 
     mock_config_files_reset();
     mock_create_ok = 1u;

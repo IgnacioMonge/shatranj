@@ -2,6 +2,7 @@
 
 #include "common/protocol/direct_session_protocol.h"
 #include "spectrum/config/session.h"
+#include "spectrum/session/route.h"
 #include "spectrum/transport/link.h"
 
 #if NETCHESS_DIRECT_WHITE_OWNER_HOST != NETCHESSZX_COLOR_WHITE || \
@@ -59,6 +60,5 @@ uint8_t netchesszx_session_direct_send_hello(void)
         return 1u;
     }
     return spectrum_link_send_text(netchess_direct_hello(
-                                   netchesszx_session_is_host(),
-                                   netchesszx_local_is_white()));
+        netchesszx_session_is_host(), netchesszx_local_is_white()));
 }

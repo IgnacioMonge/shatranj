@@ -67,6 +67,30 @@ int main()
     check(!ChessHelpers::isDirectIpSyntaxOk(QStringLiteral("localhost")),
           "hostname is not direct IPv4");
 
+    CompactRulesState state = {};
+    static const char start[] =
+        "rnbqkbnr" "pppppppp" "........" "........"
+        "....P..." "........" "PPPP.PPP" "RNBQKBNR";
+    for (int index = 0; index < 64; ++index) {
+        state.board[index] = ChessHelpers::compactPieceFromAscii(start[index]);
+    }
+    state.side = NETCHESSZX_RULE_BLACK;
+    state.castle = NETCHESSZX_RULE_CASTLE_WK | NETCHESSZX_RULE_CASTLE_WQ |
+                   NETCHESSZX_RULE_CASTLE_BK | NETCHESSZX_RULE_CASTLE_BQ;
+    state.ep = 5 * 8 + 4;
+    check(ChessHelpers::fenFromCompact(state, 1) ==
+              QStringLiteral("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"),
+          "FEN after 1.e4");
+    state.castle = NETCHESSZX_RULE_CASTLE_BK;
+    state.ep = NETCHESSZX_RULE_NO_SQUARE;
+    check(ChessHelpers::fenFromCompact(state, 7).endsWith(QStringLiteral(" b k - 0 7")),
+          "FEN castle and en passant fields");
+    check(ChessHelpers::uciBestMove("bestmove e7e8q ponder a1a2\r") == QStringLiteral("e7e8q"),
+          "UCI bestmove with ponder");
+    check(ChessHelpers::uciBestMove("bestmove (none)").isEmpty() &&
+              ChessHelpers::uciBestMove("info depth 3").isEmpty(),
+          "UCI non-move lines");
+
     if (failures != 0) {
         return 1;
     }

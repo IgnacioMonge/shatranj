@@ -20,26 +20,26 @@ KEY_END   EQU 0x89
 
 _spectrum_gui_edit_bind:
     ld (_edit_buf), hl
-    ld b, 0
-eb_len:
-    ld a, (hl)
-    or a
-    jr z, eb_done
-    inc hl
-    inc b
-    jr eb_len
-eb_done:
-    ld a, b
+    xor a
+    ld b, a
+    ld c, a
+    ; BC=0 scans up to 64K; C ends as ~len (mod 256).
+    cpir
+    ld a, c
+    cpl
     ld (_edit_len), a
-    or a
-    jr z, eb_st
-    dec a
-eb_st:
+    ; pos = len ? len - 1 : 0
+    sub 1
+    adc a, 0
     ld (_edit_pos), a
     ret
 
+; _edit_pos must follow _edit_len (edit_field.asm BSS order).
 _spectrum_gui_edit_key:
     ld a, l
+    ld hl, _edit_len
+    ld c, (hl)
+    inc hl
     cp 8
     jr z, ek_del
     cp KEY_LEFT
@@ -58,130 +58,102 @@ ek_no:
     ld l, 0
     ret
 
-ek_del:
-    ld a, (_edit_len)
-    or a
-    jr z, ek_no
-    ld a, (_edit_pos)
-    ld c, a
-    ld hl, (_edit_buf)
-    ld b, 0
-    add hl, bc
-ek_sl:
-    inc hl
-    ld a, (hl)
-    dec hl
-    ld (hl), a
-    inc hl
-    or a
-    jr nz, ek_sl
-    ld hl, _edit_len
-    dec (hl)
-    ld a, (hl)
-    or a
-    jr z, ek_mt
-    dec a
-    ld b, a
-    ld a, (_edit_pos)
-    cp b
-    jr c, ek_ch2
-    ld a, b
-    ld (_edit_pos), a
-    jr ek_ch2
-ek_mt:
-    xor a
-    ld (_edit_pos), a
-ek_ch2:
-    ld l, 2
-    ret
-
 ek_left:
-    ld a, (_edit_pos)
+    ld a, (hl)
     or a
     jr z, ek_no
-    dec a
-ek_sp:
-    ld (_edit_pos), a
+    dec (hl)
+ek_ret1:
     ld l, 1
     ret
 
 ek_right:
-    ld a, (_edit_len)
-    or a
-    jr z, ek_no
-    dec a
-    ld b, a
-    ld a, (_edit_pos)
-    cp b
-    jr nc, ek_no
+    ld a, (hl)
     inc a
-    jr ek_sp
+    cp c
+    jr nc, ek_no
+    ld (hl), a
+    jr ek_ret1
 
 ek_home:
-    xor a
-    jr ek_sp
+    ld (hl), 0
+    jr ek_ret1
 
 ek_end:
-    ld a, (_edit_len)
+    ld a, c
     or a
     jr z, ek_no
     dec a
-    jr ek_sp
+    ld (hl), a
+    jr ek_ret1
+
+ek_del:
+    ld a, c
+    or a
+    jr z, ek_no
+    dec c
+    ld b, (hl)
+    ld a, b
+    cp c
+    jr nz, ek_del_keep
+    or a
+    jr z, ek_del_keep
+    dec (hl)
+ek_del_keep:
+    dec hl
+    ld (hl), c
+    ld hl, (_edit_buf)
+    ld e, b
+    ld d, 0
+    add hl, de
+    ld d, h
+    ld e, l
+ek_sl:
+    inc hl
+    ld a, (hl)
+    ld (de), a
+    inc de
+    or a
+    jr nz, ek_sl
+ek_ret2:
+    ld l, 2
+    ret
 
 ek_type:
     push af
-    ld a, (_edit_len)
-    ld b, a
     ld a, (_edit_max)
-    cp b
+    cp c
+    ld a, (hl)
     jr z, ek_rep
-    ld a, (_edit_pos)
+    ; Append is an insert at len; the cursor follows it. A middle insert
+    ; keeps pos. Either way shift buf[i..len] up by one and store at i.
     inc a
-    cp b
-    jr z, ek_append
-    ld c, b
-    ld b, 0
+    cp c
+    jr z, ek_at
+    dec a
+ek_at:
+    ld (hl), a
+    dec hl
+    inc (hl)
+    neg
+    add a, c
+    inc a
     ld hl, (_edit_buf)
+    ld b, 0
     add hl, bc
-    ld a, (_edit_pos)
-    ld e, a
-    ld a, c
-    sub e
-    inc a
     ld c, a
     ld d, h
     ld e, l
     inc de
     lddr
+ek_store:
     pop af
     ld (de), a
-    ld hl, _edit_len
-    inc (hl)
-    jr ek_ch2
-
-ek_append:
-    ld c, b
-    ld b, 0
-    ld hl, (_edit_buf)
-    add hl, bc
-    pop af
-    ld (hl), a
-    inc hl
-    xor a
-    ld (hl), a
-    ld hl, _edit_len
-    inc (hl)
-    ld a, (hl)
-    dec a
-    ld (_edit_pos), a
-    jr ek_ch2
-
+    jr ek_ret2
 ek_rep:
     ld hl, (_edit_buf)
-    ld a, (_edit_pos)
     ld e, a
     ld d, 0
     add hl, de
-    pop af
-    ld (hl), a
-    jr ek_ch2
+    ex de, hl
+    jr ek_store

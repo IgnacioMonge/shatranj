@@ -2,6 +2,7 @@
 #define NETCHESSZX_COMMON_SESSION_H
 
 #include <stdint.h>
+#include "common/protocol/game_protocol.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -92,20 +93,22 @@ extern "C" {
 #define SESSION_TIMER_TX_GUARD 0u
 #define SESSION_TIMER_LIVENESS 1u
 #define SESSION_TIMER_CONTROL 2u
-#define SESSION_TIMER_COUNT 3u
+#define SESSION_TIMER_DECISION 3u
+#define SESSION_TIMER_COUNT 4u
 
 #define SESSION_PROTOCOL_TICK_MS 20u
 #define SESSION_TX_GUARD_TICKS 250u
 #define SESSION_DIRECT_HELLO_TICKS 150u
 #define SESSION_DIRECT_REPLY_TICKS 125u
-#define SESSION_CONTROL_CANCEL_TICKS 15000u
+#define SESSION_DECISION_TICKS \
+    (NETCHESS_PROTO_DECISION_SECONDS * 1000u / SESSION_PROTOCOL_TICK_MS)
 #define SESSION_DIRECT_IDLE_TICKS 150u
 #define SESSION_DIRECT_PING_TICKS 450u
 #define SESSION_DIRECT_HELLO_RETRIES 5u
 #define SESSION_DIRECT_REPLY_RETRIES 5u
 #define SESSION_DIRECT_PING_MISSES 2u
 #define SESSION_PAYLOAD_MAX 192u
-#define SESSION_ACTION_CAPACITY 4u
+#define SESSION_ACTION_CAPACITY 6u
 #define SESSION_DIRECT_TX_CAPACITY_MIN 48u
 #define SESSION_RESTORE_BYTES 60u
 #define SESSION_CHAT_TEXT_MAX 42u
@@ -118,6 +121,7 @@ extern "C" {
 #define SESSION_DELIVER_RESTORE 6u
 #define SESSION_DELIVER_TAKEBACK 7u
 #define SESSION_DELIVER_PLATFORM 8u
+#define SESSION_DELIVER_PEER_NAME 9u
 
 #define SESSION_CHAT_REMOTE 1u
 #define SESSION_CHAT_LOCAL 2u
@@ -241,10 +245,13 @@ typedef struct SessionState {
     uint8_t pending_tx_kind;
     uint8_t next_tx_id;
     uint8_t control_retries;
+    uint8_t takeback_cancel_pending;
+    uint8_t withdrawn_control; /* Bit 7: notify at CANCEL handoff; else control yielding to MOVE. */
     uint8_t liveness_misses;
     uint8_t timer_mask;
     uint8_t last_rx_kind;
     uint8_t last_result;
+    uint8_t accepted_draw;
     uint8_t delivery_id;
     uint8_t restore_phase;
     uint8_t restore_mask;

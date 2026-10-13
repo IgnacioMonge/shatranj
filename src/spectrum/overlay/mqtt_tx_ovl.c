@@ -1,8 +1,9 @@
 #include "spectrum/overlay/overlay_api.h"
+#include "spectrum/session/mqtt_wire.h"
 #include "spectrum/transport/mqtt_min.h"
 #include "spectrum/transport/net.h"
+#include "spectrum/config/session.h"
 #include "spectrum/lowram_map.h"
-#include "common/protocol/game_protocol.h"
 
 extern uint16_t mqtt_next_id;
 extern char line_buf[];
@@ -13,40 +14,16 @@ extern uint8_t mqtt_send_raw_packet(const uint8_t *packet, uint8_t len);
 
 #ifdef NETCHESSZX_HOST_SESSION_TEST
 extern const char *netchesszx_host_mqtt_context_text(void);
-extern void netchesszx_host_mqtt_observe_control(void);
-extern void netchesszx_host_mqtt_observe_meta(void);
-extern void netchesszx_host_mqtt_observe_presence(const char *suffix);
-extern void netchesszx_host_mqtt_observe_ack(void);
-extern void netchesszx_host_mqtt_observe_game(void);
+extern void netchesszx_host_mqtt_observe_route(uint8_t route);
 #define MQTT_TX_CONTEXT_TEXT(ctx, lo, hi) \
     ((void)(ctx), netchesszx_host_mqtt_context_text())
-#define MQTT_TX_PUBLISH_CONTROL(suffix, payload, retain) \
-    (netchesszx_host_mqtt_observe_control(), \
-     mqtt_tx_publish_suffix((suffix), (payload), (retain)))
-#define MQTT_TX_PUBLISH_META(suffix, payload, retain) \
-    (netchesszx_host_mqtt_observe_meta(), \
-     mqtt_tx_publish_suffix((suffix), (payload), (retain)))
-#define MQTT_TX_PUBLISH_PRESENCE(suffix, payload, retain) \
-    (netchesszx_host_mqtt_observe_presence(suffix), \
-     mqtt_tx_publish_suffix((suffix), (payload), (retain)))
-#define MQTT_TX_PUBLISH_ACK(suffix, payload, retain) \
-    (netchesszx_host_mqtt_observe_ack(), \
-     mqtt_tx_publish_suffix((suffix), (payload), (retain)))
-#define MQTT_TX_PUBLISH_GAME(suffix, payload, retain) \
-    (netchesszx_host_mqtt_observe_game(), \
+#define MQTT_TX_PUBLISH(route, suffix, payload, retain) \
+    (netchesszx_host_mqtt_observe_route(route), \
      mqtt_tx_publish_suffix((suffix), (payload), (retain)))
 #else
 #define MQTT_TX_CONTEXT_TEXT(ctx, lo, hi) \
     ((const char *)((uint16_t)(ctx)[(lo)] | ((uint16_t)(ctx)[(hi)] << 8)))
-#define MQTT_TX_PUBLISH_CONTROL(suffix, payload, retain) \
-    mqtt_tx_publish_suffix((suffix), (payload), (retain))
-#define MQTT_TX_PUBLISH_META(suffix, payload, retain) \
-    mqtt_tx_publish_suffix((suffix), (payload), (retain))
-#define MQTT_TX_PUBLISH_PRESENCE(suffix, payload, retain) \
-    mqtt_tx_publish_suffix((suffix), (payload), (retain))
-#define MQTT_TX_PUBLISH_ACK(suffix, payload, retain) \
-    mqtt_tx_publish_suffix((suffix), (payload), (retain))
-#define MQTT_TX_PUBLISH_GAME(suffix, payload, retain) \
+#define MQTT_TX_PUBLISH(route, suffix, payload, retain) \
     mqtt_tx_publish_suffix((suffix), (payload), (retain))
 #endif
 
@@ -364,13 +341,17 @@ static uint8_t mqtt_wait_time_ovl(uint16_t frames) __z88dk_fastcall
 }
 
 #ifdef NETCHESSZX_NEXT
+#ifdef NETCHESSZX_HOST_TEST
+/* Host MQTT parity replaces the firmware RTC call, not the Next routing path. */
+uint8_t next_rtc_sync_time(void);
+#else
 #include "spectrum/transport/msdos_time.h"
 
 /* NextZXOS RTC via RST 8: M_DRVAPI 0x92 first, M_GETDATE 0x8E as backup.
    reset_line_buf() zeroes line_buf[0..5]; a failed call leaves date 0, which
    msdos_time_valid rejects — no success flag needed. Volatile reads because
    the asm stores behind the compiler's back. */
-static uint8_t next_rtc_sync_time(uint8_t apply) __z88dk_fastcall
+static uint8_t next_rtc_sync_time(void)
 {
     reset_line_buf();
 #asm
@@ -412,10 +393,13 @@ next_rtc_done:
     pop ix
     pop hl
 #endasm
-    /* Z80 little-endian: BC/DE landed in line_buf as LSB-first words. */
+    /* Z80 little-endian: BC/DE landed in line_buf as LSB-first words.
+       Read the mode after firmware clobbers the C argument registers. */
     return msdos_time_valid(*(volatile uint16_t *)&line_buf[0],
-                            *(volatile uint16_t *)&line_buf[2], apply);
+                            *(volatile uint16_t *)&line_buf[2],
+                            (uint8_t)(netchesszx_timezone == NETCHESSZX_TIME_RTC));
 }
+#endif
 #endif
 
 uint8_t mqtt_tx_sync_time_ovl(void)
@@ -429,7 +413,7 @@ uint8_t mqtt_tx_sync_time_ovl(void)
     {
         uint8_t rtc_selected = (uint8_t)(timezone == NETCHESSZX_TIME_RTC);
 
-        if (next_rtc_sync_time(rtc_selected)) {
+        if (next_rtc_sync_time()) {
             netchesszx_rtc_available = 1u;
             if (rtc_selected) {
                 return 1u;
@@ -466,41 +450,59 @@ uint8_t mqtt_tx_sync_time_ovl(void)
 }
 #endif
 
+static uint8_t mqtt_tx_publish_flags_ovl(uint8_t flags, const char *payload)
+    NETCHESSZX_CALLEE
+{
+    uint8_t route = (uint8_t)(flags & NETCHESSZX_MQTT_TX_ROUTE_MASK);
+    const char *suffix;
+
+    switch (route) {
+    case NETCHESSZX_SESSION_ROUTE_CONTROL:
+    case NETCHESSZX_SESSION_ROUTE_META:
+        suffix = mqtt_meta;
+        break;
+    case NETCHESSZX_SESSION_ROUTE_PRESENCE:
+        suffix = spectrum_net_mqtt_presence_suffix();
+        break;
+    case NETCHESSZX_SESSION_ROUTE_PRESENCE_PEER:
+        suffix = spectrum_net_mqtt_peer_presence_suffix();
+        break;
+    case NETCHESSZX_SESSION_ROUTE_ACK:
+        suffix = spectrum_net_mqtt_out_ack_suffix();
+        break;
+    case NETCHESSZX_SESSION_ROUTE_GAME:
+        suffix = spectrum_net_mqtt_out_suffix();
+        break;
+    default:
+        return 0u;
+    }
+    return MQTT_TX_PUBLISH(
+        route, suffix, payload,
+        (uint8_t)((flags & NETCHESSZX_MQTT_TX_RETAIN) != 0u));
+}
+
 uint8_t mqtt_tx_send_text_ovl(uint8_t *ctx) __z88dk_fastcall
 {
-    const char *text = MQTT_TX_CONTEXT_TEXT(ctx, 0u, 1u);
-
-    if (netchess_after_prefix(text + (uint8_t)(text[0] == 'N'),
-                              "ACK GAME START")) {
-        return MQTT_TX_PUBLISH_CONTROL(mqtt_meta, text, 0u);
-    }
-    if (netchess_after_prefix(text + (uint8_t)(text[0] == 'N'), "ACK ")) {
-        return MQTT_TX_PUBLISH_ACK(spectrum_net_mqtt_out_ack_suffix(),
-                                   text,
-                                   0u);
-    }
-    if (netchess_after_prefix(text, netchesszx_text_game_start)) {
-        return MQTT_TX_PUBLISH_CONTROL(mqtt_meta, text, 0u);
-    }
-    return MQTT_TX_PUBLISH_GAME(spectrum_net_mqtt_out_suffix(), text, 0u);
+    const char *payload = MQTT_TX_CONTEXT_TEXT(
+        ctx, NETCHESSZX_MQTT_TX_CTX_PAYLOAD_LO,
+        NETCHESSZX_MQTT_TX_CTX_PAYLOAD_HI);
+    uint8_t flags = ctx[NETCHESSZX_MQTT_TX_CTX_FLAGS];
+    return mqtt_tx_publish_flags_ovl(flags, payload);
 }
 
 uint8_t mqtt_tx_publish_setup_ovl(uint8_t *ctx) __z88dk_fastcall
 {
     char setup[32];
+    uint8_t mode = ctx[NETCHESSZX_MQTT_TX_CTX_FLAGS];
 
-    if (ctx[0] == SPECTRUM_LINK_MQTT_SETUP_CLEAR) {
-        return MQTT_TX_PUBLISH_META(mqtt_meta, "", 1u);
+    if (mode == NETCHESSZX_SESSION_MQTT_SETUP_CLEAR) {
+        setup[0] = '\0';
+    } else {
+        spectrum_net_mqtt_setup_payload(setup);
     }
-    spectrum_net_mqtt_setup_payload(setup);
-    return MQTT_TX_PUBLISH_META(
-        mqtt_meta, setup,
-        (uint8_t)(ctx[0] == SPECTRUM_LINK_MQTT_SETUP_RETAINED));
+    return MQTT_TX_PUBLISH(
+        NETCHESSZX_SESSION_ROUTE_META, mqtt_meta, setup,
+        (uint8_t)(mode != NETCHESSZX_SESSION_MQTT_SETUP_LIVE));
 }
 
-uint8_t mqtt_tx_publish_presence_ovl(void)
-{
-    return MQTT_TX_PUBLISH_PRESENCE(spectrum_net_mqtt_presence_suffix(),
-                                    spectrum_net_mqtt_presence_payload(),
-                                    1u);
-}
+#include "spectrum/session/mqtt_tx_actions_ovl.c"

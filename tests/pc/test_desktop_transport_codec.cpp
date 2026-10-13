@@ -36,6 +36,22 @@ bool testDirectFraming()
     const auto overflow = codec.feedDirect(8u, oversized, deliver);
     ok = check(overflow.overflow, "oversized direct line rejected") && ok;
 
+    // CR is ignored anywhere, as on the Spectrum: both ends read the same
+    // payload and a CR never counts toward the line limit.
+    lines.clear();
+    const auto interior = codec.feedDirect(
+        10u, QByteArray("MNAME PE\rPE\n\r\n\r"), deliver);
+    ok = check(interior.delivered && !interior.overflow &&
+                   lines == QVector<QByteArray>({"MNAME PEPE"}),
+               "interior and stray CR are ignored like the Spectrum") && ok;
+    lines.clear();
+    const QByteArray full(SESSION_PAYLOAD_MAX, 'y');
+    const auto fullBody = codec.feedDirect(11u, full + QByteArray("\r\r"), deliver);
+    const auto fullEnd = codec.feedDirect(11u, QByteArray("\n"), deliver);
+    ok = check(!fullBody.overflow && fullEnd.delivered && !fullEnd.overflow &&
+                   lines == QVector<QByteArray>({full}),
+               "CR before a split LF does not overflow a full line") && ok;
+
     QByteArray burst;
     QVector<QByteArray> burstLines;
     QVector<QByteArray> expected;

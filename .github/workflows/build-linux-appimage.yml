@@ -36,6 +36,8 @@ jobs:
           cmake --install build/qt-client --prefix "$RUNNER_TEMP/AppDir/usr"
           test -x "$RUNNER_TEMP/AppDir/usr/bin/shatranj-client"
           test -f "$RUNNER_TEMP/AppDir/usr/bin/assets/pc-client/about/about-shatranj.png"
+          test -f "$RUNNER_TEMP/AppDir/usr/bin/assets/pc-client/manual/manual.en.md"
+          test -f "$RUNNER_TEMP/AppDir/usr/bin/assets/pc-client/manual/manual.es.md"
 
       - name: Build AppImage
         env:
@@ -66,6 +68,13 @@ jobs:
           env -u APPIMAGE_EXTRACT_AND_RUN "$appimage" --appimage-extract
           test -x squashfs-root/usr/bin/shatranj-client
           test -f squashfs-root/usr/bin/assets/pc-client/about/about-shatranj.png
+          test -f squashfs-root/usr/bin/assets/pc-client/manual/manual.en.md
+          test -f squashfs-root/usr/bin/assets/pc-client/manual/manual.es.md
+          # HTTPS (the Stockfish download) needs a Qt TLS backend plugin.
+          test -n "$(find squashfs-root -path '*/plugins/tls/*.so' -print -quit)"
+          test -f squashfs-root/usr/share/doc/Shatranj/LICENSE
+          test -f squashfs-root/usr/share/doc/Shatranj/THIRD_PARTY_NOTICES.md
+          test -f squashfs-root/usr/share/doc/Shatranj/licenses/LICENSE.lichess-AGPL-3.0.txt
           ! ldd squashfs-root/usr/bin/shatranj-client | grep -q "not found"
           set +e
           QT_QPA_PLATFORM=offscreen timeout 5s squashfs-root/AppRun

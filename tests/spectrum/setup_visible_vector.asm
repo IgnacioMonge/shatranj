@@ -38,10 +38,14 @@ PUBLIC _line_buf
 PUBLIC _NETCHESS_PROTO_ACK_PREFIX
 PUBLIC _NETCHESS_PROTO_NACK_PREFIX
 PUBLIC _spectrum_net_payload_scratch
-PUBLIC _spectrum_net_send_text
+PUBLIC _netchesszx_session_send_ack_text
 
 EXTERN _setup_step_ovl_entry
 EXTERN _setup_compute_visible_ovl_entry
+EXTERN su_validate_ip
+EXTERN su_step_row
+
+INCLUDE "asm/app/player_name_layout.inc"
 EXTERN _spectrum_gui_edit_bind
 EXTERN _spectrum_gui_edit_key
 EXTERN _spectrum_gui_edit_hide
@@ -67,8 +71,39 @@ test_current_contract:
     ld a, 0xff
     ld (test_result), a
 
+    ; The compact validator reuses the resident decimal parser but preserves
+    ; dotted-quad syntax, the 0..255 range and the three-digit segment cap.
+    ld hl, test_ip_max
+    call test_copy_ip
+    call su_validate_ip
+    jp z, test_bad_ip_validator
+    ld hl, test_ip_leading_zeroes
+    call test_copy_ip
+    call su_validate_ip
+    jp z, test_bad_ip_validator
+    ld hl, test_ip_256
+    call test_copy_ip
+    call su_validate_ip
+    jp nz, test_bad_ip_validator
+    ld hl, test_ip_four_digits
+    call test_copy_ip
+    call su_validate_ip
+    jp nz, test_bad_ip_validator
+    ld hl, test_ip_short
+    call test_copy_ip
+    call su_validate_ip
+    jp nz, test_bad_ip_validator
+    ld hl, test_ip_empty_segment
+    call test_copy_ip
+    call su_validate_ip
+    jp nz, test_bad_ip_validator
+    ld hl, test_ip_trailing_dot
+    call test_copy_ip
+    call su_validate_ip
+    jp nz, test_bad_ip_validator
+
     ; TIME_CONFIG supplies defined rows; private compute-visible entry must
-    ; expose all eleven logical rows, including TIME=4 and ACTION=10.
+    ; expose all twelve logical rows, including TIME=4, ACTION=10, NAME=11.
     ld hl, 0x03ff
     ld (test_visible_out), hl
     ld a, 1
@@ -76,7 +111,7 @@ test_current_contract:
     ld de, test_visible_out
     call _setup_compute_visible_ovl_entry
     ld hl, (test_visible_out)
-    ld de, 0x07ff
+    ld de, 0x0fff
     or a
     sbc hl, de
     jp nz, test_bad_current_visible
@@ -84,8 +119,9 @@ test_current_contract:
     ld hl, (test_visible_out)
     ld (_setup_visible_mask), hl
 
-    ; CREATE+DIRECT keeps the static IP rendered but never focuses it: LINK
-    ; advances to PORT, and navigation in either direction skips logical row 2.
+    ; CREATE+DIRECT keeps the static IP rendered but never focuses it. With a
+    ; valid stored port LINK defines IP/PORT and advances to TIME; PORT stays
+    ; reachable, and navigation in either direction skips logical row 2.
     xor a
     ld (_setup_choice), a
     ld a, 1
@@ -111,12 +147,18 @@ test_current_contract:
     ld (CTX_KEY), a
     call _setup_step_ovl_entry
     ld a, (_setup_cursor)
-    cp 3
+    cp 4
     jp nz, test_bad_create_direct_port
     ld a, (_setup_room_editing)
     or a
     jp nz, test_bad_create_direct_port
+    ld a, (_setup_defined_mask)
+    and 0x0c
+    cp 0x0c
+    jp nz, test_bad_create_direct_port
     ; Explicit SELECT edits even a valid default port.
+    ld a, 3
+    ld (_setup_cursor), a
     ld hl, 0x000f
     ld (_setup_visible_mask), hl
     ld a, 32
@@ -550,9 +592,9 @@ test_created_room_loop:
     ; text belongs to TIME_CONFIG and therefore needs its dedicated UI flag.
     ; GAME setup now rides in the config record, so confirming a row there
     ; also dirties it and SAVE has something to write.
-    ld hl, 0x01ff
+    ld hl, 0x09ff
     ld (_setup_defined_mask), hl
-    ld hl, 0x03ff
+    ld hl, 0x0bff
     ld (_setup_visible_mask), hl
     xor a
     ld (_setup_choice), a
@@ -570,7 +612,7 @@ test_created_room_loop:
     ld de, test_visible_out
     call _setup_compute_visible_ovl_entry
     ld hl, (test_visible_out)
-    ld de, 0x07ff
+    ld de, 0x0fff
     or a
     sbc hl, de
     jp nz, test_bad_current_hints_visible
@@ -675,7 +717,512 @@ test_created_room_loop:
     and 0x03
     cp 0x03
     jp nz, test_bad_join_keeps_game_setup
+    ld hl, (test_visible_out)
+    ld (_setup_visible_mask), hl
+
+    ; Returning to CREATE reveals COLOR during endpoint refresh. The reducer
+    ; marks that newly visible row explicitly for MENU_CONFIG.
     xor a
+    ld (_setup_focus_choice), a
+    ld (_setup_cursor), a
+    ld a, 13
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    ld a, (_setup_choice)
+    or a
+    jp nz, test_bad_create_restores_color
+    ld a, (CTX_CLEAR)
+    cp 0xfe
+    jp nz, test_bad_create_restores_color
+    ld hl, (CTX_FORCE)
+    ld de, 0x0024
+    or a
+    sbc hl, de
+    jp nz, test_bad_create_restores_color
+    jp test_player_name
+
+; NAME (logical row 11) appears once TIME is defined, holds GAME SETUP back
+; until it is answered, and sits between TIME and COLOR in navigation.
+test_player_name:
+    xor a
+    ld (_setup_choice), a
+    ld (_setup_room_editing), a
+    ld a, 1
+    ld (_setup_choice + 1), a
+    ld hl, 0x001f
+    ld (test_visible_out), hl
+    ld de, test_visible_out
+    call _setup_compute_visible_ovl_entry
+    ld hl, (test_visible_out)
+    ld de, 0x081f
+    or a
+    sbc hl, de
+    jp nz, test_bad_player_name_visible
+    ld hl, 0x081f
+    ld (test_visible_out), hl
+    ld de, test_visible_out
+    call _setup_compute_visible_ovl_entry
+    ld hl, (test_visible_out)
+    ld de, 0x083f
+    or a
+    sbc hl, de
+    jp nz, test_bad_player_name_visible
+
+    ; TIME <-> NAME <-> COLOR, never through logical order.
+    ld hl, 0x0bff
+    ld (_setup_visible_mask), hl
+    ld hl, 0x0bff
+    ld (_setup_defined_mask), hl
+    ld a, 4
+    ld (_setup_cursor), a
+    ld a, 1
+    call test_step_row
+    cp 11
+    jp nz, test_bad_player_name_order
+    ld (_setup_cursor), a
+    ld a, 1
+    call test_step_row
+    cp 5
+    jp nz, test_bad_player_name_order
+    ld (_setup_cursor), a
+    xor a
+    call test_step_row
+    cp 11
+    jp nz, test_bad_player_name_order
+    ld (_setup_cursor), a
+    xor a
+    call test_step_row
+    cp 4
+    jp nz, test_bad_player_name_order
+    ld a, 10
+    ld (_setup_cursor), a
+    ld a, 1
+    call test_step_row
+    cp 10
+    jp nz, test_bad_player_name_order
+    ; JOIN hides COLOR: NAME steps straight to NOTATION and back.
+    ld hl, 0x0bdf
+    ld (_setup_visible_mask), hl
+    ld a, 11
+    ld (_setup_cursor), a
+    ld a, 1
+    call test_step_row
+    cp 6
+    jp nz, test_bad_player_name_order
+    ld (_setup_cursor), a
+    xor a
+    call test_step_row
+    cp 11
+    jp nz, test_bad_player_name_order
+
+    ; SELECT on NAME binds the ten-character editor to the low-RAM name.
+    ld hl, test_name_before
+    ld de, PLAYER_NAME
+    ld bc, 11
+    ldir
+    ld a, 11
+    ld (_setup_cursor), a
+    ld a, 13
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    ld a, (_setup_room_editing)
+    cp 1
+    jp nz, test_bad_player_name_edit
+    ld a, (_setup_edit_row)
+    cp 11
+    jp nz, test_bad_player_name_edit
+    ld hl, (_edit_buf)
+    ld de, PLAYER_NAME
+    or a
+    sbc hl, de
+    jp nz, test_bad_player_name_edit
+    ld a, (_edit_max)
+    cp 10
+    jp nz, test_bad_player_name_edit
+    ; Lower case is folded; punctuation other than '-' and '_' is refused.
+    ld a, 'n'
+    call test_name_key
+    cp 'N'
+    jp nz, test_bad_player_name_keys
+    ld a, '_'
+    call test_name_key
+    cp '_'
+    jp nz, test_bad_player_name_keys
+    ld a, '7'
+    call test_name_key
+    cp '7'
+    jp nz, test_bad_player_name_keys
+    ld a, '!'
+    call test_name_key
+    or a
+    jp nz, test_bad_player_name_keys
+    ld a, ' '
+    ld (test_last_edit_key), a
+    ; An empty name is a valid answer: confirm defines NAME and moves on.
+    xor a
+    ld (PLAYER_NAME), a
+    ld hl, 0x001f
+    ld (_setup_defined_mask), hl
+    ld hl, 0x081f
+    ld (_setup_visible_mask), hl
+    ld a, 13
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    ld a, (_setup_room_editing)
+    or a
+    jp nz, test_bad_player_name_confirm
+    ld a, (_setup_defined_mask + 1)
+    and 0x08
+    jp z, test_bad_player_name_confirm
+    ld a, (_setup_cursor)
+    cp 5
+    jp nz, test_bad_player_name_confirm
+    ld a, (_setup_config_dirty)
+    or a
+    jp z, test_bad_player_name_confirm
+    ; ESC restores the previous name.
+    ld hl, test_name_before
+    ld de, PLAYER_NAME
+    ld bc, 11
+    ldir
+    ld a, 11
+    ld (_setup_cursor), a
+    ld a, 13
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    xor a
+    ld (PLAYER_NAME), a
+    ld a, 0x8a
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    ld a, (PLAYER_NAME)
+    cp 'O'
+    jp nz, test_bad_player_name_confirm
+
+    ; JOIN+DIRECT: an accepted IP keeps the valid stored port defined and
+    ; continues at TIME instead of walking the user through PORT.
+    ld a, 1
+    ld (_setup_choice), a
+    xor a
+    ld (_setup_choice + 1), a
+    ld (_setup_room_editing), a
+    ld (_setup_defined_mask + 1), a
+    ld a, 3
+    ld (_setup_defined_mask), a
+    ld hl, 0x000f
+    ld (_setup_visible_mask), hl
+    ld hl, test_port_default
+    ld de, _setup_port_text
+    ld bc, 5
+    ldir
+    ld hl, test_ip_max
+    call test_copy_ip
+    ld a, 2
+    ld (_setup_cursor), a
+    ld a, 13
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    ld a, (_setup_room_editing)
+    cp 1
+    jp nz, test_bad_join_ip_port
+    ld a, 13
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    ld a, (_setup_room_editing)
+    or a
+    jp nz, test_bad_join_ip_port
+    ld a, (_setup_defined_mask)
+    and 0x0c
+    cp 0x0c
+    jp nz, test_bad_join_ip_port
+    ld a, (_setup_cursor)
+    cp 4
+    jp nz, test_bad_join_ip_port
+    ; Without a valid port the accepted IP still stops on PORT.
+    xor a
+    ld (_setup_port_text), a
+    ld (_setup_room_editing), a
+    ld a, 3
+    ld (_setup_defined_mask), a
+    ld a, 2
+    ld (_setup_cursor), a
+    ld a, 13
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    ld a, 13
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    ld a, (_setup_defined_mask)
+    and 0x0c
+    cp 0x04
+    jp nz, test_bad_join_ip_port
+    ld a, (_setup_cursor)
+    cp 3
+    jp nz, test_bad_join_ip_port
+
+    ; A GAME change on an unfinished menu keeps only GAME defined and clears
+    ; from LINK. The CREATE+DIRECT zero word must not define IP: that
+    ; auto-room rule belongs to LINK alone.
+    ld a, 1
+    ld (_setup_choice), a
+    xor a
+    ld (_setup_choice + 1), a
+    ld (_setup_focus_choice), a
+    ld (_setup_focus_choice + 1), a
+    ld (_setup_cursor), a
+    ld (_setup_room_editing), a
+    ld hl, 0x081f
+    ld (_setup_defined_mask), hl
+    ld hl, 0x001f
+    ld (_setup_visible_mask), hl
+    ld a, 32
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    ld hl, (_setup_defined_mask)
+    ld de, 0x0001
+    or a
+    sbc hl, de
+    jp nz, test_bad_game_wipe
+    ld a, (CTX_CLEAR)
+    cp 1
+    jp nz, test_bad_game_wipe
+    ld a, (_setup_cursor)
+    cp 1
+    jp nz, test_bad_game_wipe
+    ; The first GAME answer with that zero word clears nothing either.
+    xor a
+    ld (_setup_choice), a
+    ld (_setup_cursor), a
+    ld h, a
+    ld l, a
+    ld (_setup_defined_mask), hl
+    inc l
+    ld (_setup_visible_mask), hl
+    ld a, 32
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    ld hl, (_setup_defined_mask)
+    ld de, 0x0001
+    or a
+    sbc hl, de
+    jp nz, test_bad_game_first
+    ld a, (CTX_CLEAR)
+    inc a
+    jp nz, test_bad_game_first
+    ld a, (_setup_cursor)
+    cp 1
+    jp nz, test_bad_game_first
+
+    ; Re-selecting an unchanged GAME/LINK on a complete menu only steps on:
+    ; GAME to LINK, MQTT LINK to ROOM, CREATE+DIRECT LINK past IP to PORT.
+    xor a
+    ld (_setup_choice), a
+    ld (_setup_focus_choice), a
+    inc a
+    ld (_setup_choice + 1), a
+    ld (_setup_focus_choice + 1), a
+    xor a
+    call test_reselect
+    jp nz, test_bad_reselect_game
+    cp 1
+    jp nz, test_bad_reselect_game
+    ld de, 0x0003
+    call test_force_is
+    jp nz, test_bad_reselect_game
+    ld a, 1
+    call test_reselect
+    jp nz, test_bad_reselect_mqtt
+    cp 2
+    jp nz, test_bad_reselect_mqtt
+    ld de, 0x0006
+    call test_force_is
+    jp nz, test_bad_reselect_mqtt
+    xor a
+    ld (_setup_choice + 1), a
+    ld (_setup_focus_choice + 1), a
+    inc a
+    call test_reselect
+    jp nz, test_bad_reselect_direct
+    cp 3
+    jp nz, test_bad_reselect_direct
+    ld de, 0x000a
+    call test_force_is
+    jp nz, test_bad_reselect_direct
+
+    ; Confirming emptied endpoint text is refused with that field's notice
+    ; and reopens the editor on it: ROOM, IP, then PORT.
+    ld hl, test_room
+    ld de, _netchesszx_mqtt_code
+    ld bc, 7
+    ldir
+    ld a, 1
+    ld (_setup_choice), a
+    ld (_setup_choice + 1), a
+    ld a, 2
+    ld de, _netchesszx_mqtt_code + 2
+    call test_empty_confirm
+    jp nz, test_bad_empty_room
+    cp 4
+    jp nz, test_bad_empty_room
+    xor a
+    ld (_setup_choice + 1), a
+    ld hl, test_ip_max
+    call test_copy_ip
+    ld a, 2
+    ld de, _netchesszx_direct_host
+    call test_empty_confirm
+    jp nz, test_bad_empty_ip
+    cp 3
+    jp nz, test_bad_empty_ip
+    ld hl, test_port_default
+    ld de, _setup_port_text
+    ld bc, 5
+    ldir
+    ld a, 3
+    ld de, _setup_port_text
+    call test_empty_confirm
+    jp nz, test_bad_empty_port
+    cp 5
+    jp nz, test_bad_empty_port
+    xor a
+    ld (_setup_room_editing), a
+    jp test_store_result
+test_bad_join_ip_port:
+    ld a, 99
+    jp test_store_result
+test_bad_game_wipe:
+    ld a, 70
+    jp test_store_result
+test_bad_game_first:
+    ld a, 71
+    jp test_store_result
+test_bad_reselect_game:
+    ld a, 72
+    jp test_store_result
+test_bad_reselect_mqtt:
+    ld a, 73
+    jp test_store_result
+test_bad_reselect_direct:
+    ld a, 74
+    jp test_store_result
+test_bad_empty_room:
+    ld a, 75
+    jp test_store_result
+test_bad_empty_ip:
+    ld a, 76
+    jp test_store_result
+test_bad_empty_port:
+    ld a, 77
+    jp test_store_result
+
+; A = endpoint cursor, DE = its editable text. SELECT opens the editor on DE,
+; then ENTER on emptied text must reopen it there. Returns NZ on any
+; structural failure, else A = the notice.
+test_empty_confirm:
+    ld (_setup_cursor), a
+    xor a
+    ld (_setup_room_editing), a
+    push de
+    ld a, 32
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    pop de
+    call test_editing_de
+    ret nz
+    xor a
+    ld (de), a
+    push de
+    ld a, 13
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    pop de
+    call test_editing_de
+    ret nz
+    ld a, (CTX_NOTICE)
+    ret
+
+; Z when the editor is open on DE. Preserves DE.
+test_editing_de:
+    ld a, (_setup_room_editing)
+    dec a
+    ret nz
+    ld hl, (_edit_buf)
+    or a
+    sbc hl, de
+    ret
+
+; A = cursor (0 GAME, 1 LINK). SELECT with the focused value already stored
+; on a complete menu (ACTION visible). Returns NZ if anything but the cursor
+; step and its PAINT|SUPPRESS repaint happened, else A = new cursor.
+test_reselect:
+    ld (_setup_cursor), a
+    xor a
+    ld (_setup_room_editing), a
+    ld a, 0x5a
+    ld (_setup_action_focus), a
+    ld hl, 0x03ff
+    ld (_setup_defined_mask), hl
+    ld hl, 0x07ff
+    ld (_setup_visible_mask), hl
+    ld a, 32
+    ld (CTX_KEY), a
+    call _setup_step_ovl_entry
+    ld a, (CTX_FLAGS)
+    cp 0x0a
+    ret nz
+    ld a, (CTX_CLEAR)
+    inc a
+    ret nz
+    ld a, (_setup_room_editing)
+    or a
+    ret nz
+    ld a, (_setup_action_focus)
+    cp 0x5a
+    ret nz
+    ld de, 0x03ff
+    call test_mask_is
+    ret nz
+    ld a, (_setup_cursor)
+    ret
+
+; DE = expected CTX_FORCE / defined mask. Z when equal.
+test_force_is:
+    ld hl, (CTX_FORCE)
+    jr test_hl_is
+test_mask_is:
+    ld hl, (_setup_defined_mask)
+test_hl_is:
+    or a
+    sbc hl, de
+    ret
+
+; A = direction (1 down, 0 up). Exercises the Setup visual-order stepper.
+test_step_row:
+    jp su_step_row
+
+; A = typed key while editing NAME. Returns the key forwarded to the editor.
+test_name_key:
+    ld (CTX_KEY), a
+    xor a
+    ld (test_last_edit_key), a
+    call _setup_step_ovl_entry
+    ld a, (test_last_edit_key)
+    ret
+
+test_bad_player_name_visible:
+    ld a, 60
+    jp test_store_result
+test_bad_player_name_order:
+    ld a, 61
+    jp test_store_result
+test_bad_player_name_edit:
+    ld a, 62
+    jp test_store_result
+test_bad_player_name_keys:
+    ld a, 63
+    jp test_store_result
+test_bad_player_name_confirm:
+    ld a, 64
     jp test_store_result
 
 test_bad_current_visible:
@@ -725,6 +1272,12 @@ test_bad_join_direct_ip:
     jp test_store_result
 test_bad_join_keeps_game_setup:
     ld a, 46
+    jp test_store_result
+test_bad_create_restores_color:
+    ld a, 47
+    jp test_store_result
+test_bad_ip_validator:
+    ld a, 48
     jp test_store_result
 
     ; First run: dirty, GAME focused, SAVE active.
@@ -1138,6 +1691,34 @@ test_room:
     defb "NC1234",0
 test_created_room:
     defb "NCABCD",0
+test_ip_max:
+    defb "255.255.255.255",0
+test_ip_leading_zeroes:
+    defb "001.002.003.004",0
+test_ip_256:
+    defb "256.0.0.1",0
+test_ip_four_digits:
+    defb "0000.0.0.1",0
+test_ip_short:
+    defb "1.2.3",0
+test_ip_empty_segment:
+    defb "1..2.3",0
+test_ip_trailing_dot:
+    defb "1.2.3.4.",0
+
+test_copy_ip:
+    ld de, _netchesszx_direct_host
+test_copy_ip_loop:
+    ld a, (hl)
+    ld (de), a
+    inc hl
+    inc de
+    or a
+    jr nz, test_copy_ip_loop
+    ret
+
+test_name_before:
+    defb "OLD", 0, 0, 0, 0, 0, 0, 0, 0
 
 _setup_choice:
     defs 7, 0
@@ -1202,7 +1783,7 @@ _netchesszx_timezone:
 _netchesszx_timezone_last:
     defb 0
 
-_spectrum_net_send_text:
+_netchesszx_session_send_ack_text:
     ret
 
 _NETCHESS_PROTO_ACK_PREFIX:

@@ -2,6 +2,7 @@
 #define NETCHESSZX_COMMON_GAME_PROTOCOL_H
 
 #include <stdint.h>
+#include "common/text.h"
 
 #ifndef NETCHESSZX_FASTCALL
 #ifdef NETCHESSZX_SDCC_IY
@@ -14,6 +15,7 @@
 #include "common/protocol/platform_protocol.h"
 
 #define NETCHESS_PROTO_TAKEBACK "TAKEBACK"
+#define NETCHESS_PROTO_DECISION_SECONDS 60u
 #define NETCHESS_PROTO_RESTORE_RQ "RQ"
 #define NETCHESS_PROTO_RESTORE_RY "RY"
 #define NETCHESS_PROTO_RESTORE_RN "RN"
@@ -31,6 +33,7 @@ extern const char NETCHESS_PROTO_CHAT_PREFIX[];
 extern const char NETCHESS_PROTO_DRAW[];
 extern const char NETCHESS_PROTO_CANCEL_DRAW[];
 extern const char NETCHESS_PROTO_CANCEL_RESET[];
+extern const char NETCHESS_PROTO_CANCEL_TAKEBACK_PREFIX[];
 extern const char NETCHESS_PROTO_ACK_RESIGN[];
 #define NETCHESS_PROTO_RESIGN (NETCHESS_PROTO_ACK_RESIGN + 4u)
 extern const char NETCHESS_PROTO_GAME_START[];
@@ -42,8 +45,6 @@ extern const char NETCHESS_PROTO_TAKEBACK_PREFIX[];
 extern const char NETCHESS_PROTO_ACK_PING[];
 #define NETCHESS_PROTO_PING (NETCHESS_PROTO_ACK_PING + 4u)
 
-const char *netchess_after_prefix(const char *text, const char *prefix);
-
 uint8_t netchess_proto_parse_move(const char *rx,
                                   char *ply,
                                   uint8_t ply_cap,
@@ -54,6 +55,14 @@ uint8_t netchess_proto_parse_move(const char *rx,
 uint8_t netchess_proto_parse_chat(const char *rx,
                                   char *text,
                                   uint8_t text_cap);
+/* Exact TAKEBACK or CANCEL TAKEBACK, nonzero uint16 ply; zero means invalid. */
+uint16_t netchess_proto_takeback_ply(const char *rx) NETCHESSZX_FASTCALL;
+/* Ply digits, then end or " text"; a null tail (missing prefix) fails. */
+uint8_t netchess_proto_parse_ply_tail(const char *tail,
+                                      char *ply,
+                                      uint8_t ply_cap,
+                                      char *text,
+                                      uint8_t text_cap);
 uint8_t netchess_proto_parse_ack(const char *rx,
                                  char *ply,
                                  uint8_t ply_cap,

@@ -122,4 +122,46 @@ bool isDirectIpSyntaxOk(const QString &host)
     return address.setAddress(host) && address.protocol() == QAbstractSocket::IPv4Protocol && !address.isNull();
 }
 
+QString fenFromCompact(const CompactRulesState &state, int fullmove)
+{
+    char ascii[64];
+    asciiBoardFromCompact(state.board, ascii);
+    QString fen;
+    for (int row = 0; row < 8; ++row) {
+        int empty = 0;
+        for (int col = 0; col < 8; ++col) {
+            const char piece = ascii[row * 8 + col];
+            if (piece == '.') {
+                ++empty;
+                continue;
+            }
+            if (empty != 0) fen += QChar('0' + empty);
+            empty = 0;
+            fen += QLatin1Char(piece);
+        }
+        if (empty != 0) fen += QChar('0' + empty);
+        if (row != 7) fen += QLatin1Char('/');
+    }
+    fen += state.side == NETCHESSZX_RULE_WHITE ? QStringLiteral(" w ") : QStringLiteral(" b ");
+    QString castle;
+    if (state.castle & NETCHESSZX_RULE_CASTLE_WK) castle += QLatin1Char('K');
+    if (state.castle & NETCHESSZX_RULE_CASTLE_WQ) castle += QLatin1Char('Q');
+    if (state.castle & NETCHESSZX_RULE_CASTLE_BK) castle += QLatin1Char('k');
+    if (state.castle & NETCHESSZX_RULE_CASTLE_BQ) castle += QLatin1Char('q');
+    fen += castle.isEmpty() ? QStringLiteral("-") : castle;
+    fen += QLatin1Char(' ');
+    fen += state.ep < 0 ? QStringLiteral("-") : squareName(state.ep >> 3, state.ep & 7);
+    // ponytail: the rules core keeps no halfmove clock; the engine sees 0.
+    fen += QStringLiteral(" 0 %1").arg(fullmove < 1 ? 1 : fullmove);
+    return fen;
+}
+
+QString uciBestMove(const QByteArray &line)
+{
+    const QList<QByteArray> words = line.simplified().split(' ');
+    if (words.size() < 2 || words.at(0) != "bestmove") return QString();
+    const QString move = QString::fromLatin1(words.at(1));
+    return isMoveSyntaxOk(move) ? move : QString();
+}
+
 } // namespace ChessHelpers

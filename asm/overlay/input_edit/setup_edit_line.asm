@@ -9,6 +9,7 @@ EXTERN _setup_choice
 EXTERN _setup_visible_mask
 EXTERN _setup_room_editing
 EXTERN _setup_edit_row
+EXTERN _setup_cursor
 EXTERN _setup_port_text
 EXTERN _edit_max
 EXTERN _netchesszx_mqtt_code
@@ -16,15 +17,23 @@ EXTERN _netchesszx_direct_host
 EXTERN _last_ip
 EXTERN _spectrum_gui_edit_show
 
+INCLUDE "ui_layout.inc"
+INCLUDE "asm/app/player_name_layout.inc"
+
 ROW_TIME   EQU 4
 ROW_COLOR  EQU 5
 ROW_ACTION EQU 10
+ROW_NAME   EQU 11
 
 _input_edit_setup_line_ovl:
     ld a, (de)
     cp 0xff
-    jr nz, setup_edit_line
+    jr nz, setup_edit_line_one
     ld hl, (_setup_visible_mask)
+    push hl
+    bit 3, h
+    call nz, setup_edit_line_name
+    pop hl
     bit 2, l
     jr z, setup_edit_line_all_row_3
     push hl
@@ -33,6 +42,12 @@ _input_edit_setup_line_ovl:
 setup_edit_line_all_row_3:
     bit 3, l
     call nz, setup_edit_line_row_3
+    ld l, 1
+    ret
+setup_edit_line_one:
+    cp ROW_NAME
+    jr nz, setup_edit_line
+    call setup_edit_line_name
     ld l, 1
     ret
 setup_edit_line_row_2:
@@ -219,21 +234,61 @@ setup_edit_screen_row_normal:
     cp ROW_COLOR
     ld a, e
     jr c, setup_edit_screen_row_base
-    add a, 2
+    add a, NETCHESSZX_SETUP_GAME_ROW_OFFSET
 setup_edit_screen_row_base:
-    add a, 7
+    add a, NETCHESSZX_SETUP_SCREEN_ROW_BASE
     ret
 setup_edit_screen_row_time:
-    ld a, 10
+    ld a, NETCHESSZX_SETUP_SCREEN_ROW_TIME
     ret
 setup_edit_screen_row_action:
-    ld a, 20
+    ld a, NETCHESSZX_SETUP_SCREEN_ROW_ACTION
     ret
+
+; "NAME  <name>" on its row, and the edit cursor while NAME is edited.
+setup_edit_line_name:
+    ld de, setup_edit_line_buf
+    ld hl, setup_edit_label_name
+    ld bc, 7
+    ldir
+    ld hl, PLAYER_NAME
+setup_edit_name_copy:
+    ld a, (hl)
+    ld (de), a
+    inc hl
+    inc de
+    or a
+    jr nz, setup_edit_name_copy
+    ; The line owns NAME's focus marker, as TIME's does: MENU_CONFIG paints
+    ; the same glyph cell, but every full redraw of this line erases it.
+    ; Editing NAME shows the blinking cursor instead.
+    ld a, (_setup_room_editing)
+    or a
+    jr z, setup_edit_name_marker
+    ld a, (_setup_edit_row)
+    cp ROW_NAME
+    jr z, setup_edit_name_cursor
+setup_edit_name_marker:
+    ld a, (_setup_cursor)
+    cp ROW_NAME
+    jr nz, setup_edit_name_draw
+    ld a, NETCHESSZX_SETUP_CURSOR_GLYPH
+    ld (setup_edit_line_buf + NETCHESSZX_SETUP_NAME_MARKER_INDEX), a
+setup_edit_name_draw:
+    ld hl, setup_edit_line_buf
+    jp _spectrum_info_line
+setup_edit_name_cursor:
+    ld hl, setup_edit_line_buf
+    call _spectrum_info_line
+    ld hl, (NETCHESSZX_SETUP_NAME_VALUE_COL << 8) | NETCHESSZX_SETUP_SCREEN_ROW_NAME
+    jp _spectrum_gui_edit_show
 
 setup_edit_label_room:
     DEFB "ROOM  "
 setup_edit_label_ip:
     DEFB "IP    "
+setup_edit_label_name:
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_NAME, "NAME  "
 setup_edit_text_mqtt_host:
     DEFB "HIVEMQ", 0
 setup_edit_row:

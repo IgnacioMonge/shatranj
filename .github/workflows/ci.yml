@@ -20,7 +20,7 @@ jobs:
   spectrum-and-host:
     name: Spectrum and host contracts
     runs-on: ubuntu-24.04
-    container: z88dk/z88dk:2.4
+    container: z88dk/z88dk@sha256:7da21d721a76bf25db518f2415b859b2dfe215ccd059f117cb6ec052251ac2ae
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

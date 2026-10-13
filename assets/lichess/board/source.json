@@ -1,7 +1,7 @@
 {
   "source": "https://github.com/lichess-org/lila/tree/master/public/images/board",
-  "license": "AGPL-3.0",
-  "license_url": "https://github.com/lichess-org/lila/blob/master/LICENSE",
+  "license": "AGPL-3.0-or-later",
+  "license_url": "https://github.com/lichess-org/lila/blob/master/COPYING.md",
   "downloaded_at": "2026-07-01",
   "files": [
     "blue.png",

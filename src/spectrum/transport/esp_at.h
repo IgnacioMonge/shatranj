@@ -16,13 +16,10 @@ void reset_line_buf(void);
 uint8_t read_line(uint16_t frames) NETCHESSZX_FASTCALL;
 uint8_t wait_for_prompt(uint16_t frames) NETCHESSZX_FASTCALL;
 
-const char *spectrum_net_last_ip(void);
 uint8_t spectrum_net_at_cmd(const char *cmd, uint16_t frames);
 void spectrum_net_guard_wait(uint16_t frames) NETCHESSZX_FASTCALL;
 uint8_t spectrum_net_ensure_command_mode(void);
 uint8_t spectrum_net_sync_time(void);
-
-#define spectrum_esp_at_last_ip spectrum_net_last_ip
 
 #ifdef NETCHESSZX_HOST_TEST
 void netchesszx_esp_at_test_capture_ip(const char *line);

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 import shlex
 import subprocess
@@ -28,7 +29,7 @@ if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
 from gen_overlay_atlas import BLOCK_SIZE, replace_if_changed  # noqa: E402
-from gen_overlay_defs import parse_map  # noqa: E402
+from gen_overlay_defs import EDITOR_PRIVATE_SYMBOLS, SETUP_PRIVATE_SYMBOLS, parse_map  # noqa: E402
 
 ROOT = _TOOLS.parent
 BUILDER_PATH = Path(__file__).resolve()
@@ -41,7 +42,26 @@ class OverlaySpec:
     c_sources: tuple[tuple[str, tuple[str, ...]], ...]
     extra_inputs: tuple[str, ...] = ()
     local_symbols: tuple[str, ...] = ()
+    # Extra z80asm -D flags for this overlay's ASM objects only.
+    asm_defines: tuple[str, ...] = ()
 
+    def excluded_resident_symbols(self) -> tuple[str, ...]:
+        return self.local_symbols + (
+            () if self.name == "INPUT_EDIT" else EDITOR_PRIVATE_SYMBOLS
+        ) + (
+            () if self.name in ("MENU_CONFIG", "SETUP", "INPUT_EDIT", "TIME_CONFIG")
+            else SETUP_PRIVATE_SYMBOLS
+        )
+
+
+# RECOVERY's adapter copy keeps only read, write-truncate, close, seek, unlink,
+# rename and mkdir; the Makefile already drops esx_freplace everywhere.
+SPXN_XFS_RECOVERY_DEFINES = (
+    "-DSPXN_XFS_NO_DIR",
+    "-DSPXN_XFS_NO_CREATE",
+    "-DSPXN_XFS_NO_UPDATE",
+    "-DSPXN_XFS_NO_COMMIT",
+)
 
 SPXN_XFS_LOCAL_SYMBOLS = (
     "_esx_fopen",
@@ -82,16 +102,93 @@ def overlay_size_limit(env: dict[str, str], block_size: int) -> int:
 
 
 def overlay_specs(env: dict[str, str]) -> list[OverlaySpec]:
+    next_ui = "-DNETCHESSZX_NEXT" in shlex.split(env_value(env, "ZX_OVL_CFLAGS"))
+    layout_inputs = (
+        (Path(env_value(env, "BUILD_DIR") or "build") / "ui_layout.inc").as_posix(),
+        f"src/spectrum/ui/layout_{'next' if next_ui else 'zx'}.h",
+        "src/spectrum/ui/log_contract.h",
+    )
     edit_buf = env_value(env, "EDIT_BUF_OVL") or "asm/overlay/edit/edit_buf.asm"
     esx_common = env_paths(env, "ESX_COMMON_ASM")
     esx_fileui = env_paths(env, "ESX_FILEUI_ASM")
     esx_saveload = env_paths(env, "ESX_SAVELOAD_ASM")
+    # Three independent capabilities: the JOURNAL overlay is packaged, the
+    # resident hook (ASM append inside SAVELOAD) is enabled, and the STJ1
+    # codec replaces the C LOAD/SAVE inside SAVELOAD.
+    journal_extra = "JOURNAL" in env_value(env, "ATLAS_EXTRA").split()
+    recovery_extra = "RECOVERY" in env_value(env, "ATLAS_EXTRA").split()
+    journal_hook = env_value(env, "JOURNAL_HOOK").strip() == "1"
+    stj_saveload = env_value(env, "STJ_SAVELOAD").strip() == "1"
+    native_saveload = stj_saveload or (
+        journal_extra and journal_hook and not env_paths(env, "SPXN_XFS_OVERLAY_ASM"))
+    # The journal owns SHATJRNL.* (read/write TMP); CONFIG keeps esx_saveload.
+    esx_journal = (
+        ("asm/esxdos/esx_journal.asm",)
+        if esx_saveload and (journal_extra or journal_hook)
+        else ()
+    )
+    saveload_esx = esx_journal if journal_hook else esx_saveload
+    saveload_journal = (
+        ("asm/overlay/saveload/journal_append.asm",
+         "asm/overlay/saveload/game_stats.asm") if journal_hook else ()
+    )
+    saveload_c_flags = (
+        (("-DSAVELOAD_APPEND_ASM",) if journal_hook else ())
+        + (("-DSTJ_SAVELOAD_ASM",) if stj_saveload else ())
+        + (("-DSAVELOAD_NATIVE_ASM",) if native_saveload else ())
+    )
     mach = env_value(env, "GAME_PROTOCOL_MACH_SRC") or (
         "src/common/protocol/game_protocol_mach.c"
     )
     atomic = env_paths(env, "SPXN_ATOMIC_SRC")
     resolve_c = env_paths(env, "SPXN_RESOLVE_C")
     xfs_overlay = env_paths(env, "SPXN_XFS_OVERLAY_ASM")
+    if stj_saveload:
+        saveload_stj = (
+            "asm/overlay/journal/stj_codec.asm",
+            "asm/overlay/journal/stj_saveload.asm",
+        ) + (() if xfs_overlay else ("asm/esxdos/esx_fseek_set.asm",))
+    else:
+        saveload_stj = ()
+    # XFS targets have no F_SYNC/F_SEEK esxDOS wrappers; the adapter owns them.
+    saveload_esxdos = () if xfs_overlay else ("asm/esxdos/esx_fsync.asm",)
+    # Game recovery: RECOVERY writes checkpoints; the cold resume probe/stage
+    # rides in CONTROL, which has the room. Both share the slot store.
+    # SpectraNext links the XFS adapter instead of the esxDOS wrappers and
+    # writes checkpoints with the product's atomic replace (no F_SYNC).
+    recovery_store = ("asm/overlay/recovery/rcv_store.asm",)
+    recovery_fs = esx_saveload or xfs_overlay
+    control_resume = (
+        (
+            *recovery_store,
+            "asm/overlay/recovery/rcv_resume.asm",
+            *recovery_fs,
+        )
+        if recovery_extra and recovery_fs and journal_hook
+        else ()
+    )
+    # The move-list replay of SHATJRNL.NEW rides in SAVELOAD's journal append
+    # (Classic, Next); SpectraNext's SAVELOAD is full, so RECOVERY hosts it.
+    journal_replay = ("asm/overlay/journal/journal_replay.inc",)
+    recovery_replay = (
+        ("asm/overlay/recovery/rcv_replay.asm",)
+        if xfs_overlay and journal_hook
+        else ()
+    )
+    recovery_asm = (
+        "asm/overlay/recovery/entry_recovery.asm",
+        *recovery_store,
+        *recovery_replay,
+        *recovery_fs,
+        *(() if xfs_overlay else ("asm/esxdos/esx_fsync.asm",)),
+    )
+    recovery_c = (
+        ("src/spectrum/overlay/recovery_ovl.c", ()),
+        ("src/spectrum/overlay/restore_ovl.c",
+         ("-DNETCHESSZX_RESTORE_BUILD_ONLY",)),
+        *((src, ()) for src in (atomic if xfs_overlay else ())),
+    )
+    xfs_locals = SPXN_XFS_LOCAL_SYMBOLS if xfs_overlay else ()
     clock_c = env_paths(env, "SPXN_CLOCK_C")
     clock_headers = env_paths(env, "SPXN_CLOCK_HEADERS")
     mqtt_flags = tuple(shlex.split(env_value(env, "MQTT_CONNECT_OVL_CFLAGS")))
@@ -103,6 +200,8 @@ def overlay_specs(env: dict[str, str]) -> list[OverlaySpec]:
             "RULES",
             ("asm/overlay/rules/entry_rules.asm", "asm/overlay/rules/rules_stub.asm"),
             (),
+            ("asm/app/board_hints_contract.inc", "asm/app/rules_hints_coordinator.inc",
+             "asm/app/rules_hints_state.inc", "asm/spectrum/rules_hints_view.inc"),
         ),
         OverlaySpec(
             "BOARD",
@@ -122,11 +221,15 @@ def overlay_specs(env: dict[str, str]) -> list[OverlaySpec]:
                 ("src/spectrum/overlay/mqtt_connect_ovl.c", mqtt_flags),
                 *((src, ()) for src in resolve_c),
             ),
+            ("src/spectrum/session/mqtt_connect_actions_ovl.c",),
         ),
         OverlaySpec(
             "MQTT_TX",
             ("asm/overlay/mqtt_tx/entry_mqtt_tx.asm",),
-            (("src/spectrum/overlay/mqtt_tx_ovl.c", ()),),
+            (
+                ("src/spectrum/overlay/mqtt_tx_ovl.c", ()),
+            ),
+            ("src/spectrum/session/mqtt_tx_actions_ovl.c",),
         ),
         OverlaySpec(
             "DIRECT",
@@ -140,6 +243,8 @@ def overlay_specs(env: dict[str, str]) -> list[OverlaySpec]:
             "MENU_CONFIG",
             ("asm/overlay/menu_config/entry_menu_config.asm",),
             (),
+            layout_inputs + (("assets/next/theme_constants.asm", "assets/next/piece_set_menu.asm")
+                             if next_ui else ()),
         ),
         OverlaySpec(
             "MENU_LOGIC",
@@ -163,14 +268,20 @@ def overlay_specs(env: dict[str, str]) -> list[OverlaySpec]:
             "SAVELOAD",
             (
                 "asm/overlay/saveload/entry_saveload.asm",
-                *esx_saveload,
+                *(("asm/overlay/saveload/erase_classic.asm",)
+                  if native_saveload and not stj_saveload else ()),
+                *saveload_esx,
+                *saveload_journal,
+                *saveload_stj,
+                *saveload_esxdos,
                 *xfs_overlay,
             ),
             (
-                ("src/spectrum/overlay/saveload_ovl.c", ()),
-                *((src, ()) for src in atomic),
+                ("src/spectrum/overlay/saveload_ovl.c", saveload_c_flags),
+                *((src, ()) for src in (() if stj_saveload else atomic)),
             ),
-            esx_common,
+            esx_common
+            + (journal_replay if saveload_journal and not xfs_overlay else ()),
             SPXN_XFS_LOCAL_SYMBOLS if xfs_overlay else (),
         ),
         OverlaySpec(
@@ -198,11 +309,17 @@ def overlay_specs(env: dict[str, str]) -> list[OverlaySpec]:
         ),
         OverlaySpec(
             "CONTROL",
-            ("asm/overlay/control/entry_control.asm",),
+            (
+                "asm/overlay/control/entry_control.asm",
+                *control_resume,
+            ),
             (
                 ("src/spectrum/overlay/control_ovl.c", ()),
                 (mach, ()),
             ),
+            (esx_common + ("asm/overlay/recovery/rcv_layout.inc",))
+            if control_resume else (),
+            xfs_locals if control_resume else (),
         ),
         OverlaySpec(
             "CONFIG",
@@ -222,8 +339,27 @@ def overlay_specs(env: dict[str, str]) -> list[OverlaySpec]:
             "TIME_CONFIG",
             ("asm/overlay/time_config/entry_time_config.asm", edit_buf),
             (),
+            ("asm/session/identity_setup.inc", *layout_inputs),
         ),
     ]
+    if journal_extra:
+        specs.append(
+            OverlaySpec(
+                "JOURNAL",
+                (
+                    "asm/overlay/journal/entry_journal.asm",
+                    "asm/overlay/journal/stj_codec.asm",
+                    *esx_journal,
+                    "asm/esxdos/esx_fsync.asm",
+                    "asm/esxdos/esx_fseek_set.asm",
+                    *xfs_overlay,
+                ),
+                (),
+                esx_common,
+                SPXN_XFS_LOCAL_SYMBOLS if xfs_overlay else (),
+            )
+        )
+    # SpectraNext keeps TIME at id 17 (ATLAS_EXTRA="TIME RECOVERY").
     if clock_c:
         specs.append(
             OverlaySpec(
@@ -235,6 +371,18 @@ def overlay_specs(env: dict[str, str]) -> list[OverlaySpec]:
                     *((src, ()) for src in resolve_c),
                 ),
                 clock_headers,
+            )
+        )
+    if recovery_extra:
+        specs.append(
+            OverlaySpec(
+                "RECOVERY",
+                recovery_asm,
+                recovery_c,
+                esx_common + ("asm/overlay/recovery/rcv_layout.inc",)
+                + (journal_replay if recovery_replay else ()),
+                xfs_locals,
+                SPXN_XFS_RECOVERY_DEFINES if xfs_overlay else (),
             )
         )
     return specs
@@ -264,6 +412,45 @@ def spectrum_headers(root: Path = ROOT) -> list[Path]:
     return found
 
 
+_ASM_INCLUDE_RE = re.compile(r'^\s*INCLUDE\s+"([^"]+)"', re.I | re.M)
+
+
+def asm_includes(sources: list[Path], search: list[Path]) -> list[Path]:
+    """Transitive INCLUDE closure of ASM sources, resolved like z80asm.
+
+    A stale overlay is worse than a slow build: an EQU moved in an included
+    file must rebuild every overlay that assembles it. Includes are resolved
+    against the including file's directory, then each search directory (the
+    repository root and the build directory, which holds ui_layout.inc).
+    An unresolvable include is returned as the path it would have had next to
+    its includer: that path does not exist, so is_stale() forces a rebuild and
+    the assembler reports the missing file instead of the builder reusing a
+    binary assembled from a file that is gone.
+    """
+    found: list[Path] = []
+    seen: set[Path] = set()
+    pending = list(sources)
+    while pending:
+        source = pending.pop()
+        try:
+            text = source.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for name in _ASM_INCLUDE_RE.findall(text):
+            for base in (source.parent, *search):
+                candidate = (base / name).resolve()
+                if candidate.is_file():
+                    break
+            else:
+                candidate = (source.parent / name).resolve()
+            if candidate not in seen:
+                seen.add(candidate)
+                found.append(candidate)
+                if candidate.is_file():
+                    pending.append(candidate)
+    return found
+
+
 def spec_inputs(
     spec: OverlaySpec,
     overlay_defs: Path,
@@ -271,14 +458,21 @@ def spec_inputs(
     *,
     builder: Path | None = None,
     headers: list[Path] | None = None,
+    build_dir: Path | None = None,
 ) -> list[Path]:
     inputs = [overlay_defs, builder if builder is not None else BUILDER_PATH]
     if config_stamp is not None:
         inputs.append(config_stamp)
     inputs.extend(Path(path) for path in spec.asm)
+    search = [ROOT] + ([build_dir] if build_dir is not None else [])
+    inputs.extend(asm_includes(
+        [path if path.is_absolute() else ROOT / path
+         for path in (Path(item) for item in spec.asm)],
+        search))
     inputs.extend(Path(path) for path, _flags in spec.c_sources)
     inputs.extend(Path(path) for path in spec.extra_inputs)
     if spec.c_sources:
+        inputs.append(_TOOLS / "netchesszx_overlay_copt")
         inputs.extend(spectrum_headers() if headers is None else headers)
     return inputs
 
@@ -334,6 +528,34 @@ def is_stale(output: Path, inputs: list[Path]) -> bool:
         except OSError:
             return True
     return False
+
+
+def deps_manifest(build_dir: Path, spec: OverlaySpec) -> Path:
+    return build_dir / "ovl" / spec.name / "inputs.txt"
+
+
+def _deps_text(inputs: list[Path]) -> str:
+    return "".join(
+        f"{path}\n" for path in sorted({Path(item).resolve().as_posix()
+                                        for item in inputs}))
+
+
+def deps_changed(manifest: Path, inputs: list[Path]) -> bool:
+    """True when the resolved input set differs from the last build.
+
+    Modification times cannot see an input that disappears or an include that
+    starts resolving to an older file elsewhere on the search path; the set
+    recorded after each successful build can.
+    """
+    try:
+        return manifest.read_text(encoding="utf-8") != _deps_text(inputs)
+    except OSError:
+        return True
+
+
+def write_deps(manifest: Path, inputs: list[Path]) -> None:
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(_deps_text(inputs), encoding="utf-8")
 
 
 def split_cmd(value: str) -> list[str]:
@@ -444,28 +666,34 @@ def build_one_overlay(
 ) -> Path:
     output = overlay_output(build_dir, zx_name, spec)
     stamp = resolve_config_stamp(build_dir)
-    inputs = spec_inputs(spec, overlay_defs, stamp, headers=headers)
-    if not force and not is_stale(output, inputs):
+    inputs = spec_inputs(spec, overlay_defs, stamp, headers=headers,
+                         build_dir=build_dir)
+    manifest = deps_manifest(build_dir, spec)
+    if (not force and not is_stale(output, inputs) and
+            not deps_changed(manifest, inputs)):
         print(f"  skip {spec.name} ({output.stat().st_size} bytes)")
         return output
 
     work_dir = build_dir / "ovl" / spec.name
     work_dir.mkdir(parents=True, exist_ok=True)
-    z80asm = split_cmd(env_value(env, "ZX_Z80ASM") or "z80asm")
+    z80asm = [*split_cmd(env_value(env, "ZX_Z80ASM") or "z80asm"),
+              f"-I={build_dir.as_posix()}"]
     zcc = split_cmd(env_value(env, "ZCC") or "zcc")
     cflags = shlex.split(env_value(env, "ZX_OVL_CFLAGS"))
     build_dir_up = env_value(env, "BUILD_DIR_UP") or "../"
 
     objects: list[Path] = []
     for asm in spec.asm:
-        objects.append(assemble_asm(z80asm, work_dir, Path(asm)))
+        objects.append(assemble_asm([*z80asm, *spec.asm_defines], work_dir,
+                                    Path(asm)))
     for index, (source, extra) in enumerate(spec.c_sources):
         obj = work_dir / f"{Path(source).stem}_{index}.o"
         compile_c(zcc, cflags, extra, build_dir, build_dir_up, Path(source), obj)
         objects.append(obj)
 
     link_defs = filter_local_symbols(
-        overlay_defs, work_dir / "overlay_defs_local.asm", spec.local_symbols
+        overlay_defs, work_dir / "overlay_defs_local.asm",
+        spec.excluded_resident_symbols(),
     )
     defs_o = work_dir / link_defs.with_suffix(".o").name
     defs_o.unlink(missing_ok=True)
@@ -476,6 +704,7 @@ def build_one_overlay(
             *z80asm,
             f"-O={work_dir.as_posix()}",
             "-b",
+            "-m",
             f"-r0x{slot:04X}",
             f"-o={binary_name}",
             *(path.as_posix() for path in objects),
@@ -497,6 +726,7 @@ def build_one_overlay(
         raise SystemExit(
             f"[ERR] {spec.name} overlay too large: {size} bytes (max {size_limit})"
         )
+    write_deps(manifest, inputs)
     print(f"  built {spec.name}: {size}/{size_limit} bytes")
     return output
 
@@ -683,6 +913,8 @@ def main(argv: list[str] | None = None, env: dict[str, str] | None = None) -> in
     require_slot_matches_block_size(slot, block_size)
     print(f"  overlay_code_slot = {slot:#06x}")
     headers = spectrum_headers()
+    if "-DNETCHESSZX_NEXT" not in shlex.split(env_value(environ, "ZX_OVL_CFLAGS")):
+        headers = [p for p in headers if p.name not in ("layout_next.h", "presentation_next.h")]
 
     built: list[Path] = []
     for spec in selected:

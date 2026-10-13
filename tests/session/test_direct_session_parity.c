@@ -1,6 +1,10 @@
 #define NETCHESSZX_HOST_SESSION_TEST 1
 
 #include "direct_parity.h"
+#include "spectrum/overlay/overlay.h"
+
+volatile uint8_t
+    netchesszx_host_overlay_context[SPECTRUM_OVERLAY_CONTEXT_SIZE];
 
 #ifdef NETCHESSZX_SPECTRANEXT
 /* The host parity fixture includes the real Next overlay without the SDK
@@ -13,7 +17,7 @@
 #define SPXN_POLLNVAL 128
 int16_t spxn_poll(void);
 int16_t spxn_recv(void *buffer, uint16_t maximum);
-int16_t spxn_accept(void);
+int16_t spxn_accept_single(void);
 int16_t spxn_listen(uint16_t port);
 int16_t spxn_resolve(const char *host, uint8_t *ip4be);
 int16_t spxn_connect(const uint8_t *ip4be, uint16_t port);
@@ -27,7 +31,9 @@ int16_t spxn_send_all(const void *buffer, uint16_t length,
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wunused-variable"
 #endif
+#include "../spectrum/editor_fixture.h"
 #include "../../src/spectrum/app/app.c"
+#include "../spectrum/setup_fixture.h"
 #include "../../src/spectrum/overlay/direct_ovl.c"
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
@@ -95,7 +101,18 @@ static uint8_t host_menu_visible;
 static uint8_t host_status_phase;
 static uint8_t host_status_phase_calls;
 static uint8_t host_redraw_square_calls;
+static char host_last_notice[96];
+static uint8_t host_last_msg_id = 0xffu;
 static const uint8_t *host_restore_file_payload;
+static const uint8_t *host_recovery_payload;
+static uint8_t host_recovery_available;
+static uint8_t host_recovery_writes;
+static unsigned host_cursor_marks;
+static unsigned host_recovery_cursor_marks;
+static uint8_t host_recovery_write_ok;
+static uint8_t host_recovery_saved[NETCHESSZX_SAVE_WIRE_B64_SIZE];
+static uint8_t host_manual_saves;
+static char host_manual_saved[NETCHESSZX_SAVE_WIRE_B64_SIZE];
 static uint8_t host_restore_apply_pending;
 static uint8_t host_restore_marker_seen;
 static uint8_t host_restore_domain_pending;
@@ -125,6 +142,9 @@ uint8_t direct_rx_head;
 uint8_t direct_rx_payload_len;
 #ifdef NETCHESSZX_SPECTRANEXT
 uint8_t direct_rx_discard;
+uint8_t spxn_direct_pending_cursor;
+uint8_t spxn_direct_pending_length;
+uint8_t spxn_direct_pending_scratch[SPECTRUM_MQTT_PACKET_MAX];
 #endif
 uint16_t direct_ipd_remaining;
 uint8_t direct_ipd_accept;
@@ -179,7 +199,7 @@ int16_t spxn_recv(void *buffer, uint16_t maximum)
     return 0;
 }
 
-int16_t spxn_accept(void)
+int16_t spxn_accept_single(void)
 {
     return SPXN_OK;
 }
@@ -473,10 +493,10 @@ static uint8_t host_trace_push(uint8_t type,
 
 static uint8_t host_restore_phase(void)
 {
-    if (game_over) {
+    if (netchesszx_session_state.game_over) {
         return DIRECT_PARITY_PHASE_OVER;
     }
-    return game_status_active ? DIRECT_PARITY_PHASE_ACTIVE
+    return netchesszx_session_state.game_status_active ? DIRECT_PARITY_PHASE_ACTIVE
                               : DIRECT_PARITY_PHASE_READY;
 }
 
@@ -502,7 +522,7 @@ static void host_observe_restore_apply(void)
     }
     (void)host_trace_push(DIRECT_PARITY_OBS_GAME,
                           DIRECT_PARITY_LINK_NONE,
-                          DIRECT_PARITY_GAME_RESTORE, game_ply, text);
+                          DIRECT_PARITY_GAME_RESTORE, netchesszx_session_state.game_ply, text);
 }
 
 static void host_observe_restore_rejected(uint8_t domain_result)
@@ -766,7 +786,7 @@ read_next_step:
     }
     if (step->type == DIRECT_PARITY_IN_RX && step->payload != 0 &&
         step->length == 6u && memcmp(step->payload, "RESIGN", 6u) == 0 &&
-        game_status_active) {
+        netchesszx_session_state.game_status_active) {
         host_resign_control_pending = 1u;
     }
     if (step->type == DIRECT_PARITY_IN_RX && step->payload != 0 &&
@@ -815,20 +835,6 @@ uint8_t spectrum_net_send_text(const char *text)
         return 1u;
     }
 
-    if (strcmp(text, "RESET") == 0 && host_local_resign_pending) {
-        host_local_resign_pending = 0u;
-        (void)host_trace_push(DIRECT_PARITY_OBS_CONTROL_RESULT,
-                              DIRECT_PARITY_LINK_NONE,
-                              DIRECT_PARITY_REQUEST_RESIGN,
-                              DIRECT_PARITY_RESULT_ACCEPTED, 0);
-    }
-    if (strcmp(text, "RESET") == 0 &&
-        last_control_accept == CONTROL_ACCEPT_RESIGN) {
-        host_local_reset_pending = 1u;
-    } else if (strcmp(text, "ACK RESET") == 0 &&
-               last_control_accept == CONTROL_ACCEPT_RESIGN) {
-        host_control_reset_pending = 1u;
-    }
     host_observe_side();
     traced = host_trace_push(DIRECT_PARITY_OBS_SEND, host_link_id,
                              0u, 0u, text);
@@ -845,13 +851,17 @@ uint8_t spectrum_net_send_text(const char *text)
     }
     if (host_fail_payload == 0 || strlen(text) != host_fail_length ||
         memcmp(text, host_fail_payload, host_fail_length) != 0) {
-        host_failed = 1u;
-        return 0u;
+        return traced;
     }
     host_fail_payload = 0;
     host_fail_length = 0u;
     host_failed_send_pending = 1u;
     return 0u;
+}
+
+void spectrum_net_mqtt_set_publish_flags(uint8_t flags)
+{
+    (void)flags;
 }
 
 void spectrum_net_direct_peer_mark_valid(void) { direct_peer_valid = 1u; }
@@ -860,37 +870,32 @@ void spectrum_net_background_drain_clock(void) {}
 /* DIRECT fixture: transcript RX is live/non-retained and has no unframed
    activity outside explicit steps. */
 uint8_t spectrum_net_payload_flags(void) { return 0u; }
-uint8_t spectrum_net_link_activity(void) { return 0u; }
-uint8_t spectrum_net_mqtt_activate_side(void)
+uint8_t netchesszx_session_mqtt_activate_side(void)
 {
     host_failed = 1u;
     return 0u;
 }
-uint8_t spectrum_net_mqtt_probe_seat(void)
+uint8_t netchesszx_session_mqtt_probe_seat(void)
 {
     host_failed = 1u;
     return 0u;
 }
-uint8_t spectrum_net_mqtt_publish_presence(void)
+uint8_t netchesszx_session_mqtt_publish_presence(void)
 {
     host_failed = 1u;
     return 0u;
 }
-uint8_t spectrum_net_mqtt_publish_offline(uint8_t route)
+uint8_t netchesszx_session_mqtt_publish_offline(uint8_t route)
 {
     (void)route;
     host_failed = 1u;
     return 0u;
 }
-uint8_t spectrum_net_mqtt_publish_setup(uint8_t mode)
+uint8_t netchesszx_session_mqtt_publish_setup(uint8_t mode)
 {
     (void)mode;
     host_failed = 1u;
     return 0u;
-}
-uint8_t spectrum_net_send_ping(void)
-{
-    return spectrum_net_send_text("PING");
 }
 uint8_t spectrum_net_sync_time(void)
 {
@@ -950,7 +955,7 @@ uint8_t netchesszx_asm_restore_chunk_step(uint8_t *mask,
         ? RESTORE_CHUNK_COMPLETE : RESTORE_CHUNK_PARTIAL;
 }
 
-uint8_t spectrum_gui_poll_key(void)
+uint8_t spectrum_input_poll_event(void)
 {
     const DirectParityStep *step;
 
@@ -958,7 +963,8 @@ uint8_t spectrum_gui_poll_key(void)
         host_local_confirm_pending = 0u;
         if (confirm_action == CONFIRM_DRAW_SEND) {
             host_local_draw_pending = 1u;
-        } else if (confirm_action == CONFIRM_RESET_SEND) {
+        } else if (confirm_action == CONFIRM_RESET_SEND ||
+                   confirm_action == CONFIRM_RESTART_GAME) {
             host_local_reset_pending = 1u;
         }
         if (confirm_action != CONFIRM_NONE) {
@@ -1001,12 +1007,8 @@ process_next_step:
             }
             if (step->request == DIRECT_PARITY_REQUEST_DRAW &&
                 step->length == 0u) {
-                memcpy(local_input, "/draw", 6u);
-                local_input_len = 5u;
-                local_input_cursor = 5u;
-                local_input_mode = 1u;
                 host_local_confirm_pending = 1u;
-                return 13u;
+                return SPECTRUM_GUI_KEY_MENU_DRAW;
             }
             if (step->request == DIRECT_PARITY_REQUEST_RESET &&
                 step->length == 0u) {
@@ -1015,24 +1017,16 @@ process_next_step:
             }
             if (step->request == DIRECT_PARITY_REQUEST_RESIGN &&
                 step->length == 0u) {
-                memcpy(local_input, "/resign", 8u);
-                local_input_len = 7u;
-                local_input_cursor = 7u;
-                local_input_mode = 1u;
                 host_local_confirm_pending = 1u;
                 host_resign_control_pending = 1u;
                 host_local_resign_pending = 1u;
-                return 13u;
+                return SPECTRUM_GUI_KEY_MENU_RESIGN;
             }
             if (step->request == DIRECT_PARITY_REQUEST_TAKEBACK &&
                 step->length == 0u) {
-                memcpy(local_input, "/takeback", 10u);
-                local_input_len = 9u;
-                local_input_cursor = 9u;
-                local_input_mode = 1u;
                 host_local_confirm_pending = 1u;
                 host_local_takeback_pending = 1u;
-                return 13u;
+                return SPECTRUM_GUI_KEY_MENU_TAKEBACK;
             }
             if (step->request == DIRECT_PARITY_REQUEST_RESTORE) {
                 if (step->length == 0u) {
@@ -1060,7 +1054,7 @@ process_next_step:
             } else if (host_restore_result_seen) {
                 if (step->request != DIRECT_PARITY_RESULT_ACCEPTED ||
                     step->payload == 0 || step->length != 1u ||
-                    step->value != game_ply ||
+                    step->value != netchesszx_session_state.game_ply ||
                     step->payload[0] != host_restore_phase()) {
                     host_failed = 1u;
                 }
@@ -1075,7 +1069,7 @@ process_next_step:
                 host_failed = 1u;
             }
             if (host_takeback_result_seen) {
-                if (step->value == 0u || game_ply != step->value - 1u) {
+                if (step->value == 0u || netchesszx_session_state.game_ply != step->value - 1u) {
                     host_failed = 1u;
                 }
                 host_takeback_result_seen = 0u;
@@ -1126,14 +1120,14 @@ process_next_step:
                     goto process_next_step;
                 }
             } else if (confirm_action == CONFIRM_TAKEBACK_ACCEPT &&
-                       takeback_pending_ply != 0u) {
+                       netchesszx_session_state.takeback_pending_ply != 0u) {
                 return step->request == DIRECT_PARITY_DECISION_ACCEPT
                            ? 'y' : 'n';
             } else if (confirm_action == CONFIRM_RESTORE_ACCEPT) {
                 return step->request == DIRECT_PARITY_DECISION_ACCEPT
                            ? 'y' : 'n';
             } else if (confirm_action == CONFIRM_RESET_ACCEPT &&
-                       control_pending == 0u) {
+                       netchesszx_session_state.control_pending == 0u) {
                 if (step->request == DIRECT_PARITY_DECISION_ACCEPT) {
                     host_control_reset_pending = 1u;
                     host_started_seen = 0u;
@@ -1141,7 +1135,7 @@ process_next_step:
                 }
                 return 'n';
             } else if (confirm_action != CONFIRM_RESET_ACCEPT ||
-                       control_pending != CONTROL_PENDING_DRAW_INCOMING) {
+                       netchesszx_session_state.control_pending != CONTROL_PENDING_DRAW_INCOMING) {
                 host_failed = 1u;
             } else if (step->request == DIRECT_PARITY_DECISION_ACCEPT) {
                 host_control_draw_pending = 1u;
@@ -1363,11 +1357,24 @@ static void check_input_editor_driver(void)
     check(local_input_mode == 0u && local_input_len == 0u &&
               local_input_cursor == 0u && local_input[0] == '\0',
           "host input editor stop invariants");
+
+    local_input_mode = 1u;
+    local_input_len = 2u;
+    local_input_cursor = 2u;
+    input_history_pos = 0u;
+    memcpy(local_input, "ab", 3u);
+    check(spectrum_editor_append_hot('c') && strcmp(local_input, "abc") == 0 &&
+              local_input_len == 3u && local_input_cursor == 3u &&
+              input_history_pos == INPUT_HISTORY_NONE,
+          "resident input append hot path");
+    local_input_cursor = 1u;
+    check(!spectrum_editor_append_hot('d') && strcmp(local_input, "abc") == 0,
+          "mid-line input remains in cold editor");
 }
 void netchesszx_input_edit_key_overlay(uint8_t key) { (void)key; }
 void netchesszx_input_edit_history_add_overlay(const char *text) { (void)text; }
 
-void spectrum_gui_status_phase(uint8_t phase)
+uint8_t spectrum_gui_status_phase(uint8_t phase)
 {
     uint8_t platform = SPECTRUM_STATUS_UNPACK_PLATFORM(phase);
     uint8_t old_platform = SPECTRUM_STATUS_UNPACK_PLATFORM(host_status_phase);
@@ -1383,11 +1390,28 @@ void spectrum_gui_status_phase(uint8_t phase)
                               DIRECT_PARITY_GAME_PLATFORM,
                               platform, 0);
     }
+    return 1u;
+}
+static char host_peer_name_seen[NETCHESS_PLAYER_NAME_SIZE];
+
+void spectrum_gui_moves_header(void)
+{
+    /* Compact MNAME is a header repaint; normalize a newly accepted name to
+       the common typed action, as spectrum_gui_status_phase does for MACH. */
+    if (host_trace != 0 && netchesszx_peer_name[0] != '\0' &&
+        strcmp(netchesszx_peer_name, host_peer_name_seen) != 0) {
+        (void)host_trace_push(DIRECT_PARITY_OBS_GAME,
+                              DIRECT_PARITY_LINK_NONE,
+                              DIRECT_PARITY_GAME_PEER_NAME, 0u,
+                              netchesszx_peer_name);
+    }
+    strcpy(host_peer_name_seen, netchesszx_peer_name);
 }
 void spectrum_gui_set_status_error(const char *text) { (void)text; }
-void spectrum_gui_shift_clock(int8_t hour_delta) { (void)hour_delta; }
-void spectrum_gui_game_timer_start(void)
+void spectrum_app_shift_clock(int8_t hour_delta) { (void)hour_delta; }
+void spectrum_app_game_timer_start(void)
 {
+    spectrum_time_game_timer_start();
     if (host_restore_apply_pending) {
         host_observe_restore_apply();
         return;
@@ -1411,8 +1435,9 @@ void spectrum_gui_game_timer_start(void)
                               DIRECT_PARITY_LINK_NONE, 0u, 0u, 0);
     }
 }
-void spectrum_gui_game_timer_stop(void)
+void spectrum_app_game_timer_stop(void)
 {
+    spectrum_time_game_timer_stop();
     if (host_restore_apply_pending) {
         host_observe_restore_apply();
         return;
@@ -1425,14 +1450,12 @@ void spectrum_gui_game_timer_stop(void)
                               DIRECT_PARITY_RESULT_ACCEPTED, 0);
     } else if (host_local_draw_pending) {
         host_local_draw_pending = 0u;
-        host_local_reset_pending = 1u;
         (void)host_trace_push(DIRECT_PARITY_OBS_CONTROL_RESULT,
                               DIRECT_PARITY_LINK_NONE,
                               DIRECT_PARITY_REQUEST_DRAW,
                               DIRECT_PARITY_RESULT_ACCEPTED, 0);
     } else if (host_control_draw_pending) {
         host_control_draw_pending = 0u;
-        host_control_reset_pending = 1u;
         (void)host_trace_push(DIRECT_PARITY_OBS_CONTROL,
                               DIRECT_PARITY_LINK_NONE,
                               DIRECT_PARITY_REQUEST_DRAW,
@@ -1440,15 +1463,11 @@ void spectrum_gui_game_timer_stop(void)
     }
     host_started_seen = 0u;
 }
-void spectrum_gui_game_timer_save(uint8_t *timers)
+void spectrum_app_game_timer_restore(const uint8_t *timers)
 {
-    memset(timers, 0, 6u);
+    spectrum_time_game_timer_restore(timers);
 }
-void spectrum_gui_game_timer_restore(const uint8_t *timers)
-{
-    (void)timers;
-}
-void spectrum_gui_move_timer_reset(void) {}
+void spectrum_app_move_timer_reset(void) { spectrum_time_move_timer_reset(); }
 void spectrum_gui_set_turn_label(uint8_t mode) { (void)mode; }
 void spectrum_gui_set_connected(uint8_t connected)
 {
@@ -1458,7 +1477,7 @@ void spectrum_gui_set_connected(uint8_t connected)
     }
     if (connected == 0u) {
         host_chat_ping_reset_forbidden = 0u;
-        if (confirm_action != CONFIRM_NONE || restore_rx_mask != 0u) {
+        if (confirm_action != CONFIRM_NONE || netchesszx_session_state.restore_rx_mask != 0u) {
             host_failed = 1u;
         }
         host_restore_control_pending = 0u;
@@ -1471,34 +1490,52 @@ void spectrum_gui_set_connected(uint8_t connected)
 }
 void spectrum_gui_notify(const char *text, uint8_t is_error)
 {
+    snprintf(host_last_notice, sizeof host_last_notice, "%s", text);
     (void)is_error;
     if (strcmp(text, "Load cancelled") == 0) {
         host_observe_restore_rejected(0u);
     } else if (strcmp(text, "RESET cancelled: no response") == 0 ||
-               strcmp(text, "DRAW cancelled: no response") == 0) {
+               strcmp(text, "DRAW cancelled: no response") == 0 ||
+               strcmp(text, "TAKEBACK cancelled: no response") == 0) {
         (void)host_trace_push(
             DIRECT_PARITY_OBS_CONTROL_RESULT,
             DIRECT_PARITY_LINK_NONE,
+            text[0] == 'T' ? DIRECT_PARITY_REQUEST_TAKEBACK :
             text[0] == 'R' ? DIRECT_PARITY_REQUEST_RESET
                            : DIRECT_PARITY_REQUEST_DRAW,
             DIRECT_PARITY_RESULT_CANCELLED,
+            host_timeout_active ? 0 :
             text[0] == 'R' ? "NACK RESET" : "NACK DRAW");
-    } else if (strcmp(text, "RESET request expired") == 0 ||
-               strcmp(text, "DRAW request expired") == 0) {
+    } else if (strcmp(text, "RESET request withdrawn") == 0 ||
+               strcmp(text, "DRAW request withdrawn") == 0 ||
+               strcmp(text, "TAKEBACK request withdrawn") == 0) {
         (void)host_trace_push(
             DIRECT_PARITY_OBS_CONTROL_RESULT,
             DIRECT_PARITY_LINK_NONE,
+            text[0] == 'T' ? DIRECT_PARITY_REQUEST_TAKEBACK :
             text[0] == 'R' ? DIRECT_PARITY_REQUEST_RESET
                            : DIRECT_PARITY_REQUEST_DRAW,
             DIRECT_PARITY_RESULT_EXPIRED, 0);
     }
 }
-void spectrum_gui_notify_persistent(const char *text) { (void)text; }
+void spectrum_gui_notify_persistent(const char *text)
+{
+    if (host_local_resign_pending && strcmp(text, msg_resignation_lost) == 0 &&
+        !netchesszx_session_state.resign_pending) {
+        host_local_resign_pending = 0u;
+        (void)host_trace_push(DIRECT_PARITY_OBS_CONTROL_RESULT,
+                              DIRECT_PARITY_LINK_NONE,
+                              DIRECT_PARITY_REQUEST_RESIGN,
+                              DIRECT_PARITY_RESULT_ACCEPTED, 0);
+    }
+}
 void spectrum_gui_notify_success(const char *text) { (void)text; }
 void spectrum_gui_notify_msg(uint16_t packed)
 {
     uint8_t msg_id = SPECTRUM_GUI_MSG_ID(packed);
     uint8_t kind = SPECTRUM_GUI_MSG_KIND(packed);
+
+    host_last_msg_id = msg_id;
 
     if (kind > SPECTRUM_GUI_MSG_KIND_SUCCESS) {
         host_failed = 1u;
@@ -1520,10 +1557,17 @@ void spectrum_gui_notify_msg(uint16_t packed)
                               DIRECT_PARITY_LINK_NONE,
                               DIRECT_PARITY_REQUEST_TAKEBACK, 0u, 0);
     }
-    if (msg_id == SPECTRUM_GUI_MSG_RESET_REQUEST) {
+    if (msg_id == SPECTRUM_GUI_MSG_RESET_REQUEST ||
+        msg_id == SPECTRUM_GUI_MSG_RESTART_REQUEST) {
         (void)host_trace_push(DIRECT_PARITY_OBS_DECISION,
                               DIRECT_PARITY_LINK_NONE,
                               DIRECT_PARITY_REQUEST_RESET, 0u, 0);
+    }
+    if (msg_id == SPECTRUM_GUI_MSG_DRAW_REJECTED && host_local_draw_pending) {
+        host_local_draw_pending = 0u;
+        (void)host_trace_push(DIRECT_PARITY_OBS_CONTROL_RESULT,
+                              DIRECT_PARITY_LINK_NONE, DIRECT_PARITY_REQUEST_DRAW,
+                              DIRECT_PARITY_RESULT_REJECTED, "NACK DRAW");
     }
     if (msg_id == SPECTRUM_GUI_MSG_TAKEBACK_DONE &&
         host_local_takeback_pending) {
@@ -1546,12 +1590,13 @@ void spectrum_gui_notify_msg(uint16_t packed)
             (uint8_t)(msg_id == SPECTRUM_GUI_MSG_LOAD_FAIL));
     }
 }
-void spectrum_gui_tick(void) {}
+void spectrum_app_tick(void) {}
 void spectrum_gui_set_board_view(uint8_t local_black)
 {
     host_board_flipped = local_black;
 }
 uint8_t spectrum_gui_is_board_flipped(void) { return host_board_flipped; }
+uint8_t spectrum_gui_are_board_pieces_visible(void) { return host_pieces_visible; }
 void spectrum_gui_toggle_board_view(void) { host_board_flipped ^= 1u; }
 void spectrum_gui_set_board_snapshot(const char *cells)
 {
@@ -1614,7 +1659,7 @@ void spectrum_gui_reset_moves(void) {}
 void spectrum_gui_add_move(const char *ply, const char *move)
 {
     if (host_restore_apply_pending) {
-        const char *expected = (game_ply & 1u) != 0u ? "1" : "2";
+        const char *expected = (netchesszx_session_state.game_ply & 1u) != 0u ? "1" : "2";
 
         ++host_restore_marker_seen;
         if (move != 0 || strcmp(ply, expected) != 0) {
@@ -1625,7 +1670,7 @@ void spectrum_gui_add_move(const char *ply, const char *move)
 void spectrum_gui_prepare_move_row(void) {}
 void spectrum_gui_remove_last_move(uint16_t ply)
 {
-    if (ply == 0u || game_ply != ply - 1u) {
+    if (ply == 0u || netchesszx_session_state.game_ply != ply - 1u) {
         host_failed = 1u;
         return;
     }
@@ -1662,13 +1707,25 @@ void spectrum_gui_add_chat(char who, const char *text)
 void spectrum_gui_prepare_move(const char *move) { (void)move; }
 void spectrum_gui_apply_move(const char *move)
 {
-    uint8_t local = (uint8_t)(pending_local_ply != 0u);
+    /* A remote move was delivered at its board commit, before the ACK. */
+    if (netchesszx_session_state.pending_local_ply == 0u) {
+        return;
+    }
+    (void)host_trace_push(DIRECT_PARITY_OBS_GAME,
+                          DIRECT_PARITY_LINK_NONE,
+                          DIRECT_PARITY_GAME_LOCAL_MOVE,
+                          netchesszx_session_state.game_ply, move);
+}
+void netchesszx_host_session_observe_remote_move(const char *move)
+{
+    if (netchesszx_session_view()->takeback_pending_ply == 0u) {
+        host_local_takeback_pending = 0u;
+    }
 
     (void)host_trace_push(DIRECT_PARITY_OBS_GAME,
                           DIRECT_PARITY_LINK_NONE,
-                          local ? DIRECT_PARITY_GAME_LOCAL_MOVE
-                                : DIRECT_PARITY_GAME_REMOTE_MOVE,
-                          game_ply, move);
+                          DIRECT_PARITY_GAME_REMOTE_MOVE,
+                          netchesszx_session_state.game_ply, move);
 }
 void netchesszx_host_session_observe_move_result(const char *notation)
 {
@@ -1685,18 +1742,6 @@ void netchesszx_host_session_observe_move_rejection(const char *reason)
                           DIRECT_PARITY_RESULT_REJECTED, reason);
 }
 void spectrum_gui_set_input(const char *text) { (void)text; }
-void spectrum_gui_set_input_edit(const char *text, uint8_t len, uint8_t cursor)
-{
-    (void)text;
-    (void)len;
-    (void)cursor;
-}
-void spectrum_gui_input_cell(uint8_t pos, char c, uint8_t cursor)
-{
-    (void)pos;
-    (void)c;
-    (void)cursor;
-}
 void spectrum_gui_redraw_square(uint8_t row, uint8_t col)
 {
     (void)row;
@@ -1705,6 +1750,7 @@ void spectrum_gui_redraw_square(uint8_t row, uint8_t col)
 }
 void spectrum_gui_mark_cursor(uint8_t row, uint8_t col, uint8_t selected)
 {
+    ++host_cursor_marks;
     (void)row;
     (void)col;
     (void)selected;
@@ -1716,11 +1762,16 @@ uint8_t spectrum_gui_show_about(void)
     return 0u;
 }
 uint8_t spectrum_gui_about_visible(void) { return host_about_visible; }
-uint8_t spectrum_gui_show_fileui(void)
+uint8_t spectrum_gui_show_board_page(uint8_t page)
 {
-    host_failed = 1u;
-    return 0u;
+    host_about_visible = page;
+    return 1u;
 }
+uint8_t spectrum_render_game_stats(void)
+{
+    return 1u;
+}
+uint8_t spectrum_render_chlog(void) { return 0u; }
 uint8_t spectrum_gui_fileui_visible(void) { return host_fileui_visible; }
 uint8_t spectrum_gui_handle_menu_key(uint8_t key)
 {
@@ -1769,11 +1820,13 @@ uint8_t netchesszx_setup_step_overlay(uint8_t key)
     return 0u;
 }
 void netchesszx_board_theme_apply(uint8_t theme) { (void)theme; }
+static uint8_t host_piece_set_loads;
+static uint8_t host_piece_set_loaded;
 uint8_t netchesszx_piece_set_load(uint8_t set)
 {
-    (void)set;
-    host_failed = 1u;
-    return 0u;
+    ++host_piece_set_loads;
+    host_piece_set_loaded = set;
+    return 1u;
 }
 
 void spectrum_board_clear_legal_hints(void) {}
@@ -1804,9 +1857,68 @@ const char *spectrum_fileui_selected_name(void)
     host_failed = 1u;
     return "";
 }
+uint8_t spectrum_recovery_capture(uint8_t flags, char *output)
+{
+    spectrum_board_snapshot_t snapshot;
+    netchesszx_save_meta_t meta;
+
+    /* RECOVERY encodes the live position. */
+    spectrum_board_snapshot_save(&snapshot);
+    host_recovery_cursor_marks = host_cursor_marks;
+    meta.ply = netchesszx_session_view()->game_ply;
+    meta.flags = flags;
+    meta.host_color = netchesszx_session_identity_host_color();
+    meta.view_flags = spectrum_gui_is_board_flipped()
+        ? NETCHESSZX_SAVE_VIEW_FLIPPED
+        : 0u;
+    memcpy(meta.timers, spectrum_time_view()->game_timers,
+           sizeof meta.timers);
+    if ((!output && !host_recovery_write_ok) ||
+        !spectrum_restore_build_b64(&snapshot, &meta,
+                                    output ? output : (char *)host_recovery_saved)) {
+        return 0u;
+    }
+    if (!output) {
+        ++host_recovery_writes;
+    }
+    return 1u;
+}
+#ifdef NETCHESSZX_RECOVERY
+static uint8_t host_recovery_retires;
+void spectrum_recovery_retire(void)
+{
+    ++host_recovery_retires;
+}
+#endif
 uint8_t spectrum_saveload_run(uint8_t entry, const char *name, const char *buf)
 {
-    (void)name;
+    if (entry & SPECTRUM_RECOVERY_DISPATCH) {
+        entry &= 0x1fu;
+    }
+    if (name == 0) {
+        if (entry == SPECTRUM_RECOVERY_RESUME) {
+            if (!host_recovery_available) {
+                return 0u;
+            }
+            if (buf != 0) {
+                memcpy((char *)buf, host_recovery_payload,
+                       NETCHESSZX_SAVE_WIRE_B64_SIZE);
+            }
+            return 1u;
+        }
+        if (entry == SPECTRUM_RECOVERY_WRITE && buf != 0) {
+            memcpy(host_recovery_saved, buf, sizeof host_recovery_saved);
+            ++host_recovery_writes;
+            return 1u;
+        }
+        host_failed = 1u;
+        return 0u;
+    }
+    if (entry == SPECTRUM_SAVELOAD_SAVE && buf != 0) {
+        memcpy(host_manual_saved, buf, sizeof host_manual_saved);
+        ++host_manual_saves;
+        return 1u;
+    }
     if (entry != SPECTRUM_OVL_SAVELOAD_LOAD_NCZS ||
         host_restore_file_payload == 0 || buf == 0) {
         host_failed = 1u;
@@ -1820,6 +1932,7 @@ void spectrum_frame_wait(void)
 {
     ++host_now_ticks;
 }
+uint16_t spectrum_frame_count(void) { return host_now_ticks; }
 
 uint8_t direct_spectrum_run(const DirectParityScenario *scenario,
                             DirectParityTrace *trace)
@@ -1889,6 +2002,11 @@ uint8_t direct_spectrum_run(const DirectParityScenario *scenario,
     host_about_visible = 0u;
     host_fileui_visible = 0u;
     host_restore_file_payload = 0;
+    host_recovery_payload = 0;
+    host_recovery_available = 0u;
+    host_recovery_writes = 0u;
+    host_recovery_write_ok = 1u;
+    host_manual_saves = 0u;
     host_restore_apply_pending = 0u;
     host_restore_marker_seen = 0u;
     host_restore_domain_pending = 0u;
@@ -2031,7 +2149,7 @@ static void check_mqtt_peer_loss_blocks_taboption(void)
 
     host_menu_key_calls = 0u;
     host_menu_visible = 0u;
-    game_status_active = 1u;
+    netchesszx_session_state.game_status_active = 1u;
     netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
                                  NETCHESSZX_TRANSPORT_MQTT,
                                  NETCHESSZX_COLOR_WHITE);
@@ -2063,18 +2181,18 @@ static void check_mqtt_peer_loss_blocks_taboption(void)
     check(host_menu_key_calls == 2u && host_menu_visible,
           "TABOPTION available again after new peer");
     spectrum_gui_hide_menu();
-    game_over = 1u;
+    netchesszx_session_state.game_over = 1u;
     check(process_local_key(SPECTRUM_GUI_KEY_MENU),
           "TABOPTION key consumed at rematch boundary");
     check(host_menu_key_calls == 3u && host_menu_visible,
           "TABOPTION remains available at rematch boundary with peer");
     spectrum_gui_hide_menu();
-    game_ply = 42u;
+    netchesszx_session_state.game_ply = 42u;
     host_pieces_visible = 1u;
     check(session_presence_handle_event(NETCHESSZX_SESSION_EVENT_MQTT_PEER_OFFLINE,
                                         payload, 0u) == SESSION_DISPATCH_HANDLED,
           "MQTT peer-offline handled from game over");
-    check(!game_over && game_ply == 0u && !host_pieces_visible,
+    check(!netchesszx_session_state.game_over && netchesszx_session_state.game_ply == 0u && !host_pieces_visible,
           "MQTT peer loss discards finished board and history");
 }
 
@@ -2082,10 +2200,10 @@ static void check_mqtt_peer_identity_reset(void)
 {
     char payload[] = "";
 
-    game_status_active = 1u;
-    game_over = 0u;
+    netchesszx_session_state.game_status_active = 1u;
+    netchesszx_session_state.game_over = 0u;
     local_turn = 0u;
-    start_pending = 0u;
+    netchesszx_session_state.start_pending = 0u;
     confirm_action = CONFIRM_NONE;
     netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
                                  NETCHESSZX_TRANSPORT_MQTT,
@@ -2124,6 +2242,17 @@ static void check_direct_guest_disconnect_forgets_side(void)
     clear_disconnected_session_state();
     check(!netchesszx_host_color_ready,
           "DIRECT guest disconnect forgets learned side");
+
+    /* The listen/reconnect wait after a DIRECT loss never restores the side
+       panels, so the disconnect itself must repaint the MOVES header. */
+    netchesszx_session_peer_mark_ready();
+    strcpy(netchesszx_peer_name, "PEPE");
+    spectrum_gui_moves_header();
+    check(strcmp(host_peer_name_seen, "PEPE") == 0,
+          "MOVES header shows the DIRECT peer name");
+    handle_opponent_disconnected();
+    check(netchesszx_peer_name[0] == '\0' && host_peer_name_seen[0] == '\0',
+          "DIRECT disconnect repaints the MOVES header without the peer name");
 }
 
 static void check_cursor_reselects_own_piece(void)
@@ -2135,25 +2264,32 @@ static void check_cursor_reselects_own_piece(void)
                                  NETCHESSZX_COLOR_WHITE);
     netchesszx_session_peer_mark_ready();
     spectrum_board_reset();
-    game_status_active = 1u;
-    control_pending = 0u;
+    netchesszx_session_state.game_status_active = 1u;
+    netchesszx_session_state.control_pending = 0u;
     local_turn = 1u;
-    pending_local_ply = 0u;
+    netchesszx_session_state.pending_local_ply = 0u;
     netchesszx_movement_hints = 0u;
-    selected_row = 7u;
-    selected_col = 1u;
-    cursor_row = 7u;
-    cursor_col = 6u;
+    host_board_flipped = 0u;
+    cursor_home(0x0406u);
+    cursor_move(KEY_DOWN);
+    cursor_move(KEY_LEFT);
+    cursor_move(KEY_LEFT);
+    cursor_move(KEY_LEFT);
+    spectrum_ux_board_activate();
+    cursor_move(KEY_RIGHT);
+    cursor_move(KEY_RIGHT);
+    cursor_move(KEY_RIGHT);
+    cursor_move(KEY_RIGHT);
+    cursor_move(KEY_RIGHT);
 
     check(cursor_select_or_move('\r'), "own-piece reselection consumed");
-    check(selected_row == cursor_row && selected_col == cursor_col,
+    check(spectrum_ux_selected_position() == spectrum_ux_cursor_position(),
           "own-piece reselection changes move origin");
 
-    game_status_active = 0u;
+    netchesszx_session_state.game_status_active = 0u;
     local_turn = 0u;
     netchesszx_movement_hints = saved_hints;
-    selected_row = NO_SQUARE;
-    selected_col = NO_SQUARE;
+    cursor_hide();
 }
 
 static void check_turn_grant_clears_stale_cursor(void)
@@ -2163,19 +2299,23 @@ static void check_turn_grant_clears_stale_cursor(void)
                                  NETCHESSZX_COLOR_WHITE);
     netchesszx_session_peer_mark_ready();
     spectrum_board_reset();
-    game_status_active = 1u;
+    netchesszx_session_state.game_status_active = 1u;
+    local_turn = 1u;
+    netchesszx_session_state.pending_local_ply = 0u;
+    host_board_flipped = 0u;
+    cursor_home(0x0406u);
+    cursor_move(KEY_DOWN);
+    cursor_move(KEY_RIGHT);
+    cursor_move(KEY_RIGHT);
+    spectrum_ux_board_activate();
     local_turn = 0u;
-    selected_row = 7u;
-    selected_col = 6u;
-    cursor_row = 7u;
-    cursor_col = 6u;
     host_redraw_square_calls = 0u;
 
     turn_set_notice(1u, 0u);
-    check(host_redraw_square_calls != 0u && selected_row == NO_SQUARE,
+    check(host_redraw_square_calls != 0u && spectrum_ux_selected_position() == 0xffffu,
           "turn grant clears stale board cursor before repositioning");
 
-    game_status_active = 0u;
+    netchesszx_session_state.game_status_active = 0u;
     local_turn = 0u;
     netchesszx_session_peer_clear();
 }
@@ -2187,38 +2327,47 @@ static void check_setup_preview_skips_first_start_redraw(void)
                                  NETCHESSZX_COLOR_WHITE);
     netchesszx_session_peer_mark_ready();
     spectrum_board_reset();
-    game_status_active = 0u;
-    game_over = 0u;
-    start_pending = 0u;
-    resign_pending = 0u;
+    netchesszx_session_state.game_status_active = 0u;
+    netchesszx_session_state.game_over = 0u;
+    netchesszx_session_state.start_pending = 0u;
+    netchesszx_session_state.resign_pending = 0u;
     pending_local_clear();
     host_pieces_visible = 1u;
     host_animate_calls = 0u;
 
+    host_status_phase_calls = 0u;
     game_start_state();
+    check(host_status_phase_calls == 1u,
+          "GAME START paints the status and turn once");
     check(host_animate_calls == 0u && host_pieces_visible,
           "first start keeps setup pieces without redraw");
 
     host_animate_calls = 0u;
-    game_over = 1u;
+    netchesszx_session_state.game_over = 1u;
+    host_status_phase_calls = 0u;
     game_start_state();
+    check(host_status_phase_calls == 1u,
+          "GAME START paints the status and turn once");
     check(host_animate_calls == 1u && host_pieces_visible,
           "rematch still animates pieces onto the board");
 
-    game_status_active = 0u;
-    game_over = 0u;
+    netchesszx_session_state.game_status_active = 0u;
+    netchesszx_session_state.game_over = 0u;
     host_pieces_visible = 1u;
     host_board_flipped = 0u;
     host_animate_calls = 0u;
     netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
                                  NETCHESSZX_TRANSPORT_DIRECT,
                                  NETCHESSZX_COLOR_WHITE);
+    host_status_phase_calls = 0u;
     game_start_state();
+    check(host_status_phase_calls == 1u,
+          "GAME START paints the status and turn once");
     check(host_animate_calls == 1u && host_pieces_visible && host_board_flipped,
           "guest start animates when setup preview faces the other way");
 
-    game_status_active = 0u;
-    game_over = 0u;
+    netchesszx_session_state.game_status_active = 0u;
+    netchesszx_session_state.game_over = 0u;
     local_turn = 0u;
     netchesszx_session_peer_clear();
 }
@@ -2230,23 +2379,23 @@ static void check_local_move_ply_overflow(void)
                                  NETCHESSZX_COLOR_WHITE);
     netchesszx_session_peer_mark_ready();
     spectrum_board_reset();
-    game_status_active = 1u;
-    control_pending = 0u;
+    netchesszx_session_state.game_status_active = 1u;
+    netchesszx_session_state.control_pending = 0u;
     pending_local_clear();
     takeback_clear();
-    game_ply = 65535u;
+    netchesszx_session_state.game_ply = 65535u;
     host_uart_feed_len = 0u;
     host_uart_feed_pos = 0u;
     host_uart_tx_len = 0u;
 
     check(send_local_move("e2e4") == LOCAL_MOVE_REJECTED &&
               host_uart_tx_len == 0u &&
-              pending_local_ply == 0u &&
-              game_ply == 65535u,
+              netchesszx_session_state.pending_local_ply == 0u &&
+              netchesszx_session_state.game_ply == 65535u,
           "local move beyond ply 65535 rejected before transmission");
 
-    game_status_active = 0u;
-    game_ply = 0u;
+    netchesszx_session_state.game_status_active = 0u;
+    netchesszx_session_state.game_ply = 0u;
     netchesszx_session_peer_clear();
 }
 
@@ -2258,47 +2407,55 @@ static void check_chat_editor_during_pending_control(void)
     netchesszx_session_peer_mark_ready();
     host_menu_visible = 0u;
     confirm_action = CONFIRM_NONE;
-    pending_local_ply = 0u;
+    netchesszx_session_state.pending_local_ply = 0u;
     local_input_mode = 0u;
-    game_over = 0u;
-    game_status_active = 1u;
-    control_pending = CONTROL_PENDING_DRAW_SENT;
+    netchesszx_session_state.game_over = 0u;
+    netchesszx_session_state.game_status_active = 1u;
+    netchesszx_session_state.control_pending = CONTROL_PENDING_DRAW_SENT;
 
     check(process_local_key(13u), "chat editor opens during pending draw");
     check(local_input_mode, "pending draw does not block chat editor");
+    host_board_flipped = 0u;
+    check(process_local_key(SPECTRUM_GUI_KEY_MENU_FLIP) && !host_board_flipped,
+          "active editor consumes flip key before board presentation");
     check(process_local_key(SPECTRUM_GUI_KEY_MENU),
           "TABOPTION opens from chat editor");
     check(!local_input_mode && host_menu_visible,
           "TABOPTION closes chat editor before opening");
     spectrum_gui_hide_menu();
 
-    game_over = 1u;
-    game_status_active = 0u;
-    control_pending = CONTROL_PENDING_RESET;
-    last_control_accept = CONTROL_ACCEPT_RESIGN;
-    check(process_local_key(13u), "chat editor opens during resign rematch");
+    check(process_local_key(SPECTRUM_GUI_KEY_MENU_FLIP) && host_board_flipped,
+          "inactive editor allows board flip");
+
+    netchesszx_session_state.game_over = 1u;
+    netchesszx_session_state.game_status_active = 0u;
+    netchesszx_session_state.control_pending = CONTROL_PENDING_RESET;
+    netchesszx_session_state.last_control_accept = CONTROL_ACCEPT_NONE;
+    check(process_local_key(13u), "Enter during a pending restart");
     check(local_input_mode && confirm_action == CONFIRM_NONE,
-          "resign rematch does not open restart prompt");
+          "pending restart keeps chat open and arms no prompt");
     edit_stop_clear();
 
-    control_pending = 0u;
-    last_control_accept = CONTROL_ACCEPT_NONE;
-    game_over = 0u;
+    netchesszx_session_state.control_pending = 0u;
+    netchesszx_session_state.last_control_accept = CONTROL_ACCEPT_NONE;
+    netchesszx_session_state.game_over = 0u;
 }
 
 static void check_non_chat_input_liveness_status(void)
 {
+    uint8_t old_piece_set;
+
     netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
                                  NETCHESSZX_TRANSPORT_DIRECT,
                                  NETCHESSZX_COLOR_WHITE);
     netchesszx_session_peer_mark_ready();
     host_menu_visible = 0u;
     confirm_action = CONFIRM_NONE;
-    pending_local_ply = 0u;
-    takeback_pending_ply = 0u;
-    restore_rx_mask = 0u;
-    game_over = 0u;
-    game_status_active = 1u;
+    netchesszx_session_state.pending_local_ply = 0u;
+    netchesszx_session_state.takeback_pending_ply = 0u;
+    netchesszx_session_state.restore_rx_mask = 0u;
+    netchesszx_session_state.game_over = 0u;
+    netchesszx_session_state.game_status_active = 1u;
 
     local_input_mode = 1u;
     check(process_local_key('x') == 1u,
@@ -2315,16 +2472,22 @@ static void check_non_chat_input_liveness_status(void)
     check(process_local_key(KEY_CANCEL) == 1u && !local_input_mode,
           "closing editor has normal key status");
 
-    memcpy(local_input, "/draw", 6u);
-    local_input_len = 5u;
-    local_input_cursor = 5u;
-    local_input_mode = 1u;
-    check(process_local_key(13u) == 1u &&
+    old_piece_set = netchesszx_piece_set_index;
+    host_piece_set_loads = 0u;
+    check(process_local_key(SPECTRUM_GUI_KEY_MENU_ASSET) == 1u &&
+              host_piece_set_loads == 1u &&
+              host_piece_set_loaded == (uint8_t)((old_piece_set + 1u) %
+                  NETCHESSZX_PIECE_SET_COUNT) &&
+              netchesszx_piece_set_index == host_piece_set_loaded,
+          "menu ASSET cycles and loads the next piece set");
+    netchesszx_piece_set_index = old_piece_set;
+
+    check(process_local_key(SPECTRUM_GUI_KEY_MENU_DRAW) == 1u &&
               confirm_action == CONFIRM_DRAW_SEND,
-          "local command has normal key status");
+          "menu DRAW reuses the local command policy");
     confirm_action = CONFIRM_NONE;
     edit_stop_clear();
-    game_status_active = 0u;
+    netchesszx_session_state.game_status_active = 0u;
     netchesszx_session_peer_clear();
 }
 
@@ -2332,15 +2495,117 @@ static void check_about_dismisses_before_confirmation(void)
 {
     host_about_visible = 1u;
     confirm_action = CONFIRM_TAKEBACK_ACCEPT;
-    takeback_pending_ply = 2u;
+    netchesszx_session_state.takeback_pending_ply = 2u;
 
     check(process_local_key('x') == 1u && !host_about_visible,
           "About dismisses before hidden confirmation input");
-    check(confirm_action == CONFIRM_TAKEBACK_ACCEPT && takeback_pending_ply == 2u,
+    check(confirm_action == CONFIRM_TAKEBACK_ACCEPT && netchesszx_session_state.takeback_pending_ply == 2u,
           "About dismissal preserves pending confirmation");
 
     confirm_action = CONFIRM_NONE;
-    takeback_pending_ply = 0u;
+    netchesszx_session_state.takeback_pending_ply = 0u;
+}
+
+static void check_game_stats_keys(void)
+{
+    netchesszx_session_peer_mark_ready();
+    netchesszx_session_state.game_over = 1u;
+    netchesszx_session_state.resign_pending = 0u;
+    netchesszx_session_state.control_pending = 0u;
+    local_turn = 0u;
+    local_input_mode = 0u;
+    confirm_action = CONFIRM_NONE;
+    check(process_local_key(13u) && local_input_mode &&
+              confirm_action == CONFIRM_NONE,
+          "Enter after OVER opens chat, not the restart prompt");
+    check(process_local_key(KEY_CANCEL) && !local_input_mode,
+          "chat after OVER closes normally");
+    check(process_local_key('x') && !local_input_mode &&
+              confirm_action == CONFIRM_RESTART_GAME,
+          "a key after OVER shows the statistics/restart prompt");
+    check(process_local_key(13u) && local_input_mode &&
+              confirm_action == CONFIRM_NONE,
+          "Enter on the restart prompt opens chat and drops the offer");
+    check(process_local_key(KEY_CANCEL) && !local_input_mode,
+          "chat from the restart prompt closes normally");
+    check(process_local_key('x') && confirm_action == CONFIRM_RESTART_GAME,
+          "the next key re-arms the restart prompt");
+    check(process_local_key('s') && host_about_visible == 3u,
+          "S opens statistics from the restart prompt");
+    check(process_local_key('y') && !host_about_visible &&
+              confirm_action == CONFIRM_RESTART_GAME &&
+              !netchesszx_session_state.control_pending,
+          "any key closes statistics without requesting RESET");
+    check(process_local_key('s') && host_about_visible == 3u,
+          "statistics can be reopened without changing OVER");
+    check(process_local_key('n') && !host_about_visible &&
+              confirm_action == CONFIRM_RESTART_GAME,
+          "closing statistics preserves the restart prompt");
+    check(process_local_key('s') && host_about_visible == 3u,
+          "statistics reopen before a peer request");
+    confirm_action = CONFIRM_RESET_ACCEPT; /* peer RESET arrived meanwhile */
+    check(process_local_key('y') && !host_about_visible &&
+              confirm_action == CONFIRM_RESET_ACCEPT &&
+              !netchesszx_session_state.control_pending,
+          "closing statistics never answers the peer's restart request");
+    check(process_local_key('s') && host_about_visible == 3u &&
+              confirm_action == CONFIRM_RESET_ACCEPT,
+          "S opens statistics from the opponent's restart request in OVER");
+    check(process_local_key('x') && !host_about_visible &&
+              confirm_action == CONFIRM_RESET_ACCEPT,
+          "closing statistics keeps the opponent's restart request");
+    /* Host waiting for the answer: WAITING ACK only; no statistics, no
+       withdrawal; BREAK leaves to Setup. */
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    netchesszx_session_state.game_over = 1u;
+    confirm_action = CONFIRM_NONE;
+    netchesszx_session_state.control_pending = CONTROL_PENDING_RESET;
+    check(process_local_key('x') && confirm_action == CONFIRM_NONE &&
+              netchesszx_session_state.control_pending == CONTROL_PENDING_RESET,
+          "other keys keep a pending restart request");
+    check(process_local_key('s') && !host_about_visible &&
+              netchesszx_session_state.control_pending == CONTROL_PENDING_RESET,
+          "S does not open statistics while the restart request is pending");
+    check(process_local_key('n') && confirm_action == CONFIRM_NONE &&
+              netchesszx_session_state.control_pending == CONTROL_PENDING_RESET,
+          "N does not withdraw the restart request");
+    setup_restart_requested = 0u;
+    (void)process_local_key(KEY_CANCEL);
+    check(setup_restart_requested, "BREAK while waiting leaves to Setup");
+    setup_restart_requested = 0u;
+
+    /* Guest: no offer of its own; it waits for the host's with S. */
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_BLACK);
+    netchesszx_session_peer_mark_ready();
+    netchesszx_session_state.game_over = 1u;
+    netchesszx_session_state.control_pending = 0u;
+    confirm_action = CONFIRM_NONE;
+    check(process_local_key('x') && confirm_action == CONFIRM_NONE &&
+              !netchesszx_session_state.control_pending,
+          "a guest key after OVER arms no restart request");
+    check(process_local_key('y') && confirm_action == CONFIRM_NONE &&
+              !netchesszx_session_state.control_pending,
+          "Y on the guest's wait sends nothing");
+    check(process_local_key('s') && host_about_visible == 3u,
+          "S opens statistics from the guest's wait");
+    check(process_local_key('x') && !host_about_visible &&
+              confirm_action == CONFIRM_NONE,
+          "closing statistics returns the guest to its wait");
+    (void)process_local_key(KEY_CANCEL);
+    check(setup_restart_requested, "BREAK on the guest's wait leaves to Setup");
+    setup_restart_requested = 0u;
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_state.control_pending = 0u;
+    confirm_action = CONFIRM_NONE;
+    netchesszx_session_state.game_over = 0u;
+    netchesszx_session_peer_clear();
 }
 
 static void check_restore_transfer_blocks_file_and_editor(void)
@@ -2356,9 +2621,9 @@ static void check_restore_transfer_blocks_file_and_editor(void)
     host_menu_visible = 0u;
     confirm_action = CONFIRM_NONE;
     local_input_mode = 0u;
-    game_over = 0u;
-    game_status_active = 1u;
-    restore_rx_mask = RESTORE_TX_PENDING;
+    netchesszx_session_state.game_over = 0u;
+    netchesszx_session_state.game_status_active = 1u;
+    netchesszx_session_state.restore_rx_mask = RESTORE_TX_PENDING;
 
     check(process_local_key(13u),
           "restore TX consumes editor key");
@@ -2371,7 +2636,7 @@ static void check_restore_transfer_blocks_file_and_editor(void)
 
     memset(restore_b64_pending, 'R', sizeof(restore_b64_pending));
     memcpy(partial, restore_b64_pending, sizeof(partial));
-    restore_rx_mask = (uint8_t)(RESTORE_RX_RECEIVE | 1u);
+    netchesszx_session_state.restore_rx_mask = (uint8_t)(RESTORE_RX_RECEIVE | 1u);
 
     check(process_local_key(13u),
           "restore transfer consumes editor key");
@@ -2390,28 +2655,526 @@ static void check_restore_transfer_blocks_file_and_editor(void)
 
     host_fileui_visible = 0u;
     host_board_flipped = 0u;
-    selected_row = NO_SQUARE;
-    selected_col = NO_SQUARE;
-    cursor_row = 4u;
-    cursor_col = 4u;
     local_turn = 1u;
-    pending_local_ply = 0u;
+    netchesszx_session_state.pending_local_ply = 0u;
+    cursor_home(0x0406u);
+    cursor_move(KEY_UP);
+    cursor_move(KEY_UP);
     check(process_local_key(KEY_DOWN),
           "restore receive consumes cursor key");
-    check(pending_local_ply == 0u && cursor_row == 4u && cursor_col == 4u &&
+    check(netchesszx_session_state.pending_local_ply == 0u && spectrum_ux_cursor_position() == 36u &&
               memcmp(partial, restore_b64_pending, sizeof(partial)) == 0,
           "restore receive preserves partial chunk and sends no move");
 
-    restore_rx_mask = RESTORE_RX_APPLIED;
+    netchesszx_session_state.restore_rx_mask = RESTORE_RX_APPLIED;
     check(process_local_key(KEY_DOWN),
           "applied restore cache permits cursor key");
-    check(cursor_row == 5u,
+    check(spectrum_ux_cursor_position() == 44u,
           "applied restore cache does not freeze interaction");
 
     host_fileui_visible = 0u;
-    restore_rx_mask = 0u;
-    game_status_active = 0u;
+    netchesszx_session_state.restore_rx_mask = 0u;
+    netchesszx_session_state.game_status_active = 0u;
     netchesszx_session_peer_clear();
+}
+
+static void check_loaded_timers_survive_application(void)
+{
+    const uint8_t flags[] = { NETCHESSZX_SAVE_FLAG_ACTIVE, 0u,
+        NETCHESSZX_SAVE_FLAG_ACTIVE | NETCHESSZX_SAVE_FLAG_GAME_OVER };
+    const uint8_t timers[6] = { 1u, 2u, 3u, 4u, 5u, 6u };
+    netchesszx_save_meta_t meta = { 0 };
+    DirectParityTrace trace = { 0 };
+    uint8_t i;
+
+    host_trace = &trace;
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    spectrum_board_reset();
+    spectrum_board_snapshot_save(&restore_snapshot);
+    memcpy(meta.timers, timers, sizeof timers);
+    for (i = 0u; i < sizeof flags; ++i) {
+        meta.flags = flags[i];
+        saveload_apply_snapshot(&meta, 0u);
+        check(memcmp(spectrum_time_view()->game_timers, timers, sizeof timers) == 0,
+              "snapshot application preserves all six saved timer bytes");
+        check(spectrum_time_view()->game_timer_active ==
+                  (flags[i] == NETCHESSZX_SAVE_FLAG_ACTIVE),
+              "only an active non-ended snapshot resumes its timers");
+    }
+    host_trace = 0;
+    host_failed = 0u;
+}
+
+static void check_restore_orientation(void)
+{
+    netchesszx_save_meta_t meta = { 0 };
+    uint8_t host_color;
+    uint8_t flipped;
+
+    spectrum_board_reset();
+    spectrum_board_snapshot_save(&restore_snapshot);
+    for (host_color = NETCHESSZX_COLOR_WHITE;
+         host_color <= NETCHESSZX_COLOR_BLACK; ++host_color) {
+        netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                     NETCHESSZX_TRANSPORT_DIRECT,
+                                     host_color);
+        meta.host_color = netchesszx_session_identity_host_color();
+        for (flipped = 0u; flipped <= 1u; ++flipped) {
+            meta.view_flags = flipped ? NETCHESSZX_SAVE_VIEW_FLIPPED : 0u;
+            host_board_flipped = (uint8_t)!flipped;
+            SESSION_APP_APPLY_LOADED(&meta);
+            check(host_board_flipped == flipped,
+                  "offline load restores saved board orientation");
+
+            host_board_flipped = (uint8_t)!flipped;
+            check(spectrum_restore_build_b64(&restore_snapshot, &meta,
+                                             restore_b64_pending),
+                  "local restore orientation fixture encodes");
+            netchesszx_session_state.restore_rx_mask = RESTORE_TX_AWAIT_ACK;
+            (void)session_control_handle_event(
+                NETCHESSZX_SESSION_EVENT_RESTORE_RA,
+                (char *)NETCHESS_PROTO_RESTORE_RA);
+            check(host_board_flipped == flipped,
+                  "agreed local restore restores saved board orientation");
+        }
+        {
+            netchesszx_save_meta_t session_app_meta = meta;
+            uint8_t local_view = (uint8_t)!netchesszx_local_is_white();
+
+            session_app_meta.view_flags = local_view
+                ? 0u : NETCHESSZX_SAVE_VIEW_FLIPPED;
+            host_board_flipped = local_view;
+            SESSION_APP_RESTORE_APPLY();
+            check(host_board_flipped == local_view,
+                  "remote restore preserves local player board orientation");
+        }
+    }
+}
+
+static void check_load_preserves_pending_wire(void)
+{
+    uint8_t before[NETCHESSZX_SAVE_WIRE_B64_SIZE];
+    unsigned kind;
+
+    for (kind = 0u; kind < 3u; ++kind) {
+        memset(&netchesszx_session_state, 0, sizeof netchesszx_session_state);
+        if (kind == 0u) netchesszx_session_state.pending_local_ply = 1u;
+        if (kind == 1u) netchesszx_session_state.control_pending = CONTROL_PENDING_RESET;
+        if (kind == 2u) netchesszx_session_state.restore_rx_mask = RESTORE_TX_PENDING;
+        memset(restore_b64_pending, 'X', sizeof before);
+        memcpy(before, restore_b64_pending, sizeof before);
+        host_restore_file_payload = 0; /* Any attempted file read fails the stub. */
+        host_failed = 0u;
+        local_load_game("pending.NCZS");
+        check(!host_failed && memcmp(before, restore_b64_pending, sizeof before) == 0,
+              "LOAD rejects pending operations before reading shared restore buffer");
+    }
+    memset(&netchesszx_session_state, 0, sizeof netchesszx_session_state);
+}
+
+#ifdef NETCHESSZX_RECOVERY
+#ifdef SPECTRUM_BOARD_RESTORE_CAN_FAIL
+/* Classic only: a takeback whose BOARD cannot load changes nothing and ends
+   the session naming the overlay: accepting the peer's (key path) and the
+   peer's ACK of ours (dispatch path). */
+static void check_takeback_board_lost(void)
+{
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    spectrum_board_reset();
+    netchesszx_session_state.game_status_active = 1u;
+    netchesszx_session_state.game_ply = 2u;
+    takeback_snapshot_save(2u, 0u);
+    netchesszx_session_state.takeback_pending_ply = 2u;
+    confirm_action = CONFIRM_TAKEBACK_ACCEPT;
+    spectrum_board_host_fail = 1u;
+    check(process_local_key('y') == 0u &&
+              netchesszx_session_view()->game_ply == 2u,
+          "accepting a takeback whose BOARD cannot load fails the key unchanged");
+    handle_opponent_disconnected();     /* game_message_loop's next step */
+    check(strcmp(host_last_notice, spectrum_app_overlay_load_error) == 0,
+          "the failed takeback accept is named as a BOARD loss");
+
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    netchesszx_session_state.game_status_active = 1u;
+    netchesszx_session_state.game_ply = 2u;
+    takeback_snapshot_save(2u, 1u);
+    netchesszx_session_state.takeback_pending_ply = 2u;
+    check(session_control_handle_event(NETCHESSZX_SESSION_EVENT_ACK_MOVE,
+                                       (char *)"ACK 2") ==
+              SESSION_DISPATCH_EXIT &&
+              netchesszx_session_view()->game_ply == 2u &&
+              strcmp(host_last_notice, spectrum_app_overlay_load_error) == 0,
+          "the peer's ACK of a takeback whose BOARD cannot load ends the session");
+    spectrum_board_host_fail = 0u;
+    takeback_clear();
+}
+
+/* The peer accepted our RESTORE but BOARD cannot load: end the session like
+   a lost link, naming the overlay, with no apply and no checkpoint. */
+static void check_restore_board_lost(void)
+{
+    spectrum_board_snapshot_t snapshot;
+    netchesszx_save_meta_t meta = { 0 };
+    uint8_t writes;
+
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    spectrum_board_reset();
+    spectrum_board_snapshot_save(&snapshot);
+    meta.ply = 8u;                      /* even: white to move, as reset */
+    meta.flags = NETCHESSZX_SAVE_FLAG_ACTIVE;
+    meta.host_color = NETCHESSZX_SAVE_HOST_WHITE;
+    check(spectrum_restore_build_b64(&snapshot, &meta, restore_b64_pending),
+          "board-lost RESTORE fixture encodes");
+    netchesszx_session_state.game_ply = 3u;
+    netchesszx_session_state.restore_rx_mask = RESTORE_TX_AWAIT_ACK;
+    writes = host_recovery_writes;
+    spectrum_board_host_fail = 1u;
+    check(session_control_handle_event(NETCHESSZX_SESSION_EVENT_RESTORE_RA,
+                                       (char *)NETCHESS_PROTO_RESTORE_RA) ==
+              SESSION_DISPATCH_EXIT,
+          "an accepted RESTORE whose BOARD cannot load ends the session");
+    spectrum_board_host_fail = 0u;
+    check(strcmp(host_last_notice, spectrum_app_overlay_load_error) == 0 &&
+              host_recovery_writes == writes &&
+              netchesszx_session_view()->restore_rx_mask == 0u,
+          "the BOARD loss is named, unapplied and not checkpointed");
+    SESSION_APP_DISCONNECT();
+    check(strcmp(host_last_notice, msg_connection_lost) == 0,
+          "the next lost link is named as a lost link again");
+}
+#endif
+
+static void check_recovery_app_contract(void)
+{
+    DirectParityTrace trace = { 0 };
+    spectrum_board_snapshot_t snapshot;
+    netchesszx_save_meta_t meta = { 0 };
+    char recovery_b64[NETCHESSZX_SAVE_WIRE_B64_SIZE];
+    char cached_restore[NETCHESSZX_SAVE_WIRE_B64_SIZE];
+    uint8_t applied;
+
+    host_trace = &trace;
+    host_failed = 0u;
+    host_recovery_available = 0u;
+    host_recovery_writes = 0u;
+    host_recovery_write_ok = 1u;
+    recovery_state = 0u;
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    spectrum_board_reset();
+    host_cursor_marks = 0u;
+    game_start_state();
+    check(host_recovery_cursor_marks == 0u && host_cursor_marks != 0u,
+          "GAME START finishes checkpoint I/O before showing the playable cursor");
+    check(host_recovery_writes == 1u &&
+              spectrum_restore_decode((const char *)host_recovery_saved,
+                                      &snapshot, &meta) &&
+              meta.ply == 0u,
+          "GAME START checkpoints ply zero, retiring the previous offer");
+
+    netchesszx_session_state.pending_local_ply = 1u;
+    netchesszx_session_store_pending_move("e2e4");
+    check(host_recovery_writes == 1u,
+          "unacknowledged local move is not checkpointed");
+    apply_pending_local_move(0);
+    check(host_recovery_writes == 2u &&
+              spectrum_restore_decode((const char *)host_recovery_saved,
+                                      &snapshot, &meta) &&
+              meta.ply == 1u &&
+              (meta.flags & NETCHESSZX_SAVE_FLAG_ACTIVE) != 0u,
+          "local ACK checkpoints the committed ply");
+
+    memset(restore_b64_pending, 'R', sizeof cached_restore);
+    memcpy(cached_restore, restore_b64_pending, sizeof cached_restore);
+    netchesszx_session_state.restore_rx_mask = RESTORE_RX_APPLIED;
+    {
+        SESSION_APP_REMOTE_MOVE_WORKSPACE();
+        SESSION_APP_APPLY_REMOTE_MOVE(2u, "e7e5", "", applied);
+        if (applied) {
+            SESSION_APP_FINISH_REMOTE_MOVE("2", "e7e5");
+        }
+    }
+    check(applied && host_recovery_writes == 3u &&
+              spectrum_restore_decode((const char *)host_recovery_saved,
+                                      &snapshot, &meta) &&
+              meta.ply == 2u,
+          "remote committed move checkpoints the new ply");
+    check(memcmp(cached_restore, restore_b64_pending,
+                 sizeof cached_restore) == 0,
+          "checkpoint preserves the accepted RESTORE cache");
+
+#ifdef SPECTRUM_BOARD_RESTORE_CAN_FAIL
+    spectrum_board_host_fail = 1u;
+    check(!apply_takeback_snapshot() && host_recovery_writes == 3u &&
+              netchesszx_session_view()->game_ply == 2u,
+          "a takeback whose BOARD cannot load changes and checkpoints nothing");
+    spectrum_board_host_fail = 0u;
+#endif
+    apply_takeback_snapshot();
+    check(host_recovery_writes == 4u &&
+              spectrum_restore_decode((const char *)host_recovery_saved,
+                                      &snapshot, &meta) &&
+              meta.ply == 1u,
+          "accepted takeback checkpoints the restored ply");
+
+    spectrum_board_snapshot_save(&snapshot);
+    memset(&meta, 0, sizeof meta);
+    meta.ply = 7u;
+    meta.flags = NETCHESSZX_SAVE_FLAG_ACTIVE;
+    meta.host_color = NETCHESSZX_SAVE_HOST_WHITE;
+    check(spectrum_restore_build_b64(&snapshot, &meta, recovery_b64),
+          "recovery fixture encodes");
+    host_recovery_payload = (const uint8_t *)recovery_b64;
+    host_recovery_available = 1u;
+    netchesszx_session_peer_clear();
+    recovery_state = 0u;
+    confirm_action = CONFIRM_NONE;
+    ready_notice(SPECTRUM_GUI_MSG_OPPONENT_READY_WAIT);
+    check(confirm_action == CONFIRM_NONE &&
+              host_last_msg_id == SPECTRUM_GUI_MSG_OPPONENT_READY_WAIT,
+          "guest readiness never offers a checkpoint");
+    ready_notice(SPECTRUM_GUI_MSG_OPPONENT_READY_GO);
+    check(confirm_action == CONFIRM_RESUME &&
+              host_last_msg_id == SPECTRUM_GUI_MSG_RESUME_OFFER &&
+              host_recovery_writes == 4u,
+          "host readiness offers the newest checkpoint before any start");
+    check(process_local_key('n') == 1u && confirm_action == CONFIRM_NONE &&
+              host_last_msg_id == SPECTRUM_GUI_MSG_OPPONENT_READY_GO &&
+              netchesszx_session_view()->game_ply == 1u &&
+              host_recovery_writes == 4u,
+          "declining the offer keeps the game state and every checkpoint");
+    ready_notice(SPECTRUM_GUI_MSG_OPPONENT_READY_GO);
+    check(process_local_key('x') == 1u && confirm_action == CONFIRM_RESUME,
+          "the offer waits for an explicit Y or N");
+    check(process_local_key('y') == 1u && confirm_action == CONFIRM_NONE,
+          "accepting the offer consumes the confirmation");
+    check(netchesszx_session_view()->game_ply == 7u &&
+              host_recovery_writes == 5u &&
+              spectrum_restore_decode((const char *)host_recovery_saved,
+                                      &snapshot, &meta) &&
+              meta.ply == 7u,
+          "accepted resume applies and checkpoints through LOAD policy");
+    host_recovery_available = 0u;
+    ready_notice(SPECTRUM_GUI_MSG_OPPONENT_READY_GO);
+    check(confirm_action == CONFIRM_NONE &&
+              host_last_msg_id == SPECTRUM_GUI_MSG_OPPONENT_READY_GO,
+          "without a candidate the host keeps the plain READY notice");
+    host_recovery_available = 1u;
+
+    /* With a live peer, Y only asks for consent: nothing is applied or
+       checkpointed until the guest accepts, and its refusal keeps both. */
+    meta.ply = 9u;
+    meta.host_color = NETCHESSZX_SAVE_HOST_WHITE;
+    check(spectrum_restore_build_b64(&snapshot, &meta, recovery_b64),
+          "peer-consent recovery fixture encodes");
+    netchesszx_session_peer_mark_ready();
+    recovery_state = 0u;
+    confirm_action = CONFIRM_NONE;
+    ready_notice(SPECTRUM_GUI_MSG_OPPONENT_READY_GO);
+    check(confirm_action == CONFIRM_RESUME,
+          "a ready peer is offered the checkpoint");
+    check(process_local_key('y') == 1u && confirm_action == CONFIRM_NONE &&
+              netchesszx_session_view()->restore_rx_mask == RESTORE_TX_PENDING &&
+              netchesszx_session_view()->game_ply == 7u &&
+              host_recovery_writes == 5u,
+          "accepted resume waits for the guest before applying");
+    check(session_control_handle_event(NETCHESSZX_SESSION_EVENT_RESTORE_RN,
+                                       (char *)NETCHESS_PROTO_RESTORE_RN) ==
+              SESSION_DISPATCH_HANDLED,
+          "guest refusal of the resume is handled");
+    recovery_notify();
+    check(netchesszx_session_view()->restore_rx_mask == 0u &&
+              netchesszx_session_view()->game_ply == 7u &&
+              host_recovery_writes == 5u,
+          "guest refusal keeps the position and every checkpoint");
+    netchesszx_session_peer_clear();
+
+    meta.ply = 9u;
+    meta.host_color = NETCHESSZX_SAVE_HOST_BLACK;
+    check(spectrum_restore_build_b64(&snapshot, &meta, recovery_b64),
+          "cross-colour recovery fixture encodes");
+    netchesszx_session_state.game_ply = 7u;
+    local_load_game(0);
+    check(netchesszx_session_view()->game_ply == 7u &&
+              host_recovery_writes == 5u,
+          "cross-colour recovery is rejected without checkpointing");
+
+    netchesszx_session_state.restore_rx_mask = RESTORE_TX_PENDING;
+    check(session_control_handle_event(NETCHESSZX_SESSION_EVENT_RESTORE_RN,
+                                       (char *)NETCHESS_PROTO_RESTORE_RN) ==
+              SESSION_DISPATCH_HANDLED,
+          "peer recovery refusal completes the RESTORE exchange");
+    recovery_notify();
+    check(netchesszx_session_view()->restore_rx_mask == 0u &&
+              host_recovery_writes == 5u,
+          "peer recovery refusal clears the exchange without checkpointing");
+
+    meta.host_color = NETCHESSZX_SAVE_HOST_WHITE;
+    check(spectrum_restore_build_b64(&snapshot, &meta, recovery_b64),
+          "manual recovery fixture encodes");
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    recovery_state = 0u;
+    {
+        netchesszx_save_meta_t session_app_meta = { 0 };
+
+        spectrum_board_reset();
+        spectrum_board_snapshot_save(&restore_snapshot);
+        session_app_meta.ply = 8u;
+        session_app_meta.flags = NETCHESSZX_SAVE_FLAG_ACTIVE;
+        session_app_meta.host_color = netchesszx_session_identity_host_color();
+        netchesszx_session_state.restore_rx_mask = RESTORE_RX_RECEIVE;
+        SESSION_APP_RESTORE_APPLY();
+        check(SESSION_APP_RESTORE_CACHE(),
+              "guest accepted RESTORE rebuilds its exact duplicate cache");
+        check(netchesszx_session_view()->game_ply == 8u &&
+                  host_recovery_writes == 6u &&
+                  spectrum_restore_decode(
+                      (const char *)host_recovery_saved, &snapshot, &meta) &&
+                  meta.ply == 8u &&
+                  meta.host_color == netchesszx_session_identity_host_color(),
+              "guest accepted RESTORE checkpoints before the next move");
+    }
+    recovery_state &= (uint8_t)~RECOVERY_WARNING;
+    host_recovery_write_ok = 0u;
+    recovery_checkpoint();
+    recovery_notify();
+    check(strcmp(host_last_notice, msg_recovery_failed) == 0,
+          "failed checkpoint reports through the resident notice path");
+    host_recovery_write_ok = 1u;
+    {
+        char expected[NETCHESSZX_SAVE_WIRE_B64_SIZE];
+
+        spectrum_board_snapshot_save(&snapshot);
+        meta.ply = netchesszx_session_view()->game_ply;
+        meta.flags = saveload_flags();
+        meta.host_color = netchesszx_session_identity_host_color();
+        meta.view_flags = spectrum_gui_is_board_flipped()
+            ? NETCHESSZX_SAVE_VIEW_FLIPPED : 0u;
+        spectrum_time_game_timer_save(meta.timers);
+        check(spectrum_restore_build_b64(&snapshot, &meta, expected),
+              "manual save reference encodes");
+        local_save_game("MANUAL.NCZS");
+        check(host_manual_saves == 1u &&
+                  memcmp(host_manual_saved, expected, sizeof expected) == 0 &&
+                  host_recovery_writes == 6u,
+              "manual save keeps the exact wire payload without checkpointing");
+    }
+
+    /* Chosen exits retire the offer through RECOVERY (which checks for a
+       live game); a lost link keeps it. */
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    host_recovery_retires = 0u;
+    netchesszx_session_peer_mark_ready();
+    netchesszx_session_state.game_status_active = 1u;
+    handle_opponent_disconnected();
+    check(host_recovery_retires == 0u && host_recovery_writes == 6u,
+          "a lost connection leaves the resume offer untouched");
+    netchesszx_session_peer_mark_ready();
+    netchesszx_session_state.game_status_active = 1u;
+    confirm_action = CONFIRM_DISCONNECT;
+    check(process_local_key('y') == 1u && confirm_action == CONFIRM_NONE &&
+              host_recovery_retires == 1u && host_recovery_writes == 6u,
+          "menu disconnect retires the resume offer");
+    {
+        char bye[] = "BYE";
+
+        netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                     NETCHESSZX_TRANSPORT_DIRECT,
+                                     NETCHESSZX_COLOR_WHITE);
+        netchesszx_session_peer_mark_ready();
+        netchesszx_session_state.game_status_active = 1u;
+        (void)session_presence_handle_event(NETCHESSZX_SESSION_EVENT_BYE,
+                                            bye, 0u);
+        check(host_recovery_retires == 2u,
+              "the peer's BYE retires the resume offer");
+    }
+    host_trace = 0;
+    host_failed = 0u;
+    host_recovery_available = 0u;
+    netchesszx_session_peer_clear();
+    memset(&netchesszx_session_state, 0, sizeof netchesszx_session_state);
+}
+#endif
+
+static void check_board_input_adapter(void)
+{
+    DirectParityTrace trace;
+    char cells[64];
+    unsigned side;
+    unsigned variant;
+    uint8_t saved_hints = netchesszx_movement_hints;
+
+    netchesszx_movement_hints = 0u;
+    for (side = 0u; side < 2u; ++side) {
+        netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                    NETCHESSZX_TRANSPORT_DIRECT,
+                                    side ? NETCHESSZX_COLOR_BLACK : NETCHESSZX_COLOR_WHITE);
+        for (variant = 0u; variant < 4u; ++variant) {
+            uint8_t index = variant == 0u ? (side ? 12u : 52u) :
+                            variant == 1u ? (side ? 28u : 36u) : 0u;
+            memset(cells, '.', sizeof cells);
+            if (variant != 3u) cells[index] = side ? 'p' : 'P';
+            spectrum_board_test_set(cells, (uint8_t)side, 0u, -1);
+            cursor_reset_default_square();
+            check(spectrum_ux_cursor_position() == (variant == 3u ? 52u : index),
+                  "application supplies preferred, scanned or fallback cursor square");
+            check(spectrum_ux_selected_position() == 0xffffu,
+                  "application cursor reset clears selection");
+        }
+        spectrum_board_reset();
+        check(spectrum_ux_selectable(side ? 1u : 6u, 4u) &&
+              !spectrum_ux_selectable(side ? 6u : 1u, 4u) &&
+              !spectrum_ux_selectable(4u, 4u), "application owns cell selection policy");
+        spectrum_ux_selection_notice(0x0404u);
+        check(strcmp(host_last_notice, "Empty e4") == 0, "empty square notice preserved");
+        spectrum_ux_selection_notice(side ? 0x0401u : 0x0406u);
+        check(strcmp(host_last_notice, side ? "Sel e7" : "Sel e2") == 0,
+              "selected square notation preserved");
+        spectrum_ux_selection_notice(side ? 0x0406u : 0x0401u);
+        check(strcmp(host_last_notice, side ? "You play BLACK" : "You play WHITE") == 0,
+              "opponent square notice preserved");
+
+        memset(cells, '.', sizeof cells);
+        cells[4] = 'k';
+        cells[60] = 'K';
+        cells[side ? 48u : 8u] = side ? 'p' : 'P';
+        spectrum_board_test_set(cells, (uint8_t)side, 0u, -1);
+        memset(&netchesszx_session_state, 0, sizeof netchesszx_session_state);
+        netchesszx_session_peer_mark_ready();
+        netchesszx_session_state.game_status_active = 1u;
+        local_turn = 1u;
+        memset(&trace, 0, sizeof trace);
+        host_trace = &trace;
+        host_fail_length = 0u;
+        check(spectrum_ux_move_intent(side ? 6u : 1u, side ? 7u : 0u) == UX_MOVE_ACCEPTED,
+              "coordinate intent enters productive session path");
+        check(strcmp(netchesszx_session_state.pending_local_move,
+                     side ? "a2a1q" : "a7a8q") == 0, "automatic queen promotion preserved");
+        check(memcmp(spectrum_board_cells(), cells, sizeof cells) == 0,
+              "coordinate intent waits for peer ACK before domain mutation");
+        host_trace = 0;
+    }
+    memset(&netchesszx_session_state, 0, sizeof netchesszx_session_state);
+    netchesszx_session_peer_clear();
+    netchesszx_movement_hints = saved_hints;
+    local_turn = 0u;
 }
 
 int main(int argc, char **argv)
@@ -2426,6 +3189,16 @@ int main(int argc, char **argv)
     check_direct_recovery_budget_rearmed();
 #endif
     check_restore_codec_contract();
+    check_loaded_timers_survive_application();
+    check_restore_orientation();
+    check_load_preserves_pending_wire();
+#ifdef NETCHESSZX_RECOVERY
+    check_recovery_app_contract();
+#ifdef SPECTRUM_BOARD_RESTORE_CAN_FAIL
+    check_restore_board_lost();
+    check_takeback_board_lost();
+#endif
+#endif
 #ifdef NETCHESSZX_NEXT_BANKING
     check_next_restore_sprite_allocator_contract();
 #endif
@@ -2433,12 +3206,14 @@ int main(int argc, char **argv)
     check_text_helper_contract();
     check_input_editor_driver();
     check_cursor_reselects_own_piece();
+    check_board_input_adapter();
     check_turn_grant_clears_stale_cursor();
     check_setup_preview_skips_first_start_redraw();
     check_local_move_ply_overflow();
     check_chat_editor_during_pending_control();
     check_non_chat_input_liveness_status();
     check_about_dismisses_before_confirmation();
+    check_game_stats_keys();
     check_restore_transfer_blocks_file_and_editor();
     check_mqtt_peer_loss_blocks_taboption();
     check_mqtt_peer_identity_reset();

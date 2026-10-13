@@ -32,16 +32,18 @@ semantics.
 | `ACK <ply> [notation]` | Move or takeback accepted. |
 | `NACK <ply> [reason]` | Move or takeback rejected. Reason is optional and advisory; `BUSY` means the receiver has a pending decision or correlated request. |
 | `TAKEBACK <ply>` | Request undo of the last applied ply. Response is generic `ACK/NACK <ply>`. |
-| `DRAW` | Offer draw/rematch. |
+| `CANCEL TAKEBACK <ply>` | Withdraw that pending undo. Reply `NACK <ply>`, or replay `ACK <ply>` if already applied. |
+| `DRAW` | Offer a draw; acceptance ends the current game. |
 | `ACK DRAW` / `NACK DRAW` | Draw response. |
 | `CANCEL DRAW` | Cancel a still-pending DRAW request. The receiver answers `NACK DRAW`. |
 | `RESET` | Reset/rematch request. |
 | `ACK RESET` / `NACK RESET [reason]` | Reset response. |
 | `CANCEL RESET` | Cancel a still-pending RESET request. The receiver answers `NACK RESET`. |
 | `RESIGN` | Unilateral resignation. Sender retransmits until `ACK RESIGN` arrives. |
-| `ACK RESIGN` | Resignation acknowledged. Receivers must ACK every `RESIGN`, including retransmissions. Current peers then synchronize the automatic new game through the existing `RESET` / `ACK RESET` exchange. |
+| `ACK RESIGN` | Resignation acknowledged. Receivers must ACK every `RESIGN`, including retransmissions. The finished game remains available until a separately requested RESET is accepted. |
 | `CHAT <text>` | Chat text. Max visible text is 42 chars. |
 | `MACH` + code (`ZX` / `NXT` / `MAC` / `LNX` / `PC` / `SPCX`) | Optional peer machine identity. Both peers may emit after the link is ready (`peer_ready`). Informational only: never changes game state, color, or control flow. Unknown codes and missing announcements leave the peer platform unknown. Legacy 1.1 peers ignore `MACH` silently on Direct and on Spectrum MQTT (first letter `M` is not `MQTT_TEXT`). |
+| `MNAME <name>` | Optional player name. Both peers may emit it after the link is ready (`peer_ready`), next to `MACH` (the Qt client sends it just before `MACH`, so a Spectrum already knows the name when `MACH` repaints its status bar), only when the local player configured a name. `<name>` is 1 to 10 characters from `A`-`Z`, `0`-`9`, `-` and `_`, with no spaces and nothing after it. Informational only: never changes game state, color, or control flow. A receiver ignores a malformed name and keeps showing its color label (`WHITE`/`BLACK`). Legacy peers ignore `MNAME` silently for the same reason as `MACH`. The Qt client reserves `STOCKFISH` for its engine autopilot: while an engine plays its side it always sends `MNAME STOCKFISH` (never the user name), cannot switch player during a session, and sends `CHAT <ENGINE> PLAYS <WHITE|BLACK> - LEVEL <n>` once per session, at the first game start or applied restore. The Spectrum appends `: STOCKFISH` to the peer platform in its status bar (for example `VS MAC: STOCKFISH` from the macOS client) when the peer name is exactly `STOCKFISH` at that repaint. |
 | `PING` / `ACK PING` | Keepalive. |
 | `BYE` | Peer disconnect. |
 | `RQ` | Request permission to restore a saved position. |
@@ -52,7 +54,11 @@ semantics.
 
 ## Topic Rules
 
-Direct carries these payloads as newline-delimited TCP lines.
+Direct carries these payloads as newline-delimited TCP lines. A line ends at
+LF; a Direct receiver ignores CR (`0x0D`) wherever it appears, so CRLF and LF
+framing are equivalent, a CR never reaches a payload, and the payload limit
+counts only the remaining bytes. Senders terminate lines with LF and never
+put CR inside a payload.
 
 Application payload bytes never contain `0x00`. A locally appended C
 terminator is not part of the wire payload. A receiver must reject a Direct
@@ -77,8 +83,8 @@ Normative per-payload topic table:
 | `O` / `F` | own `pres_w` / `pres_b` | peer and own presence topics |
 | `GAME START` | `meta` or own lateral (both canonical, see below) | `meta` and inbound lateral |
 | `ACK GAME START` / `NACK GAME START` | `meta` or own lateral (both canonical, see below) | `meta` and inbound lateral |
-| `CANCEL RESET` / `CANCEL DRAW` | own lateral, live, never retained | inbound lateral |
-| Game payloads (`MOVE`, `TAKEBACK`, `DRAW`, `RESET`, `RESIGN`, `CHAT`, `PING`, `BYE`, `MACH`) | own lateral (`w2b` white, `b2w` black) | inbound lateral |
+| `CANCEL RESET` / `CANCEL DRAW` / `CANCEL TAKEBACK <ply>` | own lateral, live, never retained | inbound lateral |
+| Game payloads (`MOVE`, `TAKEBACK`, `DRAW`, `RESET`, `RESIGN`, `CHAT`, `PING`, `BYE`, `MACH`, `MNAME`) | own lateral (`w2b` white, `b2w` black) | inbound lateral |
 | `ACK` / `NACK` responses to game payloads (incl. `ACK PING`) | peer ACK topic (`ack_b` from white, `ack_w` from black) | inbound ACK topic and inbound lateral |
 | `RQ`, `RY`, `RN`, `RS00`, `RS01`, `RA` | own lateral, live, never retained | inbound lateral |
 
@@ -103,16 +109,24 @@ an id-less payload, foreign SID, or retained replay is inert.
 that is still pending. Direct carries CANCEL as a normal line. MQTT carries it
 on the sender's own lateral topic, live and never retained.
 
-The receiver always answers `NACK RESET` or `NACK DRAW` through the normative
-general NACK route. If the matching decision is pending, it is invalidated, the
+The receiver answers `NACK RESET` or `NACK DRAW` through the normative
+general NACK route while the request is still pending. If it already accepted
+the request and no later MOVE invalidated that result, it replays the matching
+ACK instead, so a lost acceptance cannot be mistaken for withdrawal. If the
+matching decision is pending, it is invalidated, the
 NACK confirms cancellation, and a later modal decision is inert. If the request
-already finished, does not match, or the CANCEL is a duplicate, the receiver
-sends the same NACK without mutating state. The cancelling sender interprets
+was declined, does not match, or the CANCEL repeats a confirmed withdrawal,
+the receiver sends the same NACK without mutating state. The cancelling sender interprets
 that NACK as `CANCELLED`, not as rejection of the original request.
 
-An older peer may ignore CANCEL. While the connection remains live, the current
-implementation alternates retries with five-minute grace periods; this is not
-a single terminal timeout.
+Both the requester and the remote decision use a 60-second deadline; retries
+never extend either window. Cancellation keeps its correlation and retries in
+the background, without ending a live session. A next MOVE can proceed and its
+commit invalidates the old withdrawal. A crossed acceptance still completes the
+original control before that commit. The remote prompt also expires without
+receiving CANCEL, rejecting the request and leaving the game available.
+Older peers may ignore CANCEL and lack the remote deadline; their operator must
+close the old prompt. Actual link loss retains its normal failure policy.
 
 ## MQTT RESTORE
 
@@ -133,18 +147,54 @@ is ignored because the peer may already have applied the snapshot. After a
 successful apply, either exact duplicate chunk re-sends `RA`; a conflicting
 chunk sends `RN` without applying again.
 
+## Game recovery
+
+Recovery adds no payload. After peer ready and before any `GAME START`, a
+host holding an offerable local checkpoint asks its own user. On acceptance it
+runs the ordinary host-initiated RESTORE exchange above with the checkpoint
+snapshot: `RQ`, the guest's normal RESTORE prompt as its consent, `RY`,
+`RS00`/`RS01`, then `RA` or `RN`. The snapshot carries position, flags, ply
+and both GAME/TURN clocks; history never travels (the host keeps its own, the
+guest starts a partial one). A refusal, cancel or failure leaves the game
+unstarted; the host's journal TMP and checkpoints are unchanged (only its
+unarmed `SHATJRNL.NEW` staging is replaced, as a FILE LOAD would). Older peers
+interoperate because nothing new is sent.
+
+The milestone-1 extension drafted on 2026-09-26 (`GC1` to `NE1`) was
+withdrawn unimplemented; see `docs/game-recovery-experiment.md`.
+
 ## Compatibility Rules
 
 - Parse by payload grammar, not by peer client name.
-- Control requests (`RESET`, `DRAW`, `TAKEBACK`, `RESIGN`) are retransmitted until answered; receivers must treat duplicates idempotently (re-ACK an already-accepted request instead of NACKing or re-prompting).
+- `TAKEBACK`, `DRAW`, `RESET` (including a new game after OVER) and RESTORE approval (`RQ`/`RY`) share a 60-second decision deadline, measured from the first successful request transmission. Transport retries do not restart that deadline. PC uses milliseconds; Spectrum uses elapsed hardware frames at the active 50/60 Hz rate, including busy iterations and counter wrap.
+- On expiry the requester withdraws the decision: `CANCEL TAKEBACK <ply>`, `CANCEL DRAW`, `CANCEL RESET`, or `RN` before `RY`. The receiver closes its pending prompt and rejects without changing the board; the game/session remains current. TAKEBACK cancellation is correlated to its nonzero ply. A duplicate cancellation is harmless. If a TAKEBACK was already applied when cancellation crossed its ACK, the receiver replays the ACK and the requester completes that same undo rather than leaving different boards.
+- The current cancellation exchange requires confirmation where it can race with a board mutation. Exhausted cancellation retries still end the session, including between updated peers; this is an unresolved limitation, not the requested final timeout policy (`docs/handoff.md` §14). Older peers may ignore `CANCEL TAKEBACK <ply>`. Lost links and failed/uncertain transfers retain their existing failure policy; a decision deadline never cancels RESTORE after chunk transmission starts.
+- Control requests (`RESET`, `DRAW`, `TAKEBACK`, `RESIGN`) use bounded reply retries; the human-approval deadline above remains independent. Receivers must treat duplicates idempotently (re-ACK an already-accepted request instead of NACKing or re-prompting, and re-NACK a declined `DRAW` until the position changes).
 - Mixed-version RESTORE: a peer that still treats restore as host-only answers a guest `RQ` with `RN` and does not mutate the board. Host-initiated restore remains interoperable.
 - RESTORE never remaps chess colours. A local save whose `host_color` differs from the current seating is not offered; an incompatible received snapshot is answered with `RN` and leaves the active game unchanged.
 - Treat unknown optional tails as advisory text unless the verb requires exact grammar.
+- A control-reply target token is complete only at end of payload or before a
+  space introducing its optional reason. For example, `NACK RESET BUSY` is a
+  RESET reply; `NACK RESETX` is not.
 - Do not send PC-only or Spectrum-only variants.
+- Advisory identity payloads start with `M` (`MACH`, `MNAME`). Spectrum MQTT
+  peers display unrecognized payloads as text unless their first letter is one
+  of `F`, `H`, `J`, `M` or `O`, so a new advisory verb must keep that prefix.
+- `MNAME` travels in clear text through the broker like every other payload;
+  it is a nickname, not an authenticated identity.
 - Keep MQTT `GAME START` plain for canonical output.
 
-`RESIGN` remains wire-compatible with older peers because its acknowledgement
-and the following rematch use existing payloads. A current peer automatically
-sends or accepts the post-resignation `RESET`; an older peer may still expose
-its legacy RESET decision prompt, so automatic rematch is guaranteed only when
-both peers implement the current session contract.
+DRAW and RESIGN end the current game without an automatic RESET. Either role
+may subsequently request RESET; the receiver asks for consent. Retransmitted
+accepted DRAW requests are still ACKed while that finished game remains current.
+No payload or version-negotiation change is required.
+
+Mixed peers using the 1.2 automatic-rematch behavior retain these
+limitations: after the new peer resigns, the older receiver can show
+`RESTARTING GAME` until the new peer manually requests RESET, which the older
+peer accepts automatically. When the older peer initiates the automatic RESET
+after resignation or an accepted draw, the new Spectrum asks `S:STATS ACCEPT
+RESTART? Y/N` (Qt: `Opponent restart y/n?`): S opens the statistics without
+answering, and declining ends the session (NACK, then BYE). Between new peers
+only the host requests the consented restart; a refusal ends the session. Physical mixed-version
+validation remains pending.

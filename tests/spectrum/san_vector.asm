@@ -10,7 +10,7 @@ PUBLIC _line_buf
 PUBLIC _NETCHESS_PROTO_ACK_PREFIX
 PUBLIC _NETCHESS_PROTO_NACK_PREFIX
 PUBLIC _spectrum_net_payload_scratch
-PUBLIC _spectrum_net_send_text
+PUBLIC _netchesszx_session_send_ack_text
 
 EXTERN _spectrum_board_move_san_base
 EXTERN _spectrum_board_san_append_suffix
@@ -20,8 +20,10 @@ test_start:
     ld sp, 0xff00
     ld a, 0xff
     ld (test_result), a
+    ld a, 3
+    ld (expected_getters), a
     ld hl, start_board
-    ld (board_ptr), hl
+    call load_board
     call clear_legal
 
     ; Startpos g1f3 must be "Nf3". The other knight (b1) is illegal to f3.
@@ -30,7 +32,7 @@ test_start:
     push hl
     ld hl, move_g1f3
     push hl
-    call _spectrum_board_move_san_base
+    call checked_san_base
     pop bc
     pop bc
     ld a, l
@@ -45,7 +47,7 @@ test_start:
 
     ; Two-rook board, move a1d1. legal_tab[from] = other rook can reach d1.
     ld hl, rook_board
-    ld (board_ptr), hl
+    call load_board
 
     ; A: a5 and h1 both legal → Ra1d1
     call clear_legal
@@ -56,7 +58,7 @@ test_start:
     push hl
     ld hl, move_a1d1
     push hl
-    call _spectrum_board_move_san_base
+    call checked_san_base
     pop bc
     pop bc
     ld hl, out_ra
@@ -73,7 +75,7 @@ test_start:
     push hl
     ld hl, move_a1d1
     push hl
-    call _spectrum_board_move_san_base
+    call checked_san_base
     pop bc
     pop bc
     ld hl, out_rb
@@ -90,7 +92,7 @@ test_start:
     push hl
     ld hl, move_a1d1
     push hl
-    call _spectrum_board_move_san_base
+    call checked_san_base
     pop bc
     pop bc
     ld hl, out_rc
@@ -105,13 +107,68 @@ test_start:
     push hl
     ld hl, move_a1d1
     push hl
-    call _spectrum_board_move_san_base
+    call checked_san_base
     pop bc
     pop bc
     ld hl, out_rd
     ld de, want_rd
     call cmpstr
     ld a, 5
+    jp nz, test_store_result
+
+    ; Lowercase pieces follow the same scan and SAN stays uppercase.
+    ld a, 'r'
+    ld (test_board + 24), a
+    ld (test_board + 56), a
+    ld (test_board + 63), a
+    ld hl, out_rd
+    push hl
+    ld hl, move_a1d1
+    push hl
+    call checked_san_base
+    pop bc
+    pop bc
+    ld hl, out_rd
+    ld de, want_rd
+    call cmpstr
+    ld a, 12
+    jp nz, test_store_result
+
+    ; Black rook capture, both disambiguators and a page-crossing board.
+    ld a, 'N'
+    ld (test_board + 59), a
+    ld a, 1
+    ld (legal_tab + 24), a
+    ld (legal_tab + 63), a
+    ld hl, out_ra
+    push hl
+    ld hl, move_a1d1
+    push hl
+    call checked_san_base
+    pop bc
+    pop bc
+    ld hl, out_ra
+    ld de, want_black_capture
+    call cmpstr
+    ld a, 13
+    jp nz, test_store_result
+
+    ; Pawn capture/promotion has only the two base board lookups.
+    ld a, 'p'
+    ld (test_board + 52), a
+    ld a, 2
+    ld (expected_getters), a
+    ld hl, out_ra
+    push hl
+    ld hl, move_black_promotion
+    push hl
+    call checked_san_base
+    pop bc
+    pop bc
+    ld hl, out_ra
+    ld de, want_black_promotion
+    call cmpstr
+    ld a, 14
     jp nz, test_store_result
 
     ; Suffix: check → '+' appended once.
@@ -126,14 +183,16 @@ test_start:
     jp nz, test_store_result
 
     ; Failed parse must leave out[0] = 0 (C wrote NUL before parsing).
+    xor a
+    ld (expected_getters), a
     ld hl, start_board
-    ld (board_ptr), hl
+    call load_board
     ld hl, out_fail
     ld (hl), 'X'
     push hl
     ld hl, move_bad
     push hl
-    call _spectrum_board_move_san_base
+    call checked_san_base
     pop bc
     pop bc
     ld a, l
@@ -150,6 +209,71 @@ test_store_result:
     ld (test_result), a
 test_done:
     jp test_done
+
+; The board crosses $70ff regardless of assembled code/data placement.
+defc test_board = $70e0
+
+load_board:
+    ld de, test_board
+    ld bc, 64
+    ldir
+    ld hl, test_board
+    ld (board_ptr), hl
+    ret
+
+; Same stack arguments as the product function. Check every invocation,
+; including parse failure, without depending on its scratch registers.
+checked_san_base:
+    ld (expected_sp), sp
+    ld ix, $1234
+    ld iy, $5c3a
+    xor a
+    ld (getter_calls), a
+    ld hl, 2
+    add hl, sp
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    inc hl
+    ld a, (hl)
+    inc hl
+    ld h, (hl)
+    ld l, a
+    push hl
+    push de
+    call _spectrum_board_move_san_base
+    pop bc
+    pop bc
+    ld (san_return), hl
+    ld hl, 0
+    add hl, sp
+    ld de, (expected_sp)
+    or a
+    sbc hl, de
+    ld a, 8
+    jp nz, test_store_result
+    push ix
+    pop hl
+    ld de, $1234
+    or a
+    sbc hl, de
+    ld a, 9
+    jp nz, test_store_result
+    push iy
+    pop hl
+    ld de, $5c3a
+    or a
+    sbc hl, de
+    ld a, 10
+    jp nz, test_store_result
+    ; Piece and destination use two getters, disambiguation exactly one.
+    ld a, (getter_calls)
+    ld hl, expected_getters
+    cp (hl)
+    ld a, 11
+    jp nz, test_store_result
+    ld hl, (san_return)
+    ret
 
 clear_legal:
     ld hl, legal_tab
@@ -171,6 +295,8 @@ cmpstr:
     jr cmpstr
 
 _spectrum_board_cells:
+    ld hl, getter_calls
+    inc (hl)
     ld hl, (board_ptr)
     ret
 
@@ -195,9 +321,18 @@ _spectrum_net_payload_scratch:
     ld hl, dummy_payload
     ret
 
-_spectrum_net_send_text:
+_netchesszx_session_send_ack_text:
     ld l, 1
     ret
+
+getter_calls:
+    defb 0
+expected_getters:
+    defb 0
+expected_sp:
+    defw 0
+san_return:
+    defw 0
 
 board_ptr:
     defw start_board
@@ -226,6 +361,15 @@ want_rc:
     defb 0
 want_rd:
     defm "Rd1"
+    defb 0
+want_black_capture:
+    defm "Ra1xd1"
+    defb 0
+move_black_promotion:
+    defm "e2d1q"
+    defb 0
+want_black_promotion:
+    defm "exd1=Q"
     defb 0
 want_sfx:
     defm "Nf3+"

@@ -40,12 +40,22 @@ uint8_t board_snapshot_restore_ovl(uint8_t *ctx) __z88dk_fastcall
 
 uint8_t board_apply_trusted_ovl(uint8_t *ctx) __z88dk_fastcall
 {
+    netchesszx_action_t action;
     const char *move = (const char *)((uint16_t)ctx[0] | ((uint16_t)ctx[1] << 8));
-    spectrum_board_undo_t *undo =
-        (spectrum_board_undo_t *)((uint16_t)ctx[6] |
-                                  ((uint16_t)ctx[7] << 8));
+    char promo = move[4];
 
-    return board_apply_parsed_move(move, ctx[2], ctx[3], ctx[4], ctx[5], undo);
+    if (promo != '\0') {
+        if (move[5] != '\0') {
+            return 0u;
+        }
+        /* Only q/r/b/n survive the action owner's validation below. */
+        promo = (char)(promo | 0x20u);
+    }
+    action.from = (uint8_t)((ctx[2] << 3) + ctx[3]);
+    action.to = (uint8_t)((ctx[4] << 3) + ctx[5]);
+    action.promo = promo;
+    return board_apply_action(&action,
+        (spectrum_board_undo_t *)((uint16_t)ctx[6] | ((uint16_t)ctx[7] << 8)));
 }
 
 uint8_t board_undo_restore_ovl(uint8_t *ctx) __z88dk_fastcall

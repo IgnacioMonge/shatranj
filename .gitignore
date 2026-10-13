@@ -34,6 +34,7 @@ mcps/
 .agents/
 .claude/
 .codex/
+.grok/
 __pycache__/
 .DS_Store
 build_*.log

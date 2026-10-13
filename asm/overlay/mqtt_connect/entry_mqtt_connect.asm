@@ -8,17 +8,19 @@ EXTERN _net_preflight_ovl
 EXTERN _mqtt_probe_seat_ovl
 ; Must equal the linked _overlay_scratch_base; check_lowmem_layout.py proves it.
 IFDEF NETCHESSZX_NEXT_BANKING
-mqtt_packet_ovl EQU 0x3C2B
+mqtt_packet_ovl EQU 0x3C78
 ELSE
 mqtt_packet_ovl EQU 0x672B
 ENDIF
 EXTERN _netchesszx_mqtt_code
 EXTERN _netchesszx_local_color
-EXTERN _netchesszx_session_role
 EXTERN _netchesszx_mqtt_session_id
 EXTERN _spectrum_append_u16
+EXTERN _spectrum_overlay_context
 
 mqtt_client_id_fixed EQU 7
+mqtt_connect_will EQU 1
+mqtt_connect_flags EQU 0
 
     DEFB 4
     DW _mqtt_connect_start_ovl
@@ -61,9 +63,9 @@ color_is_white:
     ld bc, 11
     ldir
     pop bc
-    ld a, (_netchesszx_session_role)
-    or a
-    jr nz, mqtt_conn_flags_done
+    ld a, (_spectrum_overlay_context + mqtt_connect_flags)
+    and mqtt_connect_will
+    jr z, mqtt_conn_flags_done
     ld a, $26
     ld (mqtt_packet_ovl + 9), a
 mqtt_conn_flags_done:
@@ -84,7 +86,9 @@ mqtt_client_id_begin:
     ld b, 0
     ldir
     pop bc
-    ld a, (_netchesszx_session_role)
+    ld a, (_spectrum_overlay_context + mqtt_connect_flags)
+    and mqtt_connect_will
+    xor mqtt_connect_will
     add a, a
     add a, 'H'
     ld (de), a
@@ -106,9 +110,9 @@ mqtt_client_nonce_loop:
     djnz mqtt_client_nonce_loop
     pop bc
 mqtt_client_id_end:
-    ld a, (_netchesszx_session_role)
-    or a
-    jr nz, mqtt_conn_finish
+    ld a, (_spectrum_overlay_context + mqtt_connect_flags)
+    and mqtt_connect_will
+    jr z, mqtt_conn_finish
     xor a
     ld (de), a
     inc de

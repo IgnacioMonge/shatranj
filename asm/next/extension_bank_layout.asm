@@ -55,11 +55,11 @@ next_ext_draw_input_cursor            EQU next_extension_org + 144
 next_extension_table_size             EQU 147
 
 asset_load_addr                       EQU 0x3500
-asset_piece_offset                    EQU 812
+asset_piece_offset                    EQU 889
 piece_sprite_set_size                 EQU 384
-next_sprite_stage                     EQU 0x3B2B
-next_overlay_scratch                  EQU 0x3C2B
-next_palette_stage                    EQU 0x3CCB
+next_sprite_stage                     EQU 0x3B78
+next_overlay_scratch                  EQU 0x3C78
+next_palette_stage                    EQU 0x3D18
 
 next_bundle_dat_offset                EQU 8192
 next_sprite_offset                    EQU 16384

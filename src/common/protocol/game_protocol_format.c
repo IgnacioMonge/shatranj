@@ -178,3 +178,29 @@ uint8_t netchess_proto_format_mach(char *out, uint8_t out_cap, uint8_t plat)
                      proto_append(&p, end, NETCHESS_PROTO_MACH_PREFIX) &&
                      proto_append(&p, end, code));
 }
+
+uint8_t netchess_player_name_valid(const char *name) NETCHESSZX_FASTCALL
+{
+    uint8_t length = 0u;
+
+    while (*name != '\0') {
+        if (!NETCHESS_PLAYER_NAME_CHAR_OK(*name) ||
+            ++length > NETCHESS_PLAYER_NAME_MAX) {
+            return 0u;
+        }
+        ++name;
+    }
+    return (uint8_t)(length != 0u);
+}
+
+uint8_t netchess_proto_format_name(char *out, uint8_t out_cap,
+                                   const char *name)
+{
+    char *p;
+    char *end;
+
+    return (uint8_t)(name != 0 && netchess_player_name_valid(name) &&
+                     proto_init_out(out, out_cap, &p, &end) &&
+                     proto_append(&p, end, NETCHESS_PROTO_NAME_PREFIX) &&
+                     proto_append(&p, end, name));
+}

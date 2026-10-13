@@ -39,6 +39,7 @@ static const void *mock_replace_buf;
 static char mock_last_replace[64];
 static char mock_last_temp[64];
 static char mock_last_commit[64];
+static uint8_t mock_rom_error = 2u;
 
 static void mock_path_copy(char *dst, const char *src)
 {
@@ -50,6 +51,11 @@ void esx_fopen(const char *path)
 {
     (void)path;
     esx_handle = 0u;
+}
+
+uint8_t spxn_rom_error(void)
+{
+    return mock_rom_error;
 }
 
 void esx_fcreate(const char *path)
@@ -131,6 +137,7 @@ static void reset_mock(void)
     mock_replace_buf = NULL;
     mock_last_replace[0] = mock_last_temp[0] = 0;
     mock_last_commit[0] = '\0';
+    mock_rom_error = 2u;
 }
 
 static void set_valid_runtime(void)
@@ -148,6 +155,7 @@ static void set_valid_runtime(void)
 int main(void)
 {
     uint8_t record[NETCHESSZX_APP_CONFIG_READ_SIZE];
+    uint8_t ctx[SPECTRUM_OVERLAY_CONTEXT_SIZE] = {0u};
 
     reset_mock();
     netchesszx_timezone = 9;
@@ -155,6 +163,11 @@ int main(void)
     CHECK(config_defaults_ovl(NULL) == 1u);
     CHECK(netchesszx_timezone == NETCHESSZX_TIME_RTC);
     CHECK(netchesszx_timezone_last == 0);
+    CHECK(config_load_ovl(ctx) == 0u);
+    mock_rom_error = 6u;
+    CHECK(config_load_ovl(ctx) == SPECTRUM_CONFIG_STATE_IO);
+    CHECK(ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT] ==
+          SPECTRUM_OVL_SAVELOAD_ERR_IO);
     set_valid_runtime();
     /* A first save creates /CFG and commits the directory, then replaces
        the record in one transaction. The directory is now the only commit:
@@ -167,7 +180,7 @@ int main(void)
     CHECK(strcmp(mock_last_replace, "/CFG/SHATRANJ.CFG") == 0);
     CHECK(strcmp(mock_last_temp, "/CFG/SHATRANJ.TMP") == 0);
     CHECK(mock_replace_buf == (const void *)record);
-    CHECK(mock_replace_len == NETCHESSZX_APP_CONFIG_SIZE);
+    CHECK(mock_replace_len == NETCHESSZX_APP_CONFIG_FILE_SIZE);
 
     /* Overwriting an existing record takes the same single path. */
     CHECK(config_save_record(record) == SPECTRUM_OVL_SAVELOAD_OK);

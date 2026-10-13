@@ -1,4 +1,4 @@
-; next_uart.asm
+; UART backend: status-only ready and defensive read; no prefetch cache.
 ;
 ; UART backend for ESP connected to the ZX Spectrum Next internal UART.
 ; Exposes the same z88dk/SDCC ABI as divmmc_uart.asm:
@@ -6,7 +6,7 @@
 ;   _net_uart_ready / _net_uart_ready_fast
 ;
 ; Ports (SpecNext):
-;   0x133B = TX / status read (bit0=RX ready, bit1=TX busy)
+;   0x133B = TX / status read (bit0=RX ready, bit1=TX buffer full)
 ;   0x143B = RX read / baud divisor write
 ;   0x153B = UART select (0x30 = ESP and write baud prescaler high bits)
 ;   0x163B = frame format
@@ -17,6 +17,7 @@ SECTION code_user
 
 PUBLIC _net_uart_init
 PUBLIC _net_uart_send
+PUBLIC _net_uart_rx_error
 PUBLIC _net_uart_read
 PUBLIC _net_uart_ready
 PUBLIC _net_uart_ready_fast
@@ -30,7 +31,7 @@ UART_SEL           EQU 0x153B
 UART_FRAME         EQU 0x163B
 UART_SET_BAUD      EQU 0x143B
 UART_GET_STATUS    EQU 0x133B
-UART_TX_BUSY       EQU 0x02
+UART_TX_FULL       EQU 0x02
 UART_RX_DATA_READY EQU 0x01
 UART_SEL_ESP_BAUD_HI0 EQU 0x30
 UART_FRAME_RESET_8N1  EQU 0x98
@@ -43,6 +44,9 @@ NEXTREG_PERIPHERAL_1 EQU 0x05
 NEXT_TIMING_COUNT  EQU 8
 NEXT_TIMING_DEFAULT EQU 0       ; base VGA timing, safe fallback
 
+SECTION bss_user
+_net_uart_rx_error: DEFS 1
+
 SECTION data_user
 
 ; Two-frame DIRECT read timeouts per three seconds: 75 at 50 Hz, 90 at
@@ -50,18 +54,11 @@ SECTION data_user
 ; The golden mapping lives in test_next_refresh_rate_mapping().
 _net_uart_direct_idle_ticks: DEFB 75
 
-SECTION bss_user
-
-_is_recv: DEFS 1
-_rx_byte: DEFS 1
-
 SECTION code_user
 
 _net_uart_init:
     xor a
-    ld (_is_recv), a
-    ; _rx_byte is invalid while _is_recv is zero and is overwritten before
-    ; that flag becomes nonzero, so clearing the cached byte is unnecessary.
+    ld (_net_uart_rx_error), a
 
     ld bc, UART_SEL
     ld a, UART_SEL_ESP_BAUD_HI0
@@ -83,8 +80,8 @@ _net_uart_send:
     ld bc, UART_GET_STATUS
     ld d, 0
 next_uart_send_wait:
-    in a, (c)
-    and UART_TX_BUSY
+    call next_uart_status
+    and UART_TX_FULL
     jr z, next_uart_send_ready
     dec d
     jr nz, next_uart_send_wait
@@ -95,57 +92,45 @@ next_uart_send_ready:
     ld l, 0
     ret
 
+; Status reads clear hardware framing/overflow flags, including reads during TX.
+; Preserve the original status in A; latch fault bits until explicit reinit/flush.
+; BC is the status port; E is scratch, D/L (TX counter/byte) are preserved.
+next_uart_status:
+    in a, (c)
+    ld e, a
+    and 0x64
+    ld a, e
+    ret z
+    ld a, (_net_uart_rx_error)
+    or e
+    and 0x64
+    ld (_net_uart_rx_error), a
+    ld a, e
+    ret
+
 ; CF=1 and A=byte if available; CF=0 if no byte.
 next_uart_raw_read:
     ld bc, UART_GET_STATUS
-    in a, (c)
+    call next_uart_status
     rrca
     ret nc
-    ld bc, UART_RX
+    inc b
     in a, (c)
-    scf
     ret
 
 _net_uart_ready:
-    ld a, (_is_recv)
-    or a
-    jr nz, next_uart_ready_yes
-
-    call next_uart_raw_read
-    jr nc, next_uart_ready_no
-
-    ld (_rx_byte), a
-    ld a, 1
-    ld (_is_recv), a
-
-next_uart_ready_yes:
+    ld bc, UART_GET_STATUS
+    call next_uart_status
+    and 1
     ld l, a
-    ret
-
-next_uart_ready_no:
-    ld l, 0
     ret
 
 DEFC _net_uart_ready_fast = _net_uart_ready
 
 _net_uart_read:
-    ld a, (_is_recv)
-    or a
-    jr z, next_uart_read_direct
-
-    ld a, (_rx_byte)
-    ld l, a
-    xor a
-    ld (_is_recv), a
-    ret
-
-next_uart_read_direct:
     call next_uart_raw_read
-    jr nc, next_uart_read_none
     ld l, a
-    ret
-
-next_uart_read_none:
+    ret c
     ld l, 0
     ret
 

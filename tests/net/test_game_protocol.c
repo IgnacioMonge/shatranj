@@ -33,6 +33,23 @@ static void test_wire_constants(void)
     check_text(NETCHESS_PROTO_DRAW, "DRAW", "draw constant");
     check_text(NETCHESS_PROTO_RESIGN, "RESIGN", "resign constant");
     check_text(NETCHESS_PROTO_TAKEBACK_PREFIX, "TAKEBACK ", "takeback constant");
+    check(netchess_proto_takeback_ply("TAKEBACK 65535") == 65535u &&
+          !netchess_proto_takeback_ply("TAKEBACK 65536") &&
+          !netchess_proto_takeback_ply("TAKEBACK 0") &&
+          !netchess_proto_takeback_ply("TAKEBACK 1x") &&
+          !netchess_proto_takeback_ply(0),
+          "takeback and cancellation share strict ply validation");
+    check(netchess_proto_takeback_ply("CANCEL TAKEBACK 65535") == 65535u,
+          "takeback cancellation accepts maximum ply");
+    check(netchess_proto_takeback_ply("CANCEL TAKEBACK 1") == 1u,
+          "takeback cancellation parses ply");
+    check(!netchess_proto_takeback_ply("CANCEL TAKEBACK 0") &&
+          !netchess_proto_takeback_ply("CANCEL TAKEBACK 65536") &&
+          !netchess_proto_takeback_ply("CANCEL TAKEBACK 1x") &&
+          !netchess_proto_takeback_ply("CANCEL TAKEBACK 1 ") &&
+          !netchess_proto_takeback_ply("CANCEL TAKEBACK ") &&
+          !netchess_proto_takeback_ply("CANCEL TAKEBACKX 1"),
+          "malformed cancellation never names a valid ply");
     check_text(NETCHESS_PROTO_RESTORE_RQ, "RQ", "restore rq constant");
     check_text(NETCHESS_PROTO_RESTORE_RY, "RY", "restore ry constant");
     check_text(NETCHESS_PROTO_RESTORE_RN, "RN", "restore rn constant");
@@ -173,6 +190,37 @@ static void test_chat_parser(void)
           "chat rejects empty");
 }
 
+static void test_text_is(void)
+{
+    check(netchess_text_is("PING", NETCHESS_PROTO_PING), "text is token");
+    check(!netchess_text_is("PING ", NETCHESS_PROTO_PING),
+          "text with a tail is not the token");
+    check(!netchess_text_is("PIN", NETCHESS_PROTO_PING),
+          "short text is not the token");
+    check(netchess_text_is("", ""), "empty text is the empty token");
+}
+
+static void test_ply_tail_parser(void)
+{
+    char ply[8];
+    char text[16];
+
+    /* A missing prefix (null tail) is rejected, so callers can pass
+       netchess_after_prefix() straight through. */
+    check(!netchess_proto_parse_ply_tail(0, ply, sizeof(ply),
+                                         text, sizeof(text)),
+          "ply tail rejects a missing prefix");
+    check(netchess_proto_parse_ply_tail(
+              netchess_after_prefix("NACK 7 BUSY", NETCHESS_PROTO_NACK_PREFIX),
+              ply, sizeof(ply), text, sizeof(text)),
+          "ply tail after a prefix");
+    check_text(ply, "7", "ply tail ply");
+    check_text(text, "BUSY", "ply tail text");
+    check(!netchess_proto_parse_ply_tail("7x", ply, sizeof(ply),
+                                         text, sizeof(text)),
+          "ply tail rejects a glued suffix");
+}
+
 static void test_ack_nack_parser(void)
 {
     char ply[8];
@@ -308,15 +356,59 @@ static void test_mach_parser(void)
     check(!netchess_proto_parse_mach("MOVE e2e4", &plat), "reject move");
 }
 
+static void test_name_protocol(void)
+{
+    char out[NETCHESS_PROTO_NAME_LINE_SIZE];
+    const char *tail;
+
+    check(netchess_player_name_valid("A"), "name one char");
+    check(netchess_player_name_valid("IGNACIO"), "name letters");
+    check(netchess_player_name_valid("ZX-81_2026"), "name ten mixed chars");
+    check(!netchess_player_name_valid(""), "name empty rejected");
+    check(!netchess_player_name_valid("CONSTANTINO"), "name eleven rejected");
+    check(!netchess_player_name_valid("nacho"), "name lowercase rejected");
+    check(!netchess_player_name_valid("NA CHO"), "name space rejected");
+    check(!netchess_player_name_valid("NACHO!"), "name punctuation rejected");
+
+    tail = netchess_proto_name_tail("MNAME IGNACIO");
+    check(tail != 0 && strcmp(tail, "IGNACIO") == 0, "parse name tail");
+    tail = netchess_proto_name_tail("MNAME CONSTANTIN");
+    check(tail != 0 && strcmp(tail, "CONSTANTIN") == 0, "parse ten chars");
+    check(netchess_proto_name_tail("MNAME ") == 0, "reject empty name");
+    check(netchess_proto_name_tail("MNAME CONSTANTINO") == 0,
+          "reject eleven chars");
+    check(netchess_proto_name_tail("MNAME PEPE ") == 0, "reject trailing");
+    check(netchess_proto_name_tail("MNAME  PEPE") == 0, "reject double space");
+    check(netchess_proto_name_tail("MNAME pepe") == 0, "reject lowercase");
+    check(netchess_proto_name_tail("MNAMEPEPE") == 0, "reject no separator");
+    check(netchess_proto_name_tail("MACH ZX") == 0, "reject mach");
+    check(netchess_proto_name_tail("CHAT MNAME X") == 0, "reject chat");
+
+    check(netchess_proto_format_name(out, sizeof(out), "CONSTANTIN"),
+          "format ten-char name");
+    check_text(out, "MNAME CONSTANTIN", "name line text");
+    check((uint8_t)strlen(out) + 1u == NETCHESS_PROTO_NAME_LINE_SIZE,
+          "name line size is exact");
+    check(!netchess_proto_format_name(out, sizeof(out), "nacho"),
+          "format rejects invalid name");
+    check(!netchess_proto_format_name(out, sizeof(out), ""),
+          "format rejects empty name");
+    check(!netchess_proto_format_name(out, 8u, "IGNACIO"),
+          "format detects overflow");
+}
+
 int main(void)
 {
     test_wire_constants();
     test_move_parser();
     test_chat_parser();
+    test_text_is();
+    test_ply_tail_parser();
     test_ack_nack_parser();
     test_fixed_messages();
     test_formatters();
     test_mach_parser();
+    test_name_protocol();
 
     if (failures != 0) {
         printf("game protocol tests failed: %d\n", failures);

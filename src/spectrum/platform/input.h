@@ -15,6 +15,7 @@ void spectrum_input_frame_tick(void);
 uint8_t spectrum_input_poll_event(void);
 void spectrum_input_flush_until_release(void);
 void spectrum_input_suppress_until_release(uint8_t key) NETCHESSZX_FASTCALL;
-uint8_t spectrum_input_parse_move(const char *text, char *move);
+uint8_t spectrum_key_edit_pressed(void);
+uint8_t spectrum_key_poll(void);
 
 #endif

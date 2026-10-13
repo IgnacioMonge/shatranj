@@ -1,0 +1,25 @@
+{
+  "resource": "Shatranj direct HTTPS",
+  "version": {
+    "source": "../../VERSION"
+  },
+  "minimum_firmware": "1.0",
+  "files": [
+    {
+      "source": "../../build/spectranext-boot.zx",
+      "name": "boot.zx"
+    },
+    {
+      "source": "../../release/Spectranext/SHATRANJ.tap",
+      "name": "SHATRANJ.tap"
+    },
+    {
+      "source": "../../release/Spectranext/SHATRANJ.OVL",
+      "name": "SHATRANJ.OVL"
+    },
+    {
+      "source": "../../release/Spectranext/SHATRANJ.DAT",
+      "name": "SHATRANJ.DAT"
+    }
+  ]
+}

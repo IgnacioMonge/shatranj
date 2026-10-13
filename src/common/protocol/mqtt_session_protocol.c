@@ -37,12 +37,17 @@ uint8_t netchess_mqtt_session_color_value(char color, uint8_t *out)
     return 0u;
 }
 
+/* Non-zero session id that ends the payload. */
+static uint8_t parse_sid_end(const char *p, uint16_t *session_id)
+{
+    p = netchess_mqtt_session_parse_u16_token(p, session_id);
+    return (uint8_t)(p != 0 && *session_id != 0u && *p == '\0');
+}
+
 uint8_t netchess_mqtt_session_parse_host(const char *payload,
                                          uint8_t *host_color,
                                          uint16_t *session_id)
 {
-    const char *p;
-
     if (payload[0] != 'H' || payload[1] != ' ') {
         return 0u;
     }
@@ -52,26 +57,16 @@ uint8_t netchess_mqtt_session_parse_host(const char *payload,
     if (payload[3u] != ' ') {
         return 0u;
     }
-    p = netchess_mqtt_session_parse_u16_token(payload + 4u, session_id);
-    if (p == 0 || *session_id == 0u) {
-        return 0u;
-    }
-    return (uint8_t)(*p == '\0');
+    return parse_sid_end(payload + 4u, session_id);
 }
 
 uint8_t netchess_mqtt_session_parse_join(const char *payload,
                                          uint16_t *session_id)
 {
-    const char *p;
-
     if (payload[0] != 'J' || payload[1] != ' ') {
         return 0u;
     }
-    p = netchess_mqtt_session_parse_u16_token(payload + 2u, session_id);
-    if (p == 0 || *session_id == 0u) {
-        return 0u;
-    }
-    return (uint8_t)(*p == '\0');
+    return parse_sid_end(payload + 2u, session_id);
 }
 
 uint8_t netchess_mqtt_session_parse_side(const char *payload,
@@ -80,8 +75,6 @@ uint8_t netchess_mqtt_session_parse_side(const char *payload,
                                          uint16_t *session_id,
                                          uint8_t *has_session_id)
 {
-    const char *p;
-
     if (payload[0] != verb || payload[1] != ' ') {
         return 0u;
     }
@@ -97,8 +90,7 @@ uint8_t netchess_mqtt_session_parse_side(const char *payload,
     if (payload[3u] != ' ') {
         return 0u;
     }
-    p = netchess_mqtt_session_parse_u16_token(payload + 4u, session_id);
-    if (p == 0 || *p != '\0' || *session_id == 0u) {
+    if (!parse_sid_end(payload + 4u, session_id)) {
         return 0u;
     }
     *has_session_id = 1u;

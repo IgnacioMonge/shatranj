@@ -46,11 +46,18 @@ void spectrum_board_show_legal_hints(uint8_t from_row, uint8_t from_col);
 uint8_t spectrum_board_apply_trusted_move(const char *move) NETCHESSZX_FASTCALL;
 uint8_t spectrum_board_apply_trusted_move_with_undo(
     const char *move, spectrum_board_undo_t *undo);
-void spectrum_board_undo_restore(const spectrum_board_undo_t *undo)
+/* Both restores return 0 when the BOARD overlay could not load: nothing
+   changed. Only Classic reads a switched overlay from SD, so only Classic
+   checks; Next and SpectraNext map BOARD from a preloaded page. */
+#if !defined(NETCHESSZX_NEXT_BANKING) && !defined(NETCHESSZX_SPECTRANEXT)
+#define SPECTRUM_BOARD_RESTORE_CAN_FAIL 1
+#endif
+uint8_t spectrum_board_undo_restore(const spectrum_board_undo_t *undo)
     NETCHESSZX_FASTCALL;
 void spectrum_board_snapshot_save(spectrum_board_snapshot_t *out) NETCHESSZX_FASTCALL;
-void spectrum_board_snapshot_restore(const spectrum_board_snapshot_t *snapshot) NETCHESSZX_FASTCALL;
+uint8_t spectrum_board_snapshot_restore(const spectrum_board_snapshot_t *snapshot) NETCHESSZX_FASTCALL;
 #ifdef NETCHESSZX_HOST_TEST
+extern uint8_t spectrum_board_host_fail;
 uint8_t spectrum_board_apply_move(const char *move) NETCHESSZX_FASTCALL;
 #endif
 

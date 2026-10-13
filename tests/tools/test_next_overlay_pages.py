@@ -57,6 +57,8 @@ def run_atlas(
         str(root / "SHATRANJ.OVL"),
         "--asm-out",
         str(root / "overlay_atlas_table.asm"),
+        "--extra",
+        "RECOVERY",
     ]
     if block_size is not None:
         cmd += ["--block-size", str(block_size)]
@@ -66,13 +68,16 @@ def run_atlas(
 
 
 def write_overlays(root: Path, first_size: int) -> None:
-    for index, name in enumerate(ORDER):
+    for index, name in enumerate([*ORDER, "RECOVERY"]):
         size = first_size if index == 0 else index + 1
         (root / f"SHATRANJ_{name}.OVL").write_bytes(bytes([index]) * size)
 
 
 def main() -> int:
-    assert len(ORDER) == OVERLAY_PAGE_COUNT == 17
+    from test_next_paging import main as check_paging
+
+    check_paging()
+    assert len(ORDER) + 1 == OVERLAY_PAGE_COUNT == 18
     assert resident_length(
         {"__data_compiler_tail": 0xF010, "__DATA_END_tail": 0xF011}, 0xF000
     ) == 0x11
@@ -95,7 +100,7 @@ def main() -> int:
             assert mirrored[start:split] == paged[start:split]
             assert mirrored[split:end] == mirror
         table = (root / "overlay_atlas_table.asm").read_text(encoding="ascii")
-        assert "ovl_atlas_count EQU 17" in table
+        assert "ovl_atlas_count EQU 18" in table
         assert "DW 4096" in table
 
         contaminated = bytearray(paged)
@@ -212,6 +217,8 @@ def main() -> int:
     }
     assert next_constants["SPECTRUM_OVL_BLOCK_SIZE"] == 8192
     assert classic_constants["SPECTRUM_OVL_BLOCK_SIZE"] == 2048
+    assert next_constants["SPECTRUM_OVL_RECOVERY"] == 17
+    assert classic_constants["SPECTRUM_OVL_RECOVERY"] == 18
 
     manifest = {
         "version": MANIFEST_VERSION,
@@ -242,7 +249,8 @@ def main() -> int:
     assert MAIN_BANKS[0] == (5, 0x4000)
     assert "ZX_ORG=$(NEXT_ZX_ORG)" in makefile
     flat_makefile = " ".join(makefile.split())
-    assert "RESIDENT_INCLUDE_DEPS ?= asm/spectrum/input_queue.asm" in flat_makefile
+    assert "$(wildcard asm/platform/input_*.inc)" in flat_makefile
+    assert "RESIDENT_INCLUDE_DEPS += $(UX_ASM_INCLUDES)" in flat_makefile
     nex_inputs = makefile[
         makefile.index("NEXT_NEX_INPUTS :=") : makefile.index(".NOTPARALLEL:")
     ]

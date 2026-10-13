@@ -5,6 +5,214 @@ details live under [`docs/`](docs/).
 
 ---
 
+## [1.3] - 2026-10-13 - Sealed Move
+
+Shatranj 1.3 lets Stockfish play from the desktop client, resumes interrupted
+games on every Spectrum, adds player names and end-of-game statistics, and lets
+the Spectranext edition start straight from the web. Play is also faster and
+steadier on every platform.
+
+### Highlights
+
+- Stockfish joins the game: the Qt client installs the official engine and lets
+  it play your side at levels 0-20, against any Spectrum or desktop opponent.
+- Interrupted games come back: Classic, Next, and Spectranext resume a game
+  after a crash, reset, or power cut, with the board, clocks, and move list.
+- Player names of up to ten characters appear in both players' move lists.
+- End-of-game statistics on Spectrum and Qt: time per move, longest and
+  fastest moves, and every captured piece.
+- Spectranext can start Shatranj from its web address without installing it;
+  the guided installer remains available.
+- A Qt Preferences dialog and a bilingual English/Spanish manual.
+- Faster, steadier play: quicker move replies, fewer disk loads on Classic,
+  clocks that keep time during disk access, and requests that expire cleanly.
+
+### Added
+
+#### Stockfish in the desktop client
+
+- The Qt client installs the latest official Stockfish release for the
+  computer from GitHub, verified by SHA-256 and installed for the current user
+  only. It can also update or remove the engine, or use an existing Stockfish.
+- Stockfish can play your side at levels 0-20. The knight button beside the
+  settings button switches it on or off; while it plays, the button, the board
+  frame, and the turn label turn violet and the status bar shows
+  `STOCKFISH L<n>`.
+- An optional pause of up to 30 seconds before each engine move
+  (**Preferences > Engine**) leaves the opponent time to ask for a takeback.
+- The opponent sees `STOCKFISH` as the player name and a chat line such as
+  `STOCKFISH 19 PLAYS WHITE - LEVEL 5`; Spectrum clients add it to the
+  opponent's platform, as in `VS MAC: STOCKFISH`. The choice is fixed for the
+  session.
+- While the engine plays, the takeback, draw, and resign decisions belong to
+  it. The operator can still chat and answer the opponent's requests.
+- If the engine stops unexpectedly, the client restarts it once; if it stops
+  again, the turn label reads `STOCKFISH STOPPED` and the operator can resign
+  or disconnect.
+
+#### Players and statistics
+
+- Player names of up to ten characters (`A-Z 0-9 - _`): Spectrum Setup has a
+  NAME row, and Qt sets the name in **Preferences > Player**. Both clients show
+  the two names in the MOVES column headers instead of WHITE and BLACK.
+- End-of-game statistics on Spectrum and Qt: each player's completed-turn time
+  and share of the clock; average, longest, and fastest moves with their move
+  numbers; and the captured pieces with the material each side took, including
+  en passant and takebacks. On Spectrum, press S after the game; Qt's
+  **Game stats** button works during and after the game. Loaded or restored
+  games report a partial sample.
+
+#### Interrupted and saved games
+
+- Classic, Next, and Spectranext resume a game interrupted by a crash, reset,
+  or power cut. When the opponent is ready, the host is asked
+  `Resume last game? Y/N`; the guest approves the restore as usual, and the
+  board, flags, clocks, and move list come back. Choosing to disconnect ends
+  the game for recovery; a lost connection, reset, or power cut keeps the offer.
+- Spectrum saves keep the complete move list with checksums and are verified
+  after writing; a failed save keeps the game and its history. Loading a save
+  or recovering a game repaints the move list.
+
+#### Spectranext
+
+- Direct launch: open `https://ignaciomonge.github.io/shatranj/` with
+  **Load Resource URL** to play without installing anything. The guided
+  installer moves to `https://ignaciomonge.github.io/shatranj/install/`.
+  Settings and saved games stay in the cartridge's local storage, shared by
+  both.
+- Spectranext shows the Shatranj title screen for two seconds while it starts
+  (any key skips it).
+
+#### Spectrum interface
+
+- The in-game menu keeps FILE, FLIP, and ABOUT as direct tabs and adds rolling
+  NTWRK (disconnect, reset), OFFER (takeback, draw, resign), and THEME (board,
+  piece set, hints) groups. Up/Down or `Q`/`A` cycles through a group's
+  actions.
+- Classic and Spectranext: press C on the About screen to see what is new in
+  this release.
+- Toggling hints confirms `HINTS ON` or `HINTS OFF`.
+- `CONFIG I/O ERROR` reports a settings file that exists but cannot be read.
+
+#### Desktop client
+
+- Preferences dialog (gear button, Ctrl+, or the macOS Preferences menu) with
+  Board, Player, and Engine tabs.
+- English and Spanish manual with an index, opened with the **?** button or
+  F1, and from the matching Preferences section.
+- **Game stats** toggle that shows the statistics over the board and updates
+  after every move.
+
+### Changed
+
+- Draw, takeback, restart, and load requests share a 60-second answer
+  deadline on Spectrum and Qt. An unanswered request is withdrawn without
+  ending the session, the opponent's question closes by itself, and a
+  takeback accepted at the last moment still completes on both boards.
+- Games no longer restart automatically after a draw or resignation. Only the
+  host asks for a new game: Spectrum shows the host `S:STATS  RESTART? Y/N`
+  and the guest `S:STATS  WAITING OPPONENT`, and Qt enables **Restart Game**
+  for the host. Declining a new game, or BREAK, ends the session for both
+  players.
+- Spectrum acknowledges the opponent's move as soon as it is on the board,
+  before updating the move list and its recovery data; on Classic the
+  opponent waits about 1.6 seconds less per move.
+- Classic loads fewer overlays per move and reads each one with a single disk
+  call, so play, setup, and game start respond faster.
+- Classic clocks keep running during disk access. On every Spectrum the turn
+  timer starts as soon as a move is entered, so both players' statistics agree.
+- Spectrum Setup no longer walks Direct players through PORT when the stored
+  port is valid, enables SAVE after a piece-set change, and redraws only the
+  rows that change.
+- The Spectrum saved-game list shows the newest save for each slot, erasing
+  refreshes the list in place, and the erase prompt also accepts Enter, Space,
+  or Cancel.
+- Save timestamps follow time-zone changes and midnight on the live clock.
+  Selecting RTC in Setup reads the hardware clock again.
+- Loading a game on Spectrum restores the board orientation it was saved with.
+- Chat and commands wait for the acknowledgement of a pending move instead of
+  sending a second message.
+- The Qt status bar is shorter and clearer. It names the phase, the pending
+  notice, the post-game action, and the opponent's platform, in plain wording
+  such as `Opponent offers a draw` and `Connection lost`.
+- The Windows and macOS packages include the secure-connection support needed
+  to download Stockfish; desktop packages include the manual.
+
+### Fixed
+
+- A takeback requested by the opponent and answered after a few seconds on
+  Spectrum no longer turns into a rejection that blocks the board.
+- A declined draw no longer reopens when a repeated offer crosses the refusal;
+  it stays declined until the position changes.
+- A request whose retransmission crosses the answer no longer asks the player
+  twice.
+- Classic and Next Direct no longer lose a message when a network header
+  arrives in pieces while the Spectrum is sending.
+- Spectranext Direct accepts each peer on a single socket, so repeated
+  reconnections no longer run out of sockets, and a host whose cartridge
+  refuses to listen keeps its clock running and accepts cancel.
+- Classic retries an overlay that fails to load. If the board code still
+  cannot be loaded during a takeback or restore, the game ends with
+  `OVL load failed` instead of applying a partial change.
+- Qt sends draw, restart, and resignation acknowledgements on the correct MQTT
+  topic and reads Direct messages containing stray carriage returns as
+  Spectrum does.
+- Loading a saved game keeps both clocks exact, and resetting the turn timer
+  can no longer shorten the game clock.
+
+### Compatibility notes
+
+- 1.3 plays with 1.2 peers. Player names, request withdrawal, and the
+  host-only restart need 1.3 on both sides: a 1.2 peer shows WHITE and BLACK,
+  its operator closes an expired takeback question, and it still restarts
+  automatically after a draw or resignation, which a 1.3 Spectrum answers with
+  `S:STATS ACCEPT RESTART? Y/N`.
+- Spectrum settings saved by 1.2 load without a player name. Returning to 1.2
+  after saving settings in 1.3 resets them once.
+- Spectrum saves use a new format with the full move list, so Spectrum 1.3
+  cannot load saves written by 1.2. The Qt client keeps its own save format,
+  and restoring a game over the network works as before.
+- The Spectranext addresses are now lowercase:
+  `https://ignaciomonge.github.io/shatranj/` starts the game without
+  installing it, and `.../shatranj/install/` runs the installer. The 1.2
+  address, `https://ignaciomonge.github.io/Shatranj/`, no longer works.
+- Spectranext 1.3 requires cartridge firmware 1.0 or later, which fixes
+  seeking in files read over HTTPS. Older firmware stops at
+  `FIRMWARE OUTDATED: SEE README`.
+- Spectranext keeps the recovery journal in cartridge flash and writes to it
+  after every move.
+
+### Release artifacts
+
+- ZX Spectrum Classic: `SHATRANJ.tap`, `SHATRANJ.OVL`, and `SHATRANJ.DAT`.
+- ZX Spectrum Next: self-contained `SHATRANJ.nex`.
+- Spectranext: direct launch at `https://ignaciomonge.github.io/shatranj/` and
+  guided installer at `https://ignaciomonge.github.io/shatranj/install/`.
+- Desktop: Windows portable package, macOS application archives for Apple
+  silicon and Intel, and Linux AppImage.
+
+### Known limitations
+
+- Spectrum clients promote pawns to a queen; the Qt client also offers rook,
+  bishop, and knight.
+- Restoring a saved game requires its host color to match the current seating.
+- Direct TCP requires the guest to reach the host's address and port.
+- Stockfish plays only from the Qt client, and installing it needs internet
+  access to GitHub.
+- Only Spectrum clients resume an interrupted game; the Qt client does not.
+- The Spectranext direct launch downloads the game at every start, so its web
+  address must be reachable; the installed copy starts from local storage.
+- Spectranext needs cartridge firmware 1.0 or later.
+- Over Direct, Classic and Next can drop chat lines when more than three
+  arrive while they are busy; moves are retransmitted.
+- The Linux AppImage is available for x86_64 systems.
+- Classic requires matching TAP, OVL, and DAT files. The Next NEX is
+  self-contained.
+- Classic and Next network play require a UART-to-ESP link running ESP-AT
+  firmware. Spectranext uses the cartridge's own networking.
+
+---
+
 ## [1.2] - 2026-09-04 - Connected Rooks
 
 Shatranj 1.2 adds a native Spectranext cartridge edition and improves setup,
@@ -152,8 +360,6 @@ platform.
 - The Linux AppImage is available for x86_64 systems.
 - Classic requires matching TAP, OVL, and DAT files. The Next NEX is
   self-contained.
-- Classic and Next network play require ESP-AT 1.7.6. Spectranext uses the
-  cartridge's own firmware.
 
 ---
 
@@ -234,7 +440,6 @@ Linux.
   seating.
 - Direct TCP requires a reachable host.
 - The Linux AppImage is available for x86_64 systems.
-- Classic and Next network play require ESP-AT 1.7.6.
 
 ---
 

@@ -4,7 +4,7 @@
   "version": {
     "source": "../../VERSION"
   },
-  "minimum_firmware": "0.9-6fc153a3",
+  "minimum_firmware": "1.0",
   "screen": {
     "source": "../../assets/spectrum/installer.scr",
     "placement": "bottom",

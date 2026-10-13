@@ -1,0 +1,26 @@
+	sub	a,0x01
+	ld	a,0x00
+	rla
+	xor	a,0x01
+=
+	sub	a,0x01
+	sbc	a,a
+	inc	a
+	or	a,a
+	; peephole netchess-bool-nonzero
+
+	ld	sp, ix
+	pop	ix
+	ret
+=
+	EXTERN	_netchesszx_asm_leave_ix
+	jp	_netchesszx_asm_leave_ix
+	; peephole netchess-leave-ix
+
+	push	ix
+	ld	ix,0
+	add	ix,sp
+=
+	EXTERN	_netchesszx_asm_enter_ix_hl
+	call	_netchesszx_asm_enter_ix_hl
+	; peephole netchess-enter-ix-hl

@@ -8,77 +8,9 @@
 #define __z88dk_callee
 #define __at(address)
 
-#define SPXN_OK          0
-#define SPXN_EROM       -1
-#define SPXN_EINVAL     -6
-#define SPXN_ESENDSTALL -8
-#define SPXN_POLLCON     1
-#define SPXN_POLLHUP     2
-#define SPXN_POLLIN      4
-#define SPXN_POLLNVAL  128
+#include "spectranext_api_fixture.h"
 
 #define SCRIPT_MAX 16u
-
-struct spxn_status {
-    uint8_t controller;
-    uint8_t wifi;
-    uint8_t ip4host[4];
-};
-
-struct spxtime_result {
-    uint8_t hour;
-    uint8_t minute;
-    uint8_t second;
-    uint16_t fat_date;
-    uint16_t fat_time;
-};
-
-struct spxtime_request {
-    const char *host;
-    uint8_t *scratch;
-    uint16_t scratch_size;
-    uint16_t timeout_ticks;
-    struct spxtime_result *out;
-};
-
-struct spxudp_endpoint {
-    uint8_t ip4be[4];
-    uint16_t port;
-    uint16_t local_port;
-};
-
-struct spxudp_socket {
-    uint8_t fd;
-    uint8_t open;
-    uint8_t poll_in;
-};
-
-#define SPXTIME_SNTP_PACKET_SIZE 48u
-#define SPXTIME_SNTP_PORT 123u
-
-int16_t spxn_status(struct spxn_status *out);
-int16_t spxn_detect(void);
-int16_t spxn_poll(void);
-int16_t spxn_recv(void *buffer, uint16_t maximum);
-int16_t spxn_accept(void);
-int16_t spxn_listen(uint16_t port);
-int16_t spxn_resolve(const char *host, uint8_t *ip4be);
-int16_t spxn_connect(const uint8_t *ip4be, uint16_t port);
-void spxn_close(void);
-int16_t spxn_send_all(const void *buffer, uint16_t length,
-                      uint16_t zero_budget);
-int16_t spxtime_sntp(const struct spxtime_request *request);
-int16_t spxtime_parse_sntp(const uint8_t *packet, uint16_t length,
-                           struct spxtime_result *out);
-int16_t spxudp_open(struct spxudp_socket *socket);
-int16_t spxudp_sendto(struct spxudp_socket *socket, const void *buffer,
-                      uint16_t length,
-                      const struct spxudp_endpoint *destination);
-int16_t spxudp_poll(struct spxudp_socket *socket);
-int16_t spxudp_recvfrom(struct spxudp_socket *socket, void *buffer,
-                        uint16_t maximum,
-                        struct spxudp_endpoint *source);
-void spxudp_close(struct spxudp_socket *socket);
 
 #include "../../src/spectrum/overlay/overlay_context.h"
 #undef spectrum_overlay_context
@@ -126,6 +58,8 @@ static uint8_t close_calls;
 static uint8_t listen_calls;
 static int16_t listen_result;
 static uint8_t accept_calls;
+static uint16_t key_polls;
+static uint16_t key_cancel_at;
 static uint8_t send_all_calls;
 static uint16_t poll_calls;
 static uint8_t recv_calls;
@@ -193,7 +127,8 @@ void spectrum_net_runtime_set_fat_stamp(uint16_t date, uint16_t time)
 
 uint8_t spectrum_key_poll(void)
 {
-    return 0u;
+    ++key_polls;
+    return (key_cancel_at != 0u && key_polls == key_cancel_at) ? 0x8au : 0u;
 }
 
 char *spectrum_append_text(char *dst, const char *src)
@@ -331,7 +266,7 @@ int16_t spxn_recv(void *buffer, uint16_t maximum)
     return (int16_t)count;
 }
 
-int16_t spxn_accept(void)
+int16_t spxn_accept_single(void)
 {
     ++accept_calls;
     return SPXN_OK;
@@ -518,6 +453,8 @@ static void reset_socket_script(const uint8_t *data, uint16_t length,
     direct_rx_head = 0u;
     direct_rx_payload_len = 0u;
     direct_rx_discard = 0u;
+    spxn_direct_pending_cursor = 0u;
+    spxn_direct_pending_length = 0u;
     direct_link_closed = 0u;
     active_link = 0u;
     close_calls = 0u;
@@ -525,6 +462,8 @@ static void reset_socket_script(const uint8_t *data, uint16_t length,
     listen_result = SPXN_OK;
     accept_calls = 0u;
     wait_calls = 0u;
+    key_polls = 0u;
+    key_cancel_at = 0u;
     set_socket_script(data, length, polls, poll_count);
     send_all_calls = 0u;
 }
@@ -609,16 +548,38 @@ static void test_direct_wait_retries_failed_relisten(void)
 
     reset_socket_script(0, 0u, stale_listener, 1u);
     listen_result = SPXN_EINVAL;
-    check(direct_wait_pc_connect_ovl() == 0u && close_calls == 1u &&
-              listen_calls == 1u && accept_calls == 0u,
-          "DIRECT reports an unsuccessful listener recreation as idle");
+    check(direct_wait_pc_connect_ovl() == 0u && accept_calls == 0u &&
+              poll_calls == 1u && wait_calls == WAIT_LONG - 1u,
+          "DIRECT keeps a refused re-listen inside one paced batch");
+    check(listen_calls > 1u &&
+              listen_calls <= WAIT_LONG / DIRECT_REARM_FRAMES + 1u &&
+              close_calls == listen_calls,
+          "DIRECT re-arms a refused listener at most once per pace");
 
     listen_result = SPXN_OK;
+    close_calls = 0u;
+    listen_calls = 0u;
     set_socket_script(0, 0u, late_connect, 1u);
-    check(direct_wait_pc_connect_ovl() == 1u && close_calls == 2u &&
-              listen_calls == 2u && accept_calls == 1u,
+    check(direct_wait_pc_connect_ovl() == 1u && close_calls == 1u &&
+              listen_calls == 1u && accept_calls == 1u,
           "DIRECT retries a failed listener recreation on the next batch");
 }
+
+static void test_direct_wait_cancel_during_refused_listen(void)
+{
+    reset_socket_script(0, 0u, 0, 0u);
+    listen_result = SPXN_EINVAL;
+    check(direct_listen_ovl() == 0u && listen_calls == 1u,
+          "DIRECT host setup reports a refused first LISTEN");
+    key_cancel_at = 120u;
+    check(direct_wait_pc_connect_ovl() == SPECTRUM_LINK_CANCELLED &&
+              key_polls == 120u && poll_calls == 0u &&
+              wait_calls == 119u,
+          "DIRECT cancel key works while LISTEN is refused");
+    check(listen_calls == 4u,
+          "DIRECT paces refused LISTEN retries before cancel");
+}
+
 
 static void test_direct_pollin_receive(void)
 {
@@ -849,11 +810,42 @@ static void test_direct_queue_boundary(void)
               strcmp(output, "C") == 0 && direct_rx_count == 0u &&
               direct_rx_head == 0u,
           "DIRECT full queue preserves newest admitted payload");
+    check(direct_read_host(output, sizeof(output)) == 0u &&
+              strcmp(output, "D") == 0 && poll_calls == 1u &&
+              recv_calls == 1u && spxn_direct_pending_length == 0u,
+          "DIRECT full queue resumes the unread recv suffix");
     check(direct_read_host(output, sizeof(output)) ==
               (uint8_t)SPECTRUM_NET_READ_TIMEOUT &&
               direct_rx_payload_len == 0u && direct_rx_discard == 0u &&
               wait_calls == 1u && poll_calls == 2u && recv_calls == 1u,
-          "DIRECT full queue drops overflow without a ghost payload");
+          "DIRECT resumed recv leaves no ghost payload");
+}
+
+static void test_direct_background_drain(void)
+{
+    static const uint8_t payload[] = "HELLO DIRECT GUEST\n";
+    static const int16_t polls[] = { SPXN_POLLIN };
+    char output[32];
+
+    reset_socket_script(payload, (uint16_t)(sizeof(payload) - 1u),
+                        polls, 1u);
+    netchesszx_transport = NETCHESSZX_TRANSPORT_DIRECT;
+    spectrum_net_background_drain();
+    spectrum_net_background_drain();
+    check(recv_calls == 1u && poll_calls == 1u && direct_rx_count == 0u &&
+              spxn_direct_pending_length == sizeof(payload) - 1u,
+          "DIRECT background drain stages one recv without parsing twice");
+    check(direct_read_host(output, sizeof(output)) == 0u &&
+              strcmp(output, "HELLO DIRECT GUEST") == 0 &&
+              recv_calls == 1u && poll_calls == 1u &&
+              spxn_direct_pending_length == 0u,
+          "DIRECT overlay consumes the staged recv");
+
+    reset_socket_script(0, 0u, (const int16_t[]){ SPXN_EINVAL }, 1u);
+    netchesszx_transport = NETCHESSZX_TRANSPORT_DIRECT;
+    spectrum_net_background_drain();
+    check(direct_link_closed == 1u && recv_calls == 0u,
+          "DIRECT background poll failure closes the link");
 }
 
 static uint8_t direct_send_host(const char *text)
@@ -1031,6 +1023,7 @@ int main(void)
     test_direct_wait_timeout_keeps_listener();
     test_direct_wait_recovers_stale_listener();
     test_direct_wait_retries_failed_relisten();
+    test_direct_wait_cancel_during_refused_listen();
     test_direct_pollin_receive();
     test_direct_fragmented_line();
     test_direct_coalesced_lines_fifo();
@@ -1039,6 +1032,7 @@ int main(void)
     test_direct_nul_recovers_at_next_line();
     test_direct_read_classification();
     test_direct_queue_boundary();
+    test_direct_background_drain();
     test_direct_send_outcomes();
     test_direct_active_link_zero();
     test_direct_reconnect_resets_state();

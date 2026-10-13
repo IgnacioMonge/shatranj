@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/versi%C3%B3n-1.2-blue" alt="Versión 1.2">
+  <img src="https://img.shields.io/badge/versi%C3%B3n-1.3-blue" alt="Versión 1.3">
   <img src="https://img.shields.io/badge/protocolos-Direct%20TCP%20%7C%20MQTT-2ea44f" alt="Protocolos: Direct TCP y MQTT">
   <img src="https://img.shields.io/badge/escritorio-Windows%20%7C%20macOS%20%7C%20Linux-41cd52" alt="Escritorio: Windows, macOS y Linux">
   <img src="https://img.shields.io/badge/Spectrum-cl%C3%A1sico%20%7C%20Next%20%7C%20Spectranext-d52b1e" alt="Spectrum: clásico, Next y Spectranext">
@@ -21,7 +21,7 @@
 
 <p align="center">
   <a href="README.md">English</a> ·
-  <a href="https://github.com/IgnacioMonge/Shatranj/releases/latest">Descargar</a> ·
+  <a href="https://github.com/IgnacioMonge/shatranj/releases/latest">Descargar</a> ·
   <a href="docs/README.es.md">Documentación para desarrolladores</a> ·
   <a href="client/README.es.md">Guía del cliente Qt</a>
 </p>
@@ -46,31 +46,38 @@ necesitan cuentas ni un servidor central de partidas.
 | **Juego** | Spectrum ↔ Spectrum, Spectrum ↔ escritorio o escritorio ↔ escritorio |
 | **Conexión** | Direct TCP sin broker, o MQTT mediante un broker y una sala compartidos |
 | **Plataformas** | ZX Spectrum clásico, Spectrum Next, Spectranext, Windows, macOS y Linux |
-| **Partida** | Ayudas legales, relojes, historial, chat, tablas, abandono, deshacer jugadas y partidas guardadas |
-| **Partidas coherentes** | Las mismas reglas, protocolo, partidas guardadas y comportamiento de sesión en todos los clientes |
+| **Partida** | Ayudas legales, relojes, historial, chat, tablas, abandono, deshacer jugadas, partidas guardadas y estadísticas de fin de partida |
+| **Stockfish** | El cliente de escritorio puede dejar que Stockfish juegue por ti contra cualquier rival |
+| **Resistente** | Los clientes Spectrum reanudan una partida interrumpida por un cuelgue, un reset o un corte de corriente |
+| **Partidas coherentes** | Las mismas reglas, protocolo y comportamiento de sesión en todos los clientes |
 | **Versiones retro nativas** | TAP + OVL + DAT para Classic y Spectranext; un NEX autocontenido para Next |
 
-## Novedades de la versión 1.2
+## Novedades de la versión 1.3
 
-- **Spectranext se suma al tablero:** versión nativa para cartucho con Direct
-  TCP, MQTT, RTC, almacenamiento persistente e instalador guiado.
-- **Spectrum recuerda la configuración:** se pueden guardar conexión, reloj,
-  color, notación, tablero, piezas y ayudas, con previsualización en directo.
-- **Interacción retro más rápida:** navegación y escritura más fluidas, cambios
-  de tema instantáneos, repintado más veloz e información de reloj más clara.
-- **Cliente de escritorio renovado:** presentación Qt actualizada, tablero y
-  red más ágiles, y mensajes de conexión y final de partida más precisos.
-- **Sabes contra qué plataforma juegas:** las partidas ahora identifican la
-  plataforma del oponente, desde los clientes ZX Spectrum hasta la aplicación Qt.
-- **Partidas más seguras:** guardado, reconexión, restauración, deshacer,
-  revancha y juego entre plataformas más fiables.
+- **Stockfish entra en juego:** el cliente de escritorio instala el motor
+  oficial Stockfish y puede dejar que juegue por ti, del nivel 0 al 20, contra
+  cualquier rival Spectrum o de escritorio.
+- **Las partidas interrumpidas vuelven:** Classic, Next y Spectranext reanudan
+  una partida tras un cuelgue, un reset o un corte de corriente, con el
+  tablero, los relojes y la lista de jugadas.
+- **Sabes contra quién juegas:** cada jugador puede poner un nombre de hasta
+  diez caracteres, que aparece en la lista de jugadas de ambos.
+- **Estadísticas de fin de partida:** tiempo por jugada, jugadas más largas y
+  más rápidas, y todas las piezas capturadas, en Spectrum y en escritorio.
+- **Spectranext directamente desde la web:** inicia Shatranj desde su
+  dirección web sin instalarlo, o sigue usando el instalador guiado.
+- **Un cliente de escritorio más cómodo:** ventana de preferencias, manual en
+  inglés y español, y mensajes de estado más claros.
+- **Juego más rápido y estable:** respuestas a las jugadas más rápidas, menos
+  lecturas de disco en Classic, relojes que no se paran durante el acceso al
+  disco y peticiones que caducan limpiamente a los 60 segundos.
 
 Consulta las [notas de la versión](CHANGELOG.md) para ver el resumen completo
-de Shatranj 1.2.
+de Shatranj 1.3.
 
 ## Índice
 
-- [Novedades de la versión 1.2](#novedades-de-la-versión-12)
+- [Novedades de la versión 1.3](#novedades-de-la-versión-13)
 - [Plataformas y protocolos](#plataformas-y-protocolos)
 - [Descarga](#descarga)
 - [Instalación](#instalación)
@@ -89,7 +96,7 @@ de Shatranj 1.2.
 | Escritorio Qt | Windows, macOS, Linux | Direct TCP, MQTT | Paquete o ejecutable de la plataforma |
 | ZX Spectrum clásico | ZX Spectrum de 48K | Direct TCP, MQTT | `SHATRANJ.tap` + `SHATRANJ.OVL` + `SHATRANJ.DAT` |
 | Spectrum Next | ZX Spectrum Next | Direct TCP, MQTT | `SHATRANJ.nex` |
-| Spectranext | ZX Spectrum con cartucho Spectranext | Direct TCP, MQTT | Paquete instalador de Spectranext |
+| Spectranext | ZX Spectrum con cartucho Spectranext | Direct TCP, MQTT | Arranque directo o instalador guiado desde la web |
 
 Direct TCP es una conexión entre pares: el invitado debe poder alcanzar la
 dirección y el puerto del anfitrión. MQTT evita exigir una conexión entrante
@@ -98,22 +105,24 @@ directa; ambos clientes se conectan en su lugar al mismo broker y sala.
 ### Hardware Spectrum
 
 El juego en red de Classic y Next utiliza un enlace UART-ESP compatible con
-firmware ESP-AT 1.7.6. El cliente clásico también necesita divMMC/esxDOS para
+firmware ESP-AT. El cliente clásico también necesita divMMC/esxDOS para
 cargar sus ficheros OVL y DAT. Una UART compatible con ZX-Uno requiere control
 de flujo CTS en la transmisión del ESP;
 [NetManZX](https://github.com/IgnacioMonge/NetManZX) configura el ajuste
 necesario.
 La versión de Next es autocontenida, por lo que solo hay que copiar el fichero
-NEX. La edición Spectranext usa la red del propio cartucho, requiere su última
-versión estable de firmware y se instala como recurso.
+NEX. La edición Spectranext usa la red del propio cartucho, requiere el firmware
+1.0 o posterior y se inicia desde su dirección web,
+directamente o mediante un instalador guiado.
 
 ## Descarga
 
 Descarga las versiones listas para usar desde la
-[última publicación](https://github.com/IgnacioMonge/Shatranj/releases/latest).
+[última publicación](https://github.com/IgnacioMonge/shatranj/releases/latest).
 Elige el paquete de escritorio para tu sistema operativo, el conjunto de tres
-ficheros para Classic, el NEX autocontenido para Next o el instalador de
-cartucho Spectranext.
+ficheros para Classic o el NEX autocontenido para Next. La edición Spectranext
+se inicia en cambio desde su dirección web; consulta
+[Cartucho Spectranext](#cartucho-spectranext).
 
 ## Instalación
 
@@ -135,16 +144,22 @@ NextZXOS.
 
 ### Cartucho Spectranext
 
-1. Actualiza el cartucho a la **última versión estable del firmware de
-   Spectranext** y configura el cartucho y la Wi-Fi siguiendo las
+1. Actualiza el cartucho al **firmware de Spectranext 1.0 o posterior** (con
+   un firmware anterior se detiene en `FIRMWARE OUTDATED: SEE README`) y
+   configura el cartucho y la Wi-Fi siguiendo las
    [instrucciones oficiales de Spectranext](https://docs.spectranext.net/tutorials/setting-up-mounts).
-2. En el menú de Spectranext, selecciona **Load Resource URL** e introduce:
-   <code>https://ignaciomonge.github.io/Shatranj/</code>
-3. El instalador guiado instala Shatranj en el almacenamiento local del
-   cartucho y lo inicia.
-4. En adelante, inicia `SHATRANJ.ZX` desde el XFS local. Para actualizar
-   Shatranj, vuelve a usar **Load Resource URL**; la configuración y las
-   partidas guardadas se conservan.
+2. En el menú de Spectranext, selecciona **Load Resource URL** e introduce una
+   de estas direcciones:
+   - <code>https://ignaciomonge.github.io/shatranj/</code> para jugar
+     directamente sin instalar nada. Shatranj se descarga de la web en cada
+     arranque, así que siempre ejecutas la última versión.
+   - <code>https://ignaciomonge.github.io/shatranj/install/</code> para
+     ejecutar el instalador guiado, que instala Shatranj en el almacenamiento local del
+     cartucho y lo inicia. En adelante, inicia `SHATRANJ.ZX` desde el XFS
+     local; para actualizar, vuelve a cargar la dirección.
+3. En ambos casos, la configuración y las partidas guardadas se quedan en el
+   almacenamiento local del cartucho. Las dos formas de arranque las
+   comparten y las actualizaciones las conservan.
 
 <p align="center">
   <img src="docs/screenshots/shatranj-1.2-spectranext-installer.png" alt="Instalador guiado de Shatranj 1.2 en Spectranext" width="400"><br>
@@ -152,7 +167,7 @@ NextZXOS.
 </p>
 
 Un ZIP de GitHub Releases no es un recurso montable de Spectranext; introduce
-la URL HTTPS anterior.
+una de las direcciones HTTPS anteriores.
 
 ## Inicio rápido
 
@@ -180,6 +195,26 @@ conexión directa entre pares no es conveniente, siempre que ambos clientes
 puedan acceder al broker.
 
 ## Galería
+
+### Novedades de la 1.3
+
+<table>
+  <tr>
+    <td align="center" width="50%"><strong>Stockfish jugando por ti (macOS)</strong><br><img src="docs/screenshots/shatranj-1.3-qt-stockfish.jpg" alt="Cliente Qt de Shatranj 1.3 en macOS con Stockfish jugando y las estadísticas de la partida" width="400"></td>
+    <td align="center" width="50%"><strong>Preferencias: motor Stockfish</strong><br><img src="docs/screenshots/shatranj-1.3-qt-preferences.png" alt="Ventana de preferencias de Shatranj 1.3 con los ajustes del motor Stockfish" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><strong>Estadísticas de fin de partida</strong><br><img src="docs/screenshots/shatranj-1.3-classic-stats.png" alt="Estadísticas de fin de partida de Shatranj 1.3 en ZX Spectrum clásico" width="400"></td>
+    <td align="center" width="50%"><strong>Jugando contra Stockfish desde un Spectrum</strong><br><img src="docs/screenshots/shatranj-1.3-classic-stockfish.png" alt="Shatranj 1.3 en ZX Spectrum clásico contra Stockfish a través del cliente de macOS" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><strong>Nombres de jugador y menú rotatorio</strong><br><img src="docs/screenshots/shatranj-1.3-next-names-menu.png" alt="Nombres de jugador y grupo OFFER del menú de Shatranj 1.3 en Spectrum Next" width="400"></td>
+    <td align="center" width="50%"><strong>Reanudar tras un corte de corriente</strong><br><img src="docs/screenshots/shatranj-1.3-next-resume.png" alt="Shatranj 1.3 preguntando si se reanuda la última partida en Spectrum Next" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><strong>Novedades desde la pantalla Acerca de</strong><br><img src="docs/screenshots/shatranj-1.3-classic-whats-new.png" alt="Página de novedades de Shatranj 1.3 en ZX Spectrum clásico" width="400"></td>
+  </tr>
+</table>
 
 ### Escritorio
 
@@ -274,8 +309,18 @@ tablero RGB333: **Black & White**, **Blue 3**, **Green**, **Brown** y **Wood**.
 ## Uso de Shatranj
 
 El anfitrión inicia la partida; ambos jugadores pueden solicitar tablas,
-deshacer, reiniciar o restaurar una partida guardada compatible. Solo se
-aceptan movimientos del bando cuyo turno aparece en pantalla.
+deshacer o restaurar una partida guardada compatible. Solo se aceptan
+movimientos del bando cuyo turno aparece en pantalla.
+
+Las partidas terminan sin revancha automática. Solo el anfitrión pide una
+partida nueva. Spectrum muestra el resultado y, con la siguiente tecla, el
+anfitrión ve `S:STATS  RESTART? Y/N` y el invitado `S:STATS  WAITING
+OPPONENT`: S abre las estadísticas, cualquier tecla vuelve y la Y del
+anfitrión solicita el reinicio. Rechazar la partida nueva, o BREAK, termina
+la sesión para ambos. Qt ofrece **Game stats** a ambos jugadores y
+**Restart Game** al anfitrión. Las [estadísticas](docs/game-stats.md)
+incluyen tiempos de turnos completados y capturas; cargar una partida inicia
+una muestra parcial.
 
 ### Controles de escritorio
 
@@ -286,7 +331,10 @@ aceptan movimientos del bando cuyo turno aparece en pantalla.
 | Enviar texto o una jugada | Escribe en la línea de chat/entrada y pulsa Enter |
 | Guardar o restaurar | Usa los botones o `/save [nombre]` y `/load [nombre]` |
 | Inspeccionar el tráfico | Abre **Log** para ver los mensajes legibles RX/TX |
-| Cambiar la apariencia | Abre **Settings** para tablero, piezas, notación y ayudas |
+| Cambiar la apariencia o tu nombre | Abre **Preferences** (botón del engranaje, Ctrl+, o Cmd+,) para tablero, piezas, ayudas, nombre y Stockfish |
+| Dejar que Stockfish juegue por ti | Instálalo en **Preferences > Engine** (con una pausa opcional antes de cada jugada) y pulsa el botón **♞** junto al engranaje; se vuelve violeta mientras juega Stockfish |
+| Ver las estadísticas | Pulsa **Game stats** (botón de gráfico de barras) durante o después de la partida |
+| Leer el manual | Pulsa **?** o F1 |
 
 El cliente recuerda la configuración y las direcciones Direct válidas usadas
 recientemente. También muestra los relojes de partida, turno y jugada.
@@ -303,10 +351,14 @@ recientemente. También muestra los relojes de partida, turno y jugada.
 | Abrir y enviar la entrada de texto | Enter |
 | Abrir el menú de partida | **EDIT** (`Caps Shift` + `1` en el teclado clásico) |
 | Menú FILE | `Q`/`A` elige slot; Enter/Espacio carga o guarda; `E` borra |
+| Tras una partida | `S` abre las estadísticas; el anfitrión responde a `RESTART? Y/N` |
+| Pantalla Acerca de | `C` muestra las novedades (Classic y Spectranext) |
 
-El menú de partida contiene **FILE**, **DISCONNECT**, **RESET**, **FLIP**,
-**THEME** y **ABOUT**. Dentro del menú, usa izquierda/derecha u `O`/`P` y
-después Espacio/Enter.
+El menú de partida tiene las pestañas **FILE**, **FLIP** y **ABOUT** y tres
+grupos rotatorios: **NTWRK** (desconectar, reiniciar), **OFFER** (deshacer,
+tablas, abandonar) y **THEME** (tablero, juego de piezas, ayudas). Usa
+izquierda/derecha u `O`/`P` para elegir pestaña o grupo, arriba/abajo o
+`Q`/`A` para recorrer las acciones de un grupo y después Espacio/Enter.
 
 ### Comandos de texto
 
@@ -361,6 +413,6 @@ en el [archivo de avisos](THIRD_PARTY_NOTICES.md).
 **M. Ignacio Monge Garcia — 2026**
 
 Las incidencias y contribuciones son bienvenidas en el
-[repositorio oficial](https://github.com/IgnacioMonge/Shatranj).
+[repositorio oficial](https://github.com/IgnacioMonge/shatranj).
 
 <p align="center"><sub>Conectando el ZX Spectrum al ajedrez en línea desde 2026.</sub></p>

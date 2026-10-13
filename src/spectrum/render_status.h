@@ -8,6 +8,9 @@
 #define SPECTRUM_STATUS_PLATFORM_MASK 0x38u
 #define SPECTRUM_STATUS_PLATFORM_BITS(platform) \
     ((uint8_t)(((platform) & 0x07u) << SPECTRUM_STATUS_PLATFORM_SHIFT))
+/* Application-only mark: the last paint failed to load its overlay, so the
+   status row may still show older text. Every phase update clears it. */
+#define SPECTRUM_STATUS_STALE 0x80u
 #define SPECTRUM_STATUS_WITH_PHASE(status, phase) \
     ((uint8_t)(((status) & SPECTRUM_STATUS_PLATFORM_MASK) | \
                ((phase) & SPECTRUM_STATUS_PHASE_MASK)))

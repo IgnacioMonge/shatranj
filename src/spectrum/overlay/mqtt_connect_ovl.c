@@ -1,12 +1,14 @@
 #include "spectrum/overlay/overlay_api.h"
-#include "common/protocol/mqtt_session_protocol.h"
 #include "common/ui_messages.h"
+#include "spectrum/session/mqtt_wire.h"
 #include "spectrum/transport/mqtt_min.h"
 #include "spectrum/transport/next_baud_recovery.h"
 #include "spectrum/lowram_map.h"
 #include "spectrum/transport/net.h"
+#include "spectrum/config/session.h"
 
-uint8_t mqtt_activate_side_ovl(void);
+static const char mqtt_meta_suffix[] = "meta";
+static uint8_t mqtt_wait_packet_ovl(uint8_t wanted) __z88dk_fastcall;
 
 #ifdef NETCHESSZX_SPECTRANEXT
 
@@ -19,8 +21,6 @@ uint8_t mqtt_activate_side_ovl(void);
 extern uint16_t mqtt_next_id;
 extern char last_ip[];
 extern uint8_t mqtt_send_raw_packet(const uint8_t *packet, uint8_t len);
-extern uint8_t mqtt_wait_packet_into(uint8_t *packet, uint8_t wanted,
-                                     uint16_t frames);
 extern uint8_t mqtt_enter_stream_mode(void);
 extern void mqtt_abort_stream_mode(void);
 extern uint16_t mqtt_connect_packet_ovl(void);
@@ -63,8 +63,7 @@ static uint8_t mqtt_subscribe_suffix_ovl(const char *suffix)
     len = spectrum_mqtt_subscribe(mqtt_packet_ovl,
                                   SPECTRUM_MQTT_PACKET_MAX, id, topic);
     if (len == 0u || !mqtt_send_raw_packet(mqtt_packet_ovl, len) ||
-        !mqtt_wait_packet_into(mqtt_packet_ovl, SPECTRUM_MQTT_SUBACK,
-                               WAIT_LONG)) {
+        !mqtt_wait_packet_ovl(SPECTRUM_MQTT_SUBACK)) {
         return 0u;
     }
     return (uint8_t)(mqtt_packet_ovl[1u] == 3u &&
@@ -73,9 +72,9 @@ static uint8_t mqtt_subscribe_suffix_ovl(const char *suffix)
                      mqtt_packet_ovl[4u] <= 2u);
 }
 
-static uint8_t mqtt_publish_suffix_ovl(const char *suffix,
-                                       const char *payload,
-                                       uint8_t retain)
+static uint8_t mqtt_connect_transport_publish_ovl(const char *suffix,
+                                            const char *payload,
+                                            uint8_t retain)
 {
     char topic[SPECTRUM_MQTT_TOPIC_MAX + 1u];
     uint8_t len;
@@ -90,25 +89,12 @@ static uint8_t mqtt_publish_suffix_ovl(const char *suffix,
 static uint8_t mqtt_subscribe_all_ovl(void)
 {
     return mqtt_subscribe_suffix_ovl(spectrum_net_mqtt_in_suffix()) &&
-           mqtt_subscribe_suffix_ovl(spectrum_net_mqtt_in_ack_suffix()) &&
-           mqtt_subscribe_suffix_ovl(spectrum_net_mqtt_peer_presence_suffix()) &&
-           mqtt_subscribe_suffix_ovl(spectrum_net_mqtt_presence_suffix());
-}
-
-static uint8_t mqtt_publish_setup_ovl(void)
-{
-    char setup[32];
-
-    spectrum_net_mqtt_setup_payload(setup);
-    return mqtt_publish_suffix_ovl("meta", setup,
-                                  netchesszx_session_is_host() ? 1u : 0u);
-}
-
-static uint8_t mqtt_activate_side_internal(void)
-{
-    return mqtt_subscribe_all_ovl() &&
-           mqtt_publish_suffix_ovl(spectrum_net_mqtt_presence_suffix(),
-                                   spectrum_net_mqtt_presence_payload(), 1u);
+           mqtt_subscribe_suffix_ovl(
+               spectrum_net_mqtt_in_ack_suffix()) &&
+           mqtt_subscribe_suffix_ovl(
+               spectrum_net_mqtt_peer_presence_suffix()) &&
+           mqtt_subscribe_suffix_ovl(
+               spectrum_net_mqtt_presence_suffix());
 }
 
 uint8_t net_preflight_ovl(void)
@@ -141,7 +127,7 @@ uint8_t net_preflight_ovl(void)
     return 1u;
 }
 
-uint8_t mqtt_connect_start_ovl(void)
+static uint8_t mqtt_connect_transport_start_ovl(void)
 {
     uint8_t ip4be[4];
     uint8_t len;
@@ -156,38 +142,30 @@ uint8_t mqtt_connect_start_ovl(void)
     }
     len = (uint8_t)mqtt_connect_packet_ovl();
     if (len == 0u || !mqtt_send_raw_packet(mqtt_packet_ovl, len) ||
-        !mqtt_wait_packet_into(mqtt_packet_ovl, SPECTRUM_MQTT_CONNACK,
-                               WAIT_LONG) ||
+        !mqtt_wait_packet_ovl(SPECTRUM_MQTT_CONNACK) ||
         mqtt_packet_ovl[1u] != 2u || mqtt_packet_ovl[3u] != 0u ||
-        !mqtt_subscribe_suffix_ovl("meta")) {
+        !mqtt_subscribe_suffix_ovl(mqtt_meta_suffix)) {
         mqtt_abort_stream_mode();
-        return 0u;
-    }
-    if ((netchesszx_session_is_host() || netchesszx_host_color_ready) &&
-        !mqtt_activate_side_ovl()) {
         return 0u;
     }
     return 1u;
 }
 
-uint8_t mqtt_activate_side_ovl(void)
+static uint8_t mqtt_connect_transport_subscribe_side_ovl(void)
 {
-    char offline[10];
+    return mqtt_subscribe_all_ovl();
+}
 
-    if (mqtt_activate_side_internal() && mqtt_publish_setup_ovl()) {
-        return 1u;
-    }
-    (void)spectrum_append_text(offline, spectrum_net_mqtt_presence_payload());
-    offline[0] = NETCHESS_MQTT_SESSION_VERB_OFFLINE;
-    (void)mqtt_publish_suffix_ovl(spectrum_net_mqtt_presence_suffix(),
-                                  offline, 1u);
+static uint8_t mqtt_connect_transport_abort_ovl(void)
+{
     mqtt_abort_stream_mode();
     return 0u;
 }
 
 uint8_t mqtt_probe_seat_ovl(void)
 {
-    if (mqtt_subscribe_suffix_ovl(spectrum_net_mqtt_presence_suffix())) {
+    if (mqtt_subscribe_suffix_ovl(
+            spectrum_net_mqtt_presence_suffix())) {
         return 1u;
     }
     mqtt_abort_stream_mode();
@@ -202,16 +180,16 @@ uint8_t mqtt_probe_seat_ovl(void)
 #define WAIT_LONG 2000
 #define MQTT_RECOVERY_AVAILABLE 1u
 
-#define PREFLIGHT_ROW_UART "\007"
-#define PREFLIGHT_ROW_ESP "\010"
-#define PREFLIGHT_ROW_WIFI "\011"
-#define PREFLIGHT_ROW_IP "\012"
+/* Rows 6..10 under the header at rows 4/5, as the Setup screen. */
+#define PREFLIGHT_ROW_UART "\006"
+#define PREFLIGHT_ROW_ESP "\007"
+#define PREFLIGHT_ROW_WIFI "\010"
+#define PREFLIGHT_ROW_IP "\011"
 
 extern char last_ip[];
 extern uint16_t mqtt_next_id;
 extern uint8_t mqtt_stream_len;
 extern uint8_t mqtt_send_raw_packet(const uint8_t *packet, uint8_t len);
-extern uint8_t mqtt_wait_packet_into(uint8_t *packet, uint8_t wanted, uint16_t frames);
 extern uint8_t mqtt_enter_stream_mode(void);
 extern void mqtt_abort_stream_mode(void);
 extern uint16_t mqtt_connect_packet_ovl(void);
@@ -239,23 +217,7 @@ extern const char spectrum_net_at_cipmux_0[];
 extern const char spectrum_net_at_cipmode_0[];
 #endif
 
-#ifdef NETCHESSZX_HOST_SESSION_TEST
-extern void netchesszx_host_mqtt_observe_meta(void);
-extern void netchesszx_host_mqtt_observe_presence(const char *suffix);
-#define MQTT_CONNECT_PUBLISH_META(suffix, payload, retain) \
-    (netchesszx_host_mqtt_observe_meta(), \
-     mqtt_publish_suffix_ovl((suffix), (payload), (retain)))
-#define MQTT_CONNECT_PUBLISH_PRESENCE(suffix, payload, retain) \
-    (netchesszx_host_mqtt_observe_presence(suffix), \
-     mqtt_publish_suffix_ovl((suffix), (payload), (retain)))
-#else
-#define MQTT_CONNECT_PUBLISH_META(suffix, payload, retain) \
-    mqtt_publish_suffix_ovl((suffix), (payload), (retain))
-#define MQTT_CONNECT_PUBLISH_PRESENCE(suffix, payload, retain) \
-    mqtt_publish_suffix_ovl((suffix), (payload), (retain))
-#endif
-
-#ifdef NETCHESSZX_HOST_SESSION_TEST
+#ifdef NETCHESSZX_HOST_TEST
 uint8_t mqtt_packet_ovl[SPECTRUM_MQTT_PACKET_MAX];
 #else
 #define mqtt_packet_ovl \
@@ -267,16 +229,9 @@ static uint8_t mqtt_send_packet_ovl(uint8_t len) __z88dk_fastcall
     return mqtt_send_raw_packet(mqtt_packet_ovl, len);
 }
 
-static uint8_t mqtt_wait_packet_ovl(uint8_t wanted) __z88dk_fastcall
-{
-    return mqtt_wait_packet_into(mqtt_packet_ovl, wanted, WAIT_LONG);
-}
-
 static const char at_cwmode[] = "AT+CWMODE=1";
 static const char at_cwmode_def[] = "AT+CWMODE_DEF=1";
 static const char at_cwautoconn[] = "AT+CWAUTOCONN=1";
-static const char mqtt_meta_suffix[] = "meta";
-
 static uint8_t at_cmd_short(const char *cmd) __z88dk_fastcall
 {
     return spectrum_net_at_cmd(cmd, WAIT_SHORT);
@@ -366,22 +321,17 @@ static uint8_t mqtt_subscribe_suffix_ovl(const char *suffix) __z88dk_fastcall
                      mqtt_packet_ovl[4u] <= 2u);
 }
 
-static uint8_t mqtt_publish_suffix_ovl(const char *suffix,
-                                       const char *payload,
-                                       uint8_t retain) NETCHESSZX_CALLEE
+static uint8_t mqtt_connect_transport_publish_ovl(const char *suffix,
+                                            const char *payload,
+                                            uint8_t retain) NETCHESSZX_CALLEE
 {
     char topic[SPECTRUM_MQTT_TOPIC_MAX + 1u];
     uint8_t len;
-    uint16_t id;
 
     mqtt_topic_ovl(topic, suffix);
-    id = mqtt_alloc_id_ovl();
     len = spectrum_mqtt_publish(mqtt_packet_ovl,
                                 SPECTRUM_MQTT_PACKET_MAX,
-                                id,
-                                topic,
-                                payload,
-                                retain);
+                                mqtt_alloc_id_ovl(), topic, payload, retain);
     if (len == 0u || !mqtt_send_packet_ovl(len)) {
         return 0u;
     }
@@ -393,26 +343,12 @@ static uint8_t mqtt_subscribe_all_ovl(void)
     /* Own presence too: its retained snapshot reveals a seat already held
        by another client (MQTT_SEAT_TAKEN). */
     return mqtt_subscribe_suffix_ovl(spectrum_net_mqtt_in_suffix()) &&
-           mqtt_subscribe_suffix_ovl(spectrum_net_mqtt_in_ack_suffix()) &&
-           mqtt_subscribe_suffix_ovl(spectrum_net_mqtt_peer_presence_suffix()) &&
-           mqtt_subscribe_suffix_ovl(spectrum_net_mqtt_presence_suffix());
-}
-
-static uint8_t mqtt_publish_setup_ovl(void)
-{
-    char setup[32];
-
-    spectrum_net_mqtt_setup_payload(setup);
-    return MQTT_CONNECT_PUBLISH_META(
-        mqtt_meta_suffix, setup, netchesszx_session_is_host() ? 1u : 0u);
-}
-
-static uint8_t mqtt_activate_side_internal(void)
-{
-    return mqtt_subscribe_all_ovl() &&
-           MQTT_CONNECT_PUBLISH_PRESENCE(
-               spectrum_net_mqtt_presence_suffix(),
-               spectrum_net_mqtt_presence_payload(), 1u);
+           mqtt_subscribe_suffix_ovl(
+               spectrum_net_mqtt_in_ack_suffix()) &&
+           mqtt_subscribe_suffix_ovl(
+               spectrum_net_mqtt_peer_presence_suffix()) &&
+           mqtt_subscribe_suffix_ovl(
+               spectrum_net_mqtt_presence_suffix());
 }
 
 static uint8_t at_cmd_fast(const char *cmd) __z88dk_fastcall
@@ -552,7 +488,7 @@ static uint8_t mqtt_open_session_ovl(void)
     return 1u;
 }
 
-uint8_t mqtt_connect_start_ovl(void)
+static uint8_t mqtt_connect_transport_start_ovl(void)
 {
     mqtt_recovery_begin_ovl();
     mqtt_stream_len = 0u;
@@ -576,43 +512,128 @@ uint8_t mqtt_connect_start_ovl(void)
     if (!mqtt_subscribe_suffix_ovl(mqtt_meta_suffix)) {
         return mqtt_abort_ovl();
     }
-    if (netchesszx_session_is_host() || netchesszx_host_color_ready) {
-        if (!mqtt_activate_side_ovl()) {
-            return 0u;
-        }
-    }
     mqtt_recovery_begin_ovl();
     return 1u;
 }
 
-uint8_t mqtt_activate_side_ovl(void)
+static uint8_t mqtt_connect_transport_subscribe_side_ovl(void)
 {
-    char offline[10];
-
-    if (!mqtt_activate_side_internal()) {
-        return mqtt_abort_ovl();
-    }
-    if (mqtt_publish_setup_ovl()) {
-        return 1u;
-    }
-    /* Offline presence differs from the canonical local payload only by verb. */
-    (void)spectrum_append_text(offline, spectrum_net_mqtt_presence_payload());
-    offline[0] = NETCHESS_MQTT_SESSION_VERB_OFFLINE;
-    (void)MQTT_CONNECT_PUBLISH_PRESENCE(
-        spectrum_net_mqtt_presence_suffix(),
-        offline, 1u);
-    return mqtt_abort_ovl();
+    return mqtt_subscribe_all_ovl();
 }
+
+#define mqtt_connect_transport_abort_ovl mqtt_abort_ovl
 
 /* Subscribe to our own presence topic WITHOUT claiming the seat (no O
    publish). Its retained snapshot reveals an occupant already on our side
    (MQTT_SEAT_TAKEN) so a stray guest reports BUSY instead of hanging. */
 uint8_t mqtt_probe_seat_ovl(void)
 {
-    if (mqtt_subscribe_suffix_ovl(spectrum_net_mqtt_presence_suffix())) {
+    if (mqtt_subscribe_suffix_ovl(
+            spectrum_net_mqtt_presence_suffix())) {
         return 1u;
     }
     return mqtt_abort_ovl();
 }
 
 #endif
+
+/* Only MQTT_CONNECT waits for a broker reply; the resident reader stays. */
+extern uint8_t mqtt_stream_active;
+extern uint8_t mqtt_payload_count;
+extern uint8_t mqtt_payload_head;
+int16_t mqtt_read_stream_packet(void);
+void mqtt_consume_stream_packet(uint8_t total) __z88dk_fastcall;
+uint8_t *mqtt_payload_slot(uint8_t slot) __z88dk_fastcall;
+void mqtt_puback_id(uint16_t packet_id) __z88dk_fastcall;
+void net_wait_frame(void);
+#ifndef MQTT_STREAM
+/* net.c's stream buffer; host tests may supply theirs or a test double. */
+#define MQTT_STREAM ((uint8_t *)SPECTRUM_MQTT_RUNTIME_ASSETS_END)
+#endif
+#ifdef NETCHESSZX_HOST_TEST
+#include <string.h>
+#define mqtt_copy_ovl memcpy
+#else
+void netchesszx_asm_net_copy(uint8_t *dst, const uint8_t *src, uint16_t len);
+#define mqtt_copy_ovl netchesszx_asm_net_copy
+#endif
+
+static uint8_t mqtt_queue_publish_payload_ovl(uint8_t len) __z88dk_fastcall
+{
+    uint8_t *slot;
+    uint8_t tail;
+    uint16_t packet_id;
+    uint8_t flags;
+    int16_t payload_len;
+
+    if (mqtt_payload_count >= MQTT_PAYLOAD_QUEUE_COUNT) {
+        return 0u;
+    }
+    tail = (uint8_t)(mqtt_payload_head + mqtt_payload_count);
+    if (tail >= MQTT_PAYLOAD_QUEUE_COUNT) {
+        tail = (uint8_t)(tail - MQTT_PAYLOAD_QUEUE_COUNT);
+    }
+    slot = mqtt_payload_slot(tail);
+    payload_len = spectrum_mqtt_parse_publish(MQTT_STREAM,
+                                              len,
+                                              (char *)(slot + 2u),
+                                              SPECTRUM_NET_PAYLOAD_MAX,
+                                              &packet_id,
+                                              &flags);
+    mqtt_puback_id(packet_id);
+    if (payload_len < 0) {
+        return 1u;
+    }
+    slot[0u] = (uint8_t)payload_len;
+    slot[1u] = flags;
+    ++mqtt_payload_count;
+    return 1u;
+}
+
+static uint8_t mqtt_stash_packet_ovl(uint8_t len) __z88dk_fastcall
+{
+    uint8_t type = spectrum_mqtt_type(MQTT_STREAM, len);
+
+    if (type == SPECTRUM_MQTT_PUBLISH && mqtt_queue_publish_payload_ovl(len)) {
+        return 1u;
+    }
+    if (type == SPECTRUM_MQTT_PINGRESP && len <= 2u) {
+        return 1u;
+    }
+    return type == SPECTRUM_MQTT_PUBACK;
+}
+
+/* Every caller waits WAIT_LONG for a CONNACK/SUBACK into mqtt_packet_ovl. */
+static uint8_t mqtt_wait_packet_ovl(uint8_t wanted) __z88dk_fastcall
+{
+    uint16_t frames = WAIT_LONG;
+
+    while (frames-- != 0u) {
+        int16_t got = mqtt_read_stream_packet();
+
+        if (got == SPECTRUM_NET_MQTT_READ_TIMEOUT) {
+            net_wait_frame();
+            continue;
+        }
+        if (got <= 0) {
+            return 0u;
+        }
+        if (spectrum_mqtt_type(MQTT_STREAM, (uint8_t)got) == wanted) {
+            mqtt_copy_ovl(mqtt_packet_ovl, MQTT_STREAM, (uint8_t)got);
+            mqtt_consume_stream_packet((uint8_t)got);
+            return 1u;
+        }
+        if ((uint16_t)got <= SPECTRUM_MQTT_PACKET_MAX) {
+            uint8_t stashed = mqtt_stash_packet_ovl((uint8_t)got);
+
+            /* PUBACK failure can abort and clear the stream while stashing. */
+            if (!stashed || !mqtt_stream_active) {
+                return 0u;
+            }
+            mqtt_consume_stream_packet((uint8_t)got);
+        }
+    }
+    return 0u;
+}
+
+#include "spectrum/session/mqtt_connect_actions_ovl.c"

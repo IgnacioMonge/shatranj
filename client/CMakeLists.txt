@@ -64,11 +64,17 @@ set(SHATRANJ_DESKTOP_CORE_SOURCES
     ../src/pc/client/desktop_session_controller.cpp
     ../src/pc/client/desktop_transport_codec.cpp
     ../src/pc/client/save_game_store.cpp
+    ../src/pc/client/stockfish_release.cpp
+    ../src/pc/client/preferences.cpp
+    ../src/pc/client/manual_index.cpp
     ../src/pc/client/chess_helpers.h
     ../src/pc/client/desktop_session_adapter.h
     ../src/pc/client/desktop_session_controller.h
     ../src/pc/client/desktop_transport_codec.h
     ../src/pc/client/save_game_store.h
+    ../src/pc/client/stockfish_release.h
+    ../src/pc/client/preferences.h
+    ../src/pc/client/manual_index.h
 )
 
 add_library(shatranj-desktop-core STATIC ${SHATRANJ_DESKTOP_CORE_SOURCES})
@@ -89,9 +95,21 @@ set_target_properties(shatranj-desktop-core PROPERTIES
 set(SHATRANJ_CLIENT_UI_SOURCES
     ../src/pc/client/main_window.cpp
     ../src/pc/client/app_banner.cpp
+    ../src/pc/client/board_widget.cpp
+    ../src/pc/client/command_input_widget.cpp
+    ../src/pc/client/engine_installer.cpp
+    ../src/pc/client/help_window.cpp
+    ../src/pc/client/preferences_dialog.cpp
+    ../src/pc/client/engine_player.cpp
     ../src/pc/client/piece_renderer.cpp
     ../src/pc/client/main_window.h
     ../src/pc/client/app_banner.h
+    ../src/pc/client/board_widget.h
+    ../src/pc/client/command_input_widget.h
+    ../src/pc/client/engine_installer.h
+    ../src/pc/client/help_window.h
+    ../src/pc/client/preferences_dialog.h
+    ../src/pc/client/engine_player.h
     ../src/pc/client/piece_renderer.h
     ../src/pc/client/ui_theme.h
     ../src/pc/client/window_chrome.cpp
@@ -198,6 +216,9 @@ add_custom_command(TARGET shatranj-client POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${SHATRANJ_DESKTOP_ASSET_SOURCE}/about"
             "${SHATRANJ_DESKTOP_ASSET_DEST}/about"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${SHATRANJ_DESKTOP_ASSET_SOURCE}/manual"
+            "${SHATRANJ_DESKTOP_ASSET_DEST}/manual"
     COMMENT "Staging shared desktop assets"
     VERBATIM
 )
@@ -218,8 +239,44 @@ foreach(board IN LISTS SHATRANJ_DESKTOP_BOARDS)
     )
 endforeach()
 
+if(APPLE)
+    set(SHATRANJ_NOTICE_DEST
+        "$<TARGET_BUNDLE_CONTENT_DIR:shatranj-client>/Resources")
+    add_custom_command(TARGET shatranj-client POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                "${SHATRANJ_NOTICE_DEST}/licenses"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE"
+                "${SHATRANJ_NOTICE_DEST}/LICENSE"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/../THIRD_PARTY_NOTICES.md"
+                "${SHATRANJ_NOTICE_DEST}/THIRD_PARTY_NOTICES.md"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/../licenses"
+                "${SHATRANJ_NOTICE_DEST}/licenses"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/../assets/lichess/LICENSE.lichess-AGPL-3.0.txt"
+                "${SHATRANJ_NOTICE_DEST}/licenses/LICENSE.lichess-AGPL-3.0.txt"
+        VERBATIM
+    )
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
+    # The demonstrator links the productive cursor and its own presentation
+    # binding, without the chess, session, transport or application libraries.
+    add_executable(shatranj-space-demo
+        ../examples/space_demo/desktop.cpp
+        ../examples/space_demo/demo.c
+        ../src/spectrum/ui/cell_cursor.c
+        ../src/common/space/rect.c
+    )
+    target_include_directories(shatranj-space-demo PRIVATE ../src ../examples/space_demo)
+    target_link_libraries(shatranj-space-demo PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
+    set_target_properties(shatranj-space-demo PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+    add_test(NAME pc-space-demo COMMAND shatranj-space-demo --self-test "${CMAKE_BINARY_DIR}/space-preview")
+    set_tests_properties(pc-space-demo PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     function(shatranj_add_desktop_test target test_name source)
         add_executable(${target} ${source})
         target_include_directories(${target} PRIVATE ../src)
@@ -253,6 +310,23 @@ if(BUILD_TESTING)
         ../tests/pc/test_chess_helpers.cpp
     )
     shatranj_add_desktop_test(
+        shatranj-preferences-test
+        pc-preferences
+        ../tests/pc/test_preferences.cpp
+    )
+    shatranj_add_desktop_test(
+        shatranj-manual-index-test
+        pc-manual-index
+        ../tests/pc/test_manual_index.cpp
+    )
+    target_compile_definitions(shatranj-manual-index-test PRIVATE
+        SHATRANJ_MANUAL_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../assets/pc-client/manual")
+    shatranj_add_desktop_test(
+        shatranj-stockfish-release-test
+        pc-stockfish-release
+        ../tests/pc/test_stockfish_release.cpp
+    )
+    shatranj_add_desktop_test(
         shatranj-direct-adapter-test
         pc-direct-adapter
         ../tests/pc/test_direct_session_adapter.cpp
@@ -274,6 +348,25 @@ if(BUILD_TESTING)
     set_target_properties(shatranj-mqtt-tx-failure-test PROPERTIES AUTOUIC OFF)
     add_test(NAME pc-mqtt-tx-failure COMMAND shatranj-mqtt-tx-failure-test)
 
+    # Stand-in UCI engine for the engine flow test: no Stockfish download.
+    add_executable(shatranj-fake-uci ../tests/pc/fake_uci_engine.cpp)
+    set_target_properties(shatranj-fake-uci PROPERTIES
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+    )
+    add_executable(shatranj-engine-flow-test
+        ../tests/pc/test_engine_flow.cpp
+    )
+    target_include_directories(shatranj-engine-flow-test PRIVATE ../src)
+    target_link_libraries(shatranj-engine-flow-test PRIVATE
+        shatranj-client-ui
+    )
+    set_target_properties(shatranj-engine-flow-test PROPERTIES AUTOUIC OFF)
+    add_dependencies(shatranj-engine-flow-test shatranj-fake-uci)
+    add_test(NAME pc-engine-flow
+             COMMAND shatranj-engine-flow-test $<TARGET_FILE:shatranj-fake-uci>)
+
     add_executable(shatranj-piece-renderer-test
         ../tests/pc/test_piece_renderer.cpp
     )
@@ -287,6 +380,20 @@ if(BUILD_TESTING)
         AUTORCC OFF
     )
     add_test(NAME pc-piece-renderer COMMAND shatranj-piece-renderer-test)
+
+    add_executable(shatranj-ux-widgets-test
+        ../tests/pc/test_ux_widgets.cpp
+    )
+    target_include_directories(shatranj-ux-widgets-test PRIVATE ../src)
+    target_link_libraries(shatranj-ux-widgets-test PRIVATE
+        shatranj-client-ui
+    )
+    set_target_properties(shatranj-ux-widgets-test PROPERTIES
+        AUTOMOC OFF
+        AUTOUIC OFF
+        AUTORCC OFF
+    )
+    add_test(NAME pc-ux-widgets COMMAND shatranj-ux-widgets-test)
 
     add_test(NAME pc-client-assets
         COMMAND ${CMAKE_COMMAND} -E compare_files
@@ -308,18 +415,34 @@ if(BUILD_TESTING)
                 "${SHATRANJ_DESKTOP_ASSET_SOURCE}/about/banner-board.png"
                 "${SHATRANJ_DESKTOP_ASSET_DEST}/about/banner-board.png"
     )
+    foreach(manual_language IN ITEMS en es)
+        add_test(NAME pc-client-manual-${manual_language}-asset
+            COMMAND ${CMAKE_COMMAND} -E compare_files
+                    "${SHATRANJ_DESKTOP_ASSET_SOURCE}/manual/manual.${manual_language}.md"
+                    "${SHATRANJ_DESKTOP_ASSET_DEST}/manual/manual.${manual_language}.md"
+        )
+    endforeach()
 
     if(WIN32)
+        # The offscreen plugin has no Windows system-font backend. The native
+        # plugin renders this unshown test widget without opening a window.
+        set_tests_properties(pc-space-demo PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
         # Qt DLLs live outside the build tree; without this, ctest fails with
         # STATUS_DLL_NOT_FOUND (0xc0000135) unless the caller hand-edits PATH.
         set_tests_properties(pc-desktop-session-controller
                              pc-desktop-transport-codec
                              pc-save-game-store
                              pc-chess-helpers
+                             pc-stockfish-release
+                             pc-preferences
+                             pc-manual-index
                              pc-direct-adapter
                              pc-mqtt-adapter
                              pc-mqtt-tx-failure
-                             pc-piece-renderer PROPERTIES
+                             pc-engine-flow
+                             pc-piece-renderer
+                             pc-ux-widgets
+                             pc-space-demo PROPERTIES
             ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>"
         )
@@ -348,4 +471,10 @@ if(UNIX AND NOT APPLE)
     install(FILES shatranj.png
         DESTINATION "${CMAKE_INSTALL_DATADIR}/pixmaps"
         RENAME shatranj.png)
+    install(FILES ../LICENSE ../THIRD_PARTY_NOTICES.md
+        DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+    install(DIRECTORY ../licenses/
+        DESTINATION "${CMAKE_INSTALL_DOCDIR}/licenses")
+    install(FILES ../assets/lichess/LICENSE.lichess-AGPL-3.0.txt
+        DESTINATION "${CMAKE_INSTALL_DOCDIR}/licenses")
 endif()

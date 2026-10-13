@@ -331,6 +331,26 @@ static void test_negative_restore_vectors(void)
     }
 }
 
+static void test_restore_frame_builder(void)
+{
+    const char wire[] =
+        "012345678901234567890123456789"
+        "abcdefghijklmnopqrstuvwxyzABCD";
+    char frame[NETCHESSZX_SAVE_RESTORE_FRAME_MAX + 2u];
+    uint8_t chunk;
+
+    for (chunk = 0u; chunk < 2u; ++chunk) {
+        memset(frame, '#', sizeof frame);
+        NETCHESSZX_SAVE_BUILD_RESTORE_FRAME(frame, wire, chunk);
+        if (memcmp(frame, chunk ? "RS01 " : "RS00 ", 5u) != 0 ||
+            memcmp(frame + 5u, wire + chunk * 30u, 30u) != 0 ||
+            frame[35] != '\0' || frame[36] != '#') {
+            puts("FAIL fixed RESTORE frame bytes/bounds");
+            ++failures;
+        }
+    }
+}
+
 int main(void)
 {
     test_rejects_bad_state();
@@ -339,6 +359,7 @@ int main(void)
     test_rejects_bad_wire();
     test_ep_rank();
     test_negative_restore_vectors();
+    test_restore_frame_builder();
 
     if (failures != 0) {
         printf("%d failure(s)\n", failures);

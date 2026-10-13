@@ -26,7 +26,14 @@ extern uint8_t esx_handle;
 extern uint16_t esx_buf;
 extern uint16_t esx_count;
 extern uint16_t esx_result;
+#ifdef NETCHESSZX_SPECTRANEXT
 void esx_fopen(const char *path) __z88dk_fastcall;
+uint8_t spxn_rom_error(void);
+#define CONFIG_NOT_FOUND 2u
+#else
+uint8_t esx_fopen(const char *path) __z88dk_fastcall;
+#define CONFIG_NOT_FOUND 5u
+#endif
 void esx_fcreate(const char *path) __z88dk_fastcall;
 void esx_fcreate_new(const char *path) __z88dk_fastcall;
 void esx_funlink(const char *path) __z88dk_fastcall;
@@ -75,7 +82,7 @@ uint8_t config_defaults_ovl(uint8_t *ctx) __z88dk_fastcall
     (void)ctx;
     netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
                                  NETCHESSZX_TRANSPORT_MQTT,
-                                 netchesszx_host_color);
+                                 netchesszx_session_identity_host_color());
     netchesszx_timezone = NETCHESSZX_TIME_RTC;
     netchesszx_timezone_last = NETCHESSZX_TZ;
     netchesszx_direct_port = NETCHESSZX_PORT;
@@ -83,6 +90,7 @@ uint8_t config_defaults_ovl(uint8_t *ctx) __z88dk_fastcall
             NETCHESSZX_MQTT_CODE_MAX);
     netchesszx_mqtt_code[NETCHESSZX_MQTT_CODE_MAX] = '\0';
     netchesszx_direct_host[0] = '\0';
+    netchesszx_player_name[0] = '\0';
     return 1u;
 }
 
@@ -97,15 +105,15 @@ static void config_pack(uint8_t *record)
     record[NETCHESSZX_APP_CONFIG_MAGIC_3] = 'F';
     record[NETCHESSZX_APP_CONFIG_VERSION_OFF] = NETCHESSZX_APP_CONFIG_VERSION;
     record[NETCHESSZX_APP_CONFIG_LENGTH_OFF] = NETCHESSZX_APP_CONFIG_SIZE;
-    if (netchesszx_session_role == NETCHESSZX_SESSION_ROLE_JOIN) {
+    if (netchesszx_session_identity_session_role() == NETCHESSZX_SESSION_ROLE_JOIN) {
         flags |= NETCHESSZX_APP_CONFIG_FLAG_ROLE;
     }
-    if (netchesszx_transport == NETCHESSZX_TRANSPORT_MQTT) {
+    if (netchesszx_session_identity_transport() == NETCHESSZX_TRANSPORT_MQTT) {
         flags |= NETCHESSZX_APP_CONFIG_FLAG_TRANSPORT;
     }
     record[NETCHESSZX_APP_CONFIG_FLAGS_OFF] = flags;
     record[NETCHESSZX_APP_CONFIG_GAME_OFF] = (uint8_t)(
-        (netchesszx_host_color == NETCHESSZX_COLOR_BLACK
+        (netchesszx_session_identity_host_color() == NETCHESSZX_COLOR_BLACK
              ? NETCHESSZX_APP_CONFIG_GAME_COLOR : 0u) |
         (netchesszx_notation_is_san()
              ? NETCHESSZX_APP_CONFIG_GAME_NOTATION : 0u) |
@@ -128,6 +136,9 @@ static void config_pack(uint8_t *record)
     (void)CONFIG_COPY(
         (char *)(record + NETCHESSZX_APP_CONFIG_HOST_OFF),
         netchesszx_direct_host);
+    (void)CONFIG_COPY(
+        (char *)(record + NETCHESSZX_APP_CONFIG_NAME_OFF),
+        netchesszx_player_name);
     record[NETCHESSZX_APP_CONFIG_CRC_OFF] =
         netchesszx_app_config_crc8(record);
 }
@@ -137,7 +148,7 @@ static void config_apply(const uint8_t *record)
     uint8_t flags = record[NETCHESSZX_APP_CONFIG_FLAGS_OFF];
     uint8_t game = record[NETCHESSZX_APP_CONFIG_GAME_OFF];
 
-    netchesszx_host_color =
+    uint8_t host_color =
         (game & NETCHESSZX_APP_CONFIG_GAME_COLOR)
             ? NETCHESSZX_COLOR_BLACK : NETCHESSZX_COLOR_WHITE;
     netchesszx_notation =
@@ -155,7 +166,7 @@ static void config_apply(const uint8_t *record)
     netchesszx_session_configure(
         (uint8_t)(flags & NETCHESSZX_APP_CONFIG_FLAG_ROLE),
         (uint8_t)((flags & NETCHESSZX_APP_CONFIG_FLAG_TRANSPORT) != 0u),
-        netchesszx_host_color);
+        host_color);
     netchesszx_timezone = (int8_t)record[NETCHESSZX_APP_CONFIG_TZ_OFF];
     netchesszx_timezone_last =
         (int8_t)record[NETCHESSZX_APP_CONFIG_TZ_LAST_OFF];
@@ -168,6 +179,13 @@ static void config_apply(const uint8_t *record)
     memcpy(netchesszx_direct_host,
            record + NETCHESSZX_APP_CONFIG_HOST_OFF,
            NETCHESSZX_DIRECT_HOST_MAX + 1u);
+    /* The tail is outside the record CRC and is copied raw. TIME_CONFIG init
+       opens every Setup, before the name is edited, saved or sent, and drops
+       a name with an invalid character or no NUL within these bytes instead
+       of truncating it; the MOVES header copies at most the maximum. */
+    memcpy(netchesszx_player_name,
+           record + NETCHESSZX_APP_CONFIG_NAME_OFF,
+           NETCHESS_PLAYER_NAME_SIZE);
 }
 
 #ifdef NETCHESSZX_SPECTRANEXT
@@ -195,7 +213,7 @@ static uint8_t config_ensure_dir(void)
 }
 #endif
 
-static uint8_t config_read_record(const char *path, uint8_t *record);
+static uint8_t config_read_record(const char *path) __z88dk_fastcall;
 
 static uint8_t config_save_record(uint8_t *record)
 {
@@ -221,14 +239,14 @@ static uint8_t config_save_record(uint8_t *record)
        moment it opened, so a power cut before the write completed lost
        the configuration. */
     if (spxf_replace_atomic(CONFIG_PATH_ARG, CONFIG_TEMP_PATH_ARG, record,
-                            NETCHESSZX_APP_CONFIG_SIZE) != 0) {
+                            NETCHESSZX_APP_CONFIG_FILE_SIZE) != 0) {
         return SPECTRUM_OVL_SAVELOAD_ERR_IO;
     }
     return SPECTRUM_OVL_SAVELOAD_OK;
 #else
     /* esxDOS has no atomic replace primitive. Alternate two files instead:
        the old copy stays valid until the new copy has closed successfully. */
-    result = config_read_record(CONFIG_PATH, record);
+    result = config_read_record(CONFIG_PATH);
     if (result == SPECTRUM_OVL_SAVELOAD_ERR_IO) {
         return result;
     }
@@ -236,7 +254,7 @@ static uint8_t config_save_record(uint8_t *record)
         old_path = CONFIG_PATH;
         new_path = CONFIG_PATH_ALT;
     } else {
-        result = config_read_record(CONFIG_PATH_ALT, record);
+        result = config_read_record(CONFIG_PATH_ALT);
         if (result == SPECTRUM_OVL_SAVELOAD_ERR_IO) {
             return result;
         }
@@ -264,9 +282,9 @@ static uint8_t config_save_record(uint8_t *record)
     spectrum_net_background_drain();
     esx_buf = (uint16_t)record;
 #endif
-    esx_count = NETCHESSZX_APP_CONFIG_SIZE;
+    esx_count = NETCHESSZX_APP_CONFIG_FILE_SIZE;
     esx_fwrite();
-    write_ok = (uint8_t)(esx_result == NETCHESSZX_APP_CONFIG_SIZE);
+    write_ok = (uint8_t)(esx_result == NETCHESSZX_APP_CONFIG_FILE_SIZE);
     if (esx_fclose()) {
         write_ok = 0u;
     }
@@ -285,11 +303,23 @@ static uint8_t config_save_record(uint8_t *record)
 #endif
 }
 
-static uint8_t config_read_record(const char *path, uint8_t *record)
+static uint8_t config_read_record(const char *path) __z88dk_fastcall
 {
+    uint8_t *record = setup_config_record;
+
+#ifndef NETCHESSZX_SPECTRANEXT
+    uint8_t open_error = esx_fopen(path);
+#else
     esx_fopen(path);
+#endif
     if (esx_handle == 0u) {
-        return SPECTRUM_OVL_SAVELOAD_ERR_OPEN;
+#ifdef NETCHESSZX_SPECTRANEXT
+        return spxn_rom_error() == CONFIG_NOT_FOUND
+#else
+        return open_error == CONFIG_NOT_FOUND
+#endif
+                   ? SPECTRUM_OVL_SAVELOAD_ERR_OPEN
+                   : SPECTRUM_OVL_SAVELOAD_ERR_IO;
     }
 #ifdef NETCHESSZX_CONFIG_PACK_APPLY_TEST
     esx_buf = 0u;
@@ -304,8 +334,18 @@ static uint8_t config_read_record(const char *path, uint8_t *record)
     if (esx_fclose()) {
         return SPECTRUM_OVL_SAVELOAD_ERR_IO;
     }
-    if (esx_result != NETCHESSZX_APP_CONFIG_SIZE ||
-        !netchesszx_app_config_validate(record)) {
+    /* A 1.2 file is the bare record: load it without a name. The read is
+       capped at READ_SIZE, so the count always fits its low byte. */
+    {
+        uint8_t got = (uint8_t)esx_result;
+
+        if (got == NETCHESSZX_APP_CONFIG_SIZE) {
+            record[NETCHESSZX_APP_CONFIG_NAME_OFF] = 0u;
+        } else if (got != NETCHESSZX_APP_CONFIG_FILE_SIZE) {
+            return SPECTRUM_OVL_SAVELOAD_ERR_DATA;
+        }
+    }
+    if (!netchesszx_app_config_validate(record)) {
         return SPECTRUM_OVL_SAVELOAD_ERR_DATA;
     }
     return SPECTRUM_OVL_SAVELOAD_OK;
@@ -322,20 +362,20 @@ uint8_t config_load_ovl(uint8_t *ctx) __z88dk_fastcall
     ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT] = SPECTRUM_OVL_SAVELOAD_ERR_DATA;
 #ifdef NETCHESSZX_SPECTRANEXT
     config_stage_paths();
-    result = config_read_record(CONFIG_PATH_ARG, record);
+    result = config_read_record(CONFIG_PATH_ARG);
 #else
-    result = config_read_record(CONFIG_PATH, record);
+    result = config_read_record(CONFIG_PATH);
 #endif
 #ifndef NETCHESSZX_SPECTRANEXT
     if (result != SPECTRUM_OVL_SAVELOAD_OK) {
-        alt_result = config_read_record(CONFIG_PATH_ALT, record);
+        alt_result = config_read_record(CONFIG_PATH_ALT);
         if (alt_result == SPECTRUM_OVL_SAVELOAD_OK ||
             result == SPECTRUM_OVL_SAVELOAD_ERR_OPEN) {
             result = alt_result;
         }
     }
     if (result != SPECTRUM_OVL_SAVELOAD_OK) {
-        alt_result = config_read_record(CONFIG_PATH_LEGACY, record);
+        alt_result = config_read_record(CONFIG_PATH_LEGACY);
         if (alt_result == SPECTRUM_OVL_SAVELOAD_OK ||
             result == SPECTRUM_OVL_SAVELOAD_ERR_OPEN) {
             result = alt_result;
@@ -347,7 +387,8 @@ uint8_t config_load_ovl(uint8_t *ctx) __z88dk_fastcall
         (void)config_defaults_ovl(ctx);
         return result == SPECTRUM_OVL_SAVELOAD_ERR_DATA
                    ? SPECTRUM_CONFIG_STATE_INVALID
-                   : 0u;
+                   : (result == SPECTRUM_OVL_SAVELOAD_ERR_IO
+                          ? SPECTRUM_CONFIG_STATE_IO : 0u);
     }
     config_apply(record);
     return SPECTRUM_CONFIG_STATE_SAVED;

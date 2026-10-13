@@ -69,15 +69,19 @@ ROW_BOARD       EQU 7
 ROW_SET         EQU 8
 ROW_HINTS       EQU 9
 ROW_ACTION      EQU 10
+; NAME is logical row 11 (mask bit 11) but sits between TIME and COLOR on
+; screen and in navigation: see su_order_step.
+ROW_NAME        EQU 11
+
+INCLUDE "asm/app/player_name_layout.inc"
 
     DEFB 2
     DW _setup_step_ovl_entry
     DW _setup_compute_visible_ovl_entry
 
 _setup_compute_visible_ovl_entry:
-    push de
-    ld h, d
-    ld l, e
+    ex de, hl
+    push hl
     ld c, (hl)
     inc hl
     ld b, (hl)
@@ -105,10 +109,11 @@ _setup_step_ovl_entry:
     cp KEY_RIGHT
     jr z, su_focus
     cp 32
-    jp z, su_select
+    jr z, su_select_key
     cp 13
-    jp z, su_select
-    jr su_ret1
+    jr nz, su_ret1
+su_select_key:
+    jp su_select
 
 ; A = flag bits; ORs into CTX_FLAGS then falls through to return 1.
 su_or_flags:
@@ -139,7 +144,7 @@ su_nav_next:
 su_nav_go:
     ld b, a
     ld a, (_setup_cursor)
-    ld (su_scratch), a
+    push af
     ld a, b
     call su_step_row
     ld (_setup_cursor), a
@@ -149,9 +154,10 @@ su_nav_go:
     xor 1
     ld (_setup_action_focus), a
 su_nav_paint:
-    ld a, (su_scratch)
+    pop af
+    ld e, a
     call su_mark_paint_row
-    ld a, (su_scratch)
+    ld a, e
     cp ROW_BOARD
     jr nz, su_nav_next_mark
     ld a, (_setup_game_focus)
@@ -178,10 +184,10 @@ su_focus_later:
     ld a, l
     dec a
     or h
-    jp nz, su_ret1
+    jr nz, su_ret1
     ld a, (_setup_cursor)
     xor 3
-    jp su_nav_go
+    jr su_nav_go
 su_focus_option:
     cp ROW_COLOR
     jr z, su_focus_2
@@ -256,7 +262,9 @@ su_cycle_choice:
     cp b
     jr c, su_cycle_store
     xor a
-    jr su_cycle_store
+su_cycle_store:
+    ld (hl), a
+    ret
 su_cycle_left:
     ld a, (hl)
     dec a
@@ -264,34 +272,41 @@ su_cycle_left:
     jr c, su_cycle_store
     ld a, b
     dec a
-su_cycle_store:
-    ld (hl), a
-    ret
+    jr su_cycle_store
 
 su_select:
     ld a, (_setup_cursor)
-    or a
-    jr z, su_select_game
-    cp 1
-    jp z, su_select_link
+    cp 2
+    jr c, su_select_conn
     cp 4
     jr c, su_select_endpoint
-    cp ROW_COLOR
-    jr z, su_select_color
-    cp ROW_NOTATION
-    jr z, su_select_notation
+    cp ROW_NAME
+    jr z, su_select_name
+    ld b, a
     cp ROW_BOARD
     jr z, su_select_board
     cp ROW_SET
     jr z, su_select_set
+    cp ROW_COLOR
+    jp c, su_ret1
+    cp ROW_BOARD
+    jr c, su_select_binary_low
     cp ROW_HINTS
-    jr z, su_select_hints
-    jp su_ret1
-
-su_select_color:
-    ld a, (_setup_focus_choice + 2)
-    ld (_setup_choice + 2), a
-    ld a, ROW_COLOR
+    jp nz, su_ret1
+    ld e, 4
+    jr su_select_binary_ptr
+su_select_binary_low:
+    sub 3
+    ld e, a
+su_select_binary_ptr:
+    ld d, 0
+    ld hl, _setup_focus_choice
+    add hl, de
+    ld a, (hl)
+    ld hl, _setup_choice
+    add hl, de
+    ld (hl), a
+    ld a, b
 su_define_game_row_and_finish:
     call su_set_defined_row
     jp su_after_game_select
@@ -299,12 +314,6 @@ su_define_game_row_and_finish:
 su_define_row_and_finish:
     call su_set_defined_row
     jp su_after_select
-
-su_select_notation:
-    ld a, (_setup_focus_choice + 3)
-    ld (_setup_choice + 3), a
-    ld a, ROW_NOTATION
-    jr su_define_game_row_and_finish
 
 su_select_board:
     ld a, (_setup_focus_board_theme)
@@ -316,21 +325,18 @@ su_select_board:
 su_select_set:
     ld a, ACTION_SET
     ld (CTX_ACTION), a
-    jp su_ret1
-
-su_select_hints:
-    ld a, (_setup_focus_choice + 4)
-    ld (_setup_choice + 4), a
+    ; Accepting a different SET turns EDIT into SAVE: repaint ACTION now,
+    ; not when the cursor next reaches it.
     ld a, FLAG_ACTION_UI
-    call su_or_flags
-    ld a, ROW_HINTS
-    jr su_define_game_row_and_finish
+    jp su_or_flags
 
 su_select_endpoint:
     call su_room_editable
     jr z, su_endpoint_define
+su_select_name:
 su_endpoint_edit:
     call su_begin_room_edit
+su_mark_current_suppress:
     ld a, (_setup_cursor)
     call su_mark_paint_row
     ld a, FLAG_SUPPRESS
@@ -339,48 +345,40 @@ su_endpoint_define:
     ld a, (_setup_cursor)
     jr su_define_row_and_finish
 
-su_select_game:
-    ld a, (_setup_focus_choice)
+; A = cursor: 0 GAME, 1 LINK. Its defined bit is cursor + 1.
+su_select_conn:
+    ld e, a
+    ld d, 0
+    ld hl, _setup_focus_choice
+    add hl, de
+    ld a, (hl)
     ld hl, _setup_choice
-    ld d, 1
+    add hl, de
+    inc e
+    ld d, e
     call su_select_primary
     jr z, su_select_unchanged
     ld a, b
     or a
-    jp z, su_after_select
+    jr z, su_conn_kept
     call su_prepare_complete_connection
     jp nz, su_after_select
+    ; Unfinished menu: keep GAME (and LINK) defined, clear from the next row.
+    ld a, (_setup_cursor)
+    inc a
+    ld (CTX_CLEAR_FROM), a
+    add a, a
+    dec a
     ld hl, _setup_defined_mask
-    ld a, (hl)
-    and 1
+    and (hl)
     ld (hl), a
     inc hl
     ld (hl), 0
-    ld a, 1
-    ld (CTX_CLEAR_FROM), a
-    jp su_after_select
-
-su_select_link:
-    ld a, (_setup_focus_choice + 1)
-    ld hl, _setup_choice + 1
-    ld d, 2
-    call su_select_primary
-    jr z, su_select_unchanged
-    ld a, b
+su_conn_kept:
+    ; Only LINK auto-defines row 2: the static CREATE+DIRECT IP.
+    ld a, (_setup_cursor)
     or a
-    jr z, su_link_auto_room
-    call su_prepare_complete_connection
-    jr z, su_link_incomplete
-    jp su_after_select
-su_link_incomplete:
-    ld hl, _setup_defined_mask
-    ld a, (hl)
-    and 3
-    ld (hl), a
-    inc hl
-    ld (hl), 0
-    ld a, 2
-    ld (CTX_CLEAR_FROM), a
+    jr z, su_after_select
 su_link_auto_room:
     ld hl, (_setup_choice)
     ld a, h
@@ -391,15 +389,9 @@ su_link_auto_room:
     jp su_define_row_and_finish
 
 ; A = focused choice, D = defined bit, HL = stored choice.
-; Returns B = value changed, C = row was undefined, Z only when unchanged.
+; Returns B = value changed, Z only when value and defined bit are unchanged.
 su_select_primary:
     ld e, a
-    ld a, (_setup_defined_mask)
-    and d
-    ld c, 0
-    jr nz, su_sp_had
-    inc c
-su_sp_had:
     ld a, (hl)
     cp e
     ld b, 0
@@ -408,30 +400,24 @@ su_sp_had:
 su_sp_same:
     ld (hl), e
     ld a, (_setup_defined_mask)
+    ld c, a
     or d
     ld (_setup_defined_mask), a
-    ld a, b
-    or c
+    xor c
+    or b
     ret z
     push bc
     call su_update_room
     pop bc
-    ld a, b
-    or c
+    or 1
     ret
 
 su_select_unchanged:
-    ld a, (_setup_cursor)
-    ld (su_scratch), a
-    ld a, 1
-    call su_step_row
-    ld (_setup_cursor), a
-    ld a, (su_scratch)
-    call su_mark_paint_row
-    ld a, (_setup_cursor)
-    call su_mark_paint_row
+    ; From GAME/LINK the next visible row is LINK, IP or PORT: any visible
+    ; mask with ACTION also has rows 1-3, so nav's ACTION/BOARD hooks idle.
     ld a, FLAG_SUPPRESS
-    jp su_or_flags
+    call su_or_flags
+    jp su_nav_next
 
 ; A complete menu remains an editor when GAME/LINK changes. Invalidate only
 ; the endpoint, then immediately restore it when the stored values are valid.
@@ -468,6 +454,8 @@ su_after_select_dirty:
     call su_compute_visible
     ld (su_scratch), hl
     ld a, (CTX_CLEAR_FROM)
+    call su_write_force_from_row
+    ld a, (CTX_CLEAR_FROM)
     cp SETUP_CLEAR_ENDPOINT
     jr nz, su_as_endpoint_progress
     ; Advance through the common filter: GAME goes to LINK; LINK goes to the
@@ -488,13 +476,16 @@ su_as_endpoint_next:
     ld a, l
     or a
     jr nz, su_as_clear_visible
+    ; CREATE: MQTT generates its room and DIRECT keeps a valid stored port
+    ; (5000 unless changed), so both continue at TIME; PORT stays reachable.
+    ; Only an invalid port still stops on PORT.
+su_as_create_endpoint:
     or h
-    jr z, su_as_host_direct
+    call z, su_parse_port
+    ld a, 3
+    jr z, su_as_store_next
     call su_set_defined_rows_2_3
     ld a, 4
-    jr su_as_store_next
-su_as_host_direct:
-    ld a, 3
     jr su_as_store_next
 su_as_clear_visible:
     ld a, (CTX_CLEAR_FROM)
@@ -503,11 +494,7 @@ su_as_clear_visible:
     push af
     call su_row_bit_bc
     ld hl, (su_scratch)
-    ld a, l
-    and c
-    jr nz, su_as_use_clear_pop
-    ld a, h
-    and b
+    call su_mask_has_bc
     jr nz, su_as_use_clear_pop
     pop af
     jr su_as_first_new
@@ -541,15 +528,10 @@ su_as_flags:
     call su_mark_dirty
     ld a, (SU_MARKS_CONFIG)
     or a
-    ld a, FLAG_ACTION_UI
+    ld a, FLAG_ACTION_UI | FLAG_RENDER | FLAG_SUPPRESS
     jr z, su_as_ui
-    ld a, FLAG_TIME_UI | FLAG_ACTION_UI
+    ld a, FLAG_TIME_UI | FLAG_ACTION_UI | FLAG_RENDER | FLAG_SUPPRESS
 su_as_ui:
-    call su_or_flags
-su_as_not_config:
-    ld a, (CTX_CLEAR_FROM)
-    call su_write_force_from_row
-    ld a, FLAG_RENDER | FLAG_SUPPRESS
     jp su_or_flags
 
 su_mark_dirty:
@@ -574,7 +556,15 @@ su_edit_key:
     cp KEY_END + 1
     jr c, su_edit_apply
 su_edit_char:
+    ld c, a
+    call su_editing_name
+    ld a, c
+    jr nz, su_edit_char_endpoint
+    call su_name_char
+    jr su_edit_char_checked
+su_edit_char_endpoint:
     call su_room_char
+su_edit_char_checked:
     or a
     jp z, su_ret1
 su_edit_apply:
@@ -599,18 +589,10 @@ su_edit_cancel:
     jp su_or_flags
 
 su_edit_confirm:
-    ld hl, (_edit_buf)
-    ld a, (hl)
-    or a
-    jr nz, su_ec_nonempty
-    ld a, (_setup_choice + 1)
-    or a
-    jr nz, su_ec_bad_room
-    ld a, (_edit_max)
-    cp 5
-    jr z, su_ec_bad_port
-    jr su_ec_bad_ip
-su_ec_nonempty:
+    ; NAME is optional: an empty or any filtered entry confirms as typed.
+    call su_editing_name
+    jr z, su_ec_not_direct
+    ; Empty text needs no pre-check: each validator below rejects it.
     ld a, (_setup_choice + 1)
     or a
     jr z, su_ec_direct
@@ -649,8 +631,13 @@ su_ec_not_direct:
     ld (_setup_room_editing), a
     ld a, (_setup_edit_row)
     call su_set_defined_row
+    call su_editing_name
+    jr z, su_ec_after_port
+    ; MQTT has no port; DIRECT keeps a valid stored port defined, so an
+    ; accepted IP continues at TIME instead of walking through PORT.
     ld a, (_setup_choice + 1)
     or a
+    call z, su_parse_port
     jr z, su_ec_after_port
     ld a, 3
     call su_set_defined_row
@@ -658,6 +645,16 @@ su_ec_after_port:
     ld bc, (_setup_defined_mask)
     call su_compute_visible
     ld (_setup_visible_mask), hl
+    ; With PORT defined, an accepted IP steps on from PORT's position.
+    ld a, (_setup_defined_mask)
+    and 0x08
+    jr z, su_ec_step
+    ld a, (_setup_cursor)
+    cp 2
+    jr nz, su_ec_step
+    inc a
+    ld (_setup_cursor), a
+su_ec_step:
     ld a, 1
     call su_step_row
     ld (_setup_cursor), a
@@ -722,57 +719,53 @@ su_ur_digit:
 su_begin_room_edit:
     ld a, (_setup_cursor)
     ld (_setup_edit_row), a
-    call su_backup_edit
+    call su_edit_target_hl_bc
+    ld a, c
+    push hl
+    ld de, _setup_edit_backup
+    ldir
+    pop hl
+    dec a
+    ld c, a
     ld a, 1
     ld (_setup_room_editing), a
+    call su_editing_name
+    jr z, su_bre_bind
     ld a, (_setup_choice + 1)
     or a
-    jr nz, su_bre_mqtt
-    ld a, (_setup_cursor)
-    cp 3
-    jr nz, su_bre_direct_ip
-su_bre_direct_port:
-    ld a, 5
-    ld hl, _setup_port_text
-    jr su_bre_bind
-su_bre_direct_ip:
-    ld a, 15
-    ld hl, _netchesszx_direct_host
-    jr su_bre_bind
-su_bre_mqtt:
-    ld a, 4
-    ld hl, _netchesszx_mqtt_code + 2
+    jr z, su_bre_bind
+    inc hl
+    inc hl
+    ld c, 4
 su_bre_bind:
+    ld a, c
     ld (_edit_max), a
     call _spectrum_gui_edit_bind
     ; Explicit selection adds PAINT; auto-entry already performs full RENDER.
     ld a, FLAG_EDIT
-    ld hl, CTX_FLAGS
-    or (hl)
-    ld (hl), a
-    ret
+    jp su_or_flags
 
 su_edit_target_hl_bc:
+    call su_editing_name
+    jr nz, su_edit_target_endpoint
+    ld hl, PLAYER_NAME
+    ld bc, PLAYER_NAME_MAX + 1
+    ret
+su_edit_target_endpoint:
+    ld hl, _netchesszx_direct_host
+    ld bc, 16
     ld a, (_setup_choice + 1)
     or a
     jr nz, su_edit_target_mqtt
     ld a, (_setup_edit_row)
     cp 3
-    ld hl, _netchesszx_direct_host
-    ld bc, 16
     ret nz
     ld hl, _setup_port_text
-    ld bc, 6
+    ld c, 6
     ret
 su_edit_target_mqtt:
     ld hl, _netchesszx_mqtt_code
-    ld bc, 17
-    ret
-
-su_backup_edit:
-    call su_edit_target_hl_bc
-    ld de, _setup_edit_backup
-    ldir
+    inc c
     ret
 
 su_restore_edit:
@@ -786,24 +779,27 @@ su_restore_edit:
     jp su_parse_port
 
 su_room_editable:
+    ld a, (_setup_choice + 1)
+    or a
+    jr nz, su_re_mqtt
     ld a, (_setup_cursor)
     cp 3
     jr z, su_re_port
-    sub 2
+    cp 2
     jr nz, su_re_false
-    ld hl, _netchesszx_mqtt_code + 2
-    ld a, (_setup_choice + 1)
-    or a
-    ret nz
     ld hl, _netchesszx_direct_host
     ld a, (_setup_choice)
     or a
     ret
 su_re_port:
     ld hl, _setup_port_text
-    ld a, (_setup_choice + 1)
-    or a
+    inc a
+    ret
+su_re_mqtt:
+    ld a, (_setup_cursor)
+    cp 2
     jr nz, su_re_false
+    ld hl, _netchesszx_mqtt_code + 2
     inc a
     ret
 su_re_false:
@@ -859,16 +855,38 @@ su_rc_bad:
 su_rc_dot:
     ld a, '.'
     ret
+; Z when the edited row is NAME.
+su_editing_name:
+    ld a, (_setup_edit_row)
+    cp ROW_NAME
+    ret
+
+; A = typed key. Returns A = the accepted upper-case name character, else 0.
+su_name_char:
+    cp '-'
+    ret z
+    cp '_'
+    ret z
+    cp '0'
+    jr c, su_name_char_bad
+    cp '9' + 1
+    ret c
+    and 0xdf
+    cp 'A'
+    jr c, su_name_char_bad
+    cp 'Z' + 1
+    ret c
+su_name_char_bad:
+    xor a
+    ret
+
 su_validate_room:
-    ld hl, _netchesszx_mqtt_code
-    ld a, (hl)
-    cp 'N'
+    ld hl, (_netchesszx_mqtt_code)
+    ld de, 0x434e
+    or a
+    sbc hl, de
     jr nz, su_vr_bad
-    inc hl
-    ld a, (hl)
-    cp 'C'
-    jr nz, su_vr_bad
-    inc hl
+    ld hl, _netchesszx_mqtt_code + 2
     ld b, 4
 su_vr_hex:
     ld a, (hl)
@@ -901,7 +919,7 @@ su_cv_after_link:
     ; testing it hid GAME SETUP after a completed CREATE→JOIN seat change.
     bit 1, b
     jr z, su_cv_progressive
-    ld de, 0x03df
+    ld de, 0x0bdf
     ld a, (_setup_choice)
     or a
     jr nz, su_cv_check_action
@@ -913,6 +931,11 @@ su_cv_after_room:
     jr z, su_cv_done
     set 4, e
     bit 4, c
+    jr z, su_cv_done
+    ; NAME follows TIME; GAME SETUP waits until NAME is answered (an empty
+    ; name is a valid answer).
+    set 3, d
+    bit 3, b
     jr z, su_cv_done
     ld a, (_setup_choice)
     or a
@@ -940,25 +963,23 @@ su_cv_check_action:
     ld hl, (_setup_choice)
     ld a, l
     or a
-    jr nz, su_cv_join_ready
-    or h
-    jr z, su_cv_host_direct_ready
+    jr z, su_cv_create_ready
     ld a, c
-    cp 0xff
-    jr z, su_cv_action
-    jr su_cv_done
-su_cv_host_direct_ready:
+    or 0x20
+    jr su_cv_required
+su_cv_create_ready:
+    ld a, h
+    or a
     ld a, c
-    and 0xfb
-    cp 0xfb
-    jr z, su_cv_action
-    jr su_cv_done
-su_cv_join_ready:
-    ld a, c
-    and 0xdf
-    cp 0xdf
+    jr nz, su_cv_required
+    or 0x04
+su_cv_required:
+    inc a
     jr nz, su_cv_done
-    ld a, (_setup_choice + 1)
+    ld a, l
+    or a
+    jr z, su_cv_action
+    ld a, h
     or a
     jr nz, su_cv_action
     ld a, (_netchesszx_direct_host)
@@ -967,38 +988,54 @@ su_cv_join_ready:
 su_cv_action:
     set 2, d
 su_cv_done:
-    ld h, d
-    ld l, e
+    ex de, hl
     ret
 
+; A = 0 previous / 1 next. Returns the adjacent visible row, or the cursor.
 su_step_row:
-    or a
-    jr z, su_step_prev
+    ld d, a
     ld a, (_setup_cursor)
-    inc a
-su_step_next_loop:
-    cp 11
-    jr nc, su_step_restore
+su_step_loop:
+    call su_order_step
+    jr c, su_step_restore
     call su_visible_a
     ld a, e
     ret nz
-    inc a
-    jr su_step_next_loop
-su_step_prev:
-    ld a, (_setup_cursor)
-    or a
-    jr z, su_step_restore
-    dec a
-su_step_prev_loop:
-    call su_visible_a
-    ld a, e
-    ret nz
-    or a
-    jr z, su_step_restore
-    dec a
-    jr su_step_prev_loop
+    jr su_step_loop
 su_step_restore:
     ld a, (_setup_cursor)
+    ret
+
+; A = row, D = 0 previous / 1 next. Returns A = neighbouring row in screen
+; order (GAME..TIME, NAME, COLOR..ACTION); CF set past either end.
+su_order_step:
+    dec d
+    inc d
+    jr z, su_order_prev
+    cp ROW_TIME
+    jr z, su_order_name
+    cp ROW_NAME
+    jr z, su_order_color
+    inc a
+    cp ROW_ACTION + 1
+    ccf
+    ret
+su_order_prev:
+    cp ROW_COLOR
+    jr z, su_order_name
+    cp ROW_NAME
+    jr z, su_order_time
+    sub 1
+    ret
+; Reached only through an equal CP, so CF is already clear.
+su_order_name:
+    ld a, ROW_NAME
+    ret
+su_order_color:
+    ld a, ROW_COLOR
+    ret
+su_order_time:
+    ld a, ROW_TIME
     ret
 
 su_visible_a:
@@ -1027,19 +1064,18 @@ su_va_bit:
     ld hl, (_setup_visible_mask)
     jr su_mask_has_bc
 
+; HL = mask. Returns the first row of HL in screen order, or CLEAR_NONE.
 su_first_row:
     xor a
+    ld d, 1
 su_fr_loop:
-    cp 11
-    jr nc, su_fr_none
     ld e, a
     call su_row_bit_bc
     call su_mask_has_bc
     ld a, e
     ret nz
-    inc a
-    jr su_fr_loop
-su_fr_none:
+    call su_order_step
+    jr nc, su_fr_loop
     ld a, SETUP_CLEAR_NONE
     ret
 
@@ -1063,10 +1099,11 @@ su_rbbc_shift:
     ret
 
 su_set_defined_rows_2_3:
-    ld a, 2
-    call su_set_defined_row
-    ld a, 3
-    jp su_set_defined_row
+    ld hl, _setup_defined_mask
+    ld a, (hl)
+    or 0x0c
+    ld (hl), a
+    ret
 
 su_set_defined_row:
     call su_row_bit_bc
@@ -1085,7 +1122,13 @@ su_write_force_from_row:
     jr nz, su_wff_not_endpoint
     ; IP only. COLOR appear/hide stays in MENU_CONFIG so GAME SETUP is
     ; not dirtied when CONNECTION changes after HINTS is already defined.
-    ld bc, 1 << 2
+    ld a, (_setup_visible_mask)
+    cpl
+    and l
+    and 0x20
+    or 1 << 2
+    ld c, a
+    ld b, 0
     jr su_wff_store
 su_wff_not_endpoint:
     cp SETUP_CLEAR_NONE
@@ -1109,57 +1152,40 @@ su_write_row_bit_to_force:
 
 su_validate_ip:
     ld hl, _netchesszx_direct_host
-    ld b, 0
+    ld b, 4
 su_ip_segment:
-    ld c, 0
-    ld e, 0
-su_ip_digit_loop:
-    ld a, (hl)
-    cp '0'
-    jr c, su_ip_end_digits
-    cp '9' + 1
-    jr nc, su_ip_end_digits
-    sub '0'
-    ld (su_scratch), a
-    inc c
-    ld a, c
+    push bc
+    ld de, su_scratch
+    push de
+    push hl
+    call _netchess_mqtt_session_parse_u16_token
+    pop de
+    pop bc
+    pop bc
+    ld a, h
+    or l
+    jr z, su_ip_fail
+    sbc hl, de
+    ld a, h
+    or a
+    jr nz, su_ip_fail
+    ld a, l
     cp 4
     jr nc, su_ip_fail
-    ld a, e
-    add a, a
-    jr c, su_ip_fail
-    ld d, a
-    add a, a
-    jr c, su_ip_fail
-    add a, a
-    jr c, su_ip_fail
-    add a, d
-    jr c, su_ip_fail
-    ld d, a
-    ld a, (su_scratch)
-    add a, d
-    jr c, su_ip_fail
-    ld e, a
-    inc hl
-    jr su_ip_digit_loop
-su_ip_end_digits:
-    ld a, c
+    add hl, de
+    ld a, (su_scratch + 1)
     or a
-    jr z, su_ip_fail
-    ld a, (hl)
-    or a
+    jr nz, su_ip_fail
+    dec b
     jr z, su_ip_end
+    ld a, (hl)
     cp '.'
     jr nz, su_ip_fail
-    ld a, b
-    cp 3
-    jr nc, su_ip_fail
-    inc b
     inc hl
     jr su_ip_segment
 su_ip_end:
-    ld a, b
-    cp 3
+    ld a, (hl)
+    or a
     jr nz, su_ip_fail
     inc a
     ret

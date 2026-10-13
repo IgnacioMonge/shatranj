@@ -136,7 +136,7 @@ QString slotBaseName(int slot, const QDateTime &when)
 
 QString slotFilePath(const QString &directory, const QString &baseName)
 {
-    return QDir(directory).filePath(baseName + QString::fromLatin1(kSaveExtension));
+    return QDir(directory).filePath(ensureExtension(baseName));
 }
 
 QVector<SaveSlotEntry> scanSlots(const QString &directory)
@@ -159,6 +159,7 @@ QVector<SaveSlotEntry> scanSlots(const QString &directory)
             continue;
         }
         entry.baseName = base;
+        entry.fileName = file;
         entry.when = when;
         entry.used = true;
     }

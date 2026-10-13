@@ -93,16 +93,21 @@ san_len_ok:
     cp 2
     jr nz, san_not_castle
     ld a, 'O'
-    call san_put
+    ld (de), a
+    inc de
     ld a, '-'
-    call san_put
+    ld (de), a
+    inc de
 san_oo:
     ld a, 'O'
-    call san_put
+    ld (de), a
+    inc de
     ld a, '-'
-    call san_put
+    ld (de), a
+    inc de
     ld a, 'O'
-    call san_put
+    ld (de), a
+    inc de
     jp san_ok
 san_not_castle:
     xor a
@@ -140,14 +145,16 @@ san_cap_ready:
     jr z, san_dest
     ld a, (san_from_c)
     add a, 'a'
-    call san_put
+    ld (de), a
+    inc de
     jr san_dest
 san_piece_move:
     ld a, (san_piece)
     call san_piece_letter
     or a
     jr z, san_fail_move
-    call san_put
+    ld (de), a
+    inc de
     ld a, (san_piece)
     or $20
     cp 'k'
@@ -157,11 +164,13 @@ san_dest:
     or a
     jr z, san_dest_sq
     ld a, 'x'
-    call san_put
+    ld (de), a
+    inc de
 san_dest_sq:
     ld a, (san_to_c)
     add a, 'a'
-    call san_put
+    ld (de), a
+    inc de
     ld a, (san_to)
     rrca
     rrca
@@ -170,7 +179,8 @@ san_dest_sq:
     ld b, a
     ld a, '8'
     sub b
-    call san_put
+    ld (de), a
+    inc de
     pop hl
     push hl
     ld bc, 4
@@ -183,9 +193,11 @@ san_dest_sq:
     jr z, san_fail_move
     push af
     ld a, '='
-    call san_put
+    ld (de), a
+    inc de
     pop af
-    call san_put
+    ld (de), a
+    inc de
 san_ok:
     pop hl
     xor a
@@ -198,11 +210,6 @@ san_fail_move:
 san_fail_ix:
 san_ret0:
     ld l, 0
-    ret
-
-san_put:
-    ld (de), a
-    inc de
     ret
 
 san_piece_letter:
@@ -220,28 +227,20 @@ san_piece_letter:
     xor a
     ret
 
+; Keep the stable board view in HL; only legality calls borrow its registers.
 san_disambig:
-    ld c, 0
-    ld b, 0
-san_d_loop:
-    ld a, b
-    ld hl, san_from
-    cp (hl)
-    jr z, san_d_next
-    push bc
     push de
     call _spectrum_board_cells
     pop de
-    pop bc
-    ld a, b
-    add a, l
-    ld l, a
-    ld a, 0
-    adc a, h
-    ld h, a
+    ld bc, 0
+san_d_loop:
+    ld a, (san_from)
+    cp b
+    jr z, san_d_next
     ld a, (san_piece)
     cp (hl)
     jr nz, san_d_next
+    push hl
     push bc
     push de
     ld a, (san_to)
@@ -254,30 +253,22 @@ san_d_loop:
     pop de
     pop bc
     or a
+    pop hl
     jr z, san_d_next
     set 0, c
-    ld a, b
+    ld a, (san_from_c)
+    xor b
     and 7
-    ld hl, san_from_c
-    cp (hl)
     jr nz, san_d_rank
     set 1, c
 san_d_rank:
-    ld a, b
-    rrca
-    rrca
-    rrca
-    and 7
-    ld l, a
     ld a, (san_from)
-    rrca
-    rrca
-    rrca
-    and 7
-    cp l
+    xor b
+    and $38
     jr nz, san_d_next
     set 2, c
 san_d_next:
+    inc hl
     inc b
     ld a, b
     cp 64
@@ -288,13 +279,16 @@ san_d_next:
     jr nz, san_d_file_conflict
     ld a, (san_from_c)
     add a, 'a'
-    jp san_put
+    ld (de), a
+    inc de
+    ret
 san_d_file_conflict:
     bit 2, c
     jr z, san_d_rank_only
     ld a, (san_from_c)
     add a, 'a'
-    call san_put
+    ld (de), a
+    inc de
 san_d_rank_only:
     ld a, (san_from)
     rrca
@@ -304,7 +298,9 @@ san_d_rank_only:
     ld b, a
     ld a, '8'
     sub b
-    jp san_put
+    ld (de), a
+    inc de
+    ret
 
 ; uint8_t spectrum_board_san_append_suffix(char *san) __z88dk_fastcall
 _spectrum_board_san_append_suffix:

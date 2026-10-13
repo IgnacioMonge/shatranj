@@ -12,6 +12,18 @@
 #define SPECTRUM_OVL_CTX_PTR_LO 0u
 #define SPECTRUM_OVL_CTX_PTR_HI 1u
 
+/* MQTT TX consumes the payload during the synchronous overlay call. Route and
+   retain share one byte so no mutable request state outlives that call. */
+#define NETCHESSZX_MQTT_TX_CTX_PAYLOAD_LO 0u
+#define NETCHESSZX_MQTT_TX_CTX_PAYLOAD_HI 1u
+#define NETCHESSZX_MQTT_TX_CTX_FLAGS 2u
+#define NETCHESSZX_MQTT_TX_ROUTE_MASK 0x0fu
+#define NETCHESSZX_MQTT_TX_CLEAR_META 0x20u
+#define NETCHESSZX_MQTT_TX_OFFLINE 0x40u
+#define NETCHESSZX_MQTT_TX_RETAIN 0x80u
+
+#define NETCHESSZX_MQTT_CONNECT_CTX_FLAGS 0u
+
 #define SPECTRUM_OVL_CTX_GUI_MOVE_PLY_LO 0u
 #define SPECTRUM_OVL_CTX_GUI_MOVE_PLY_HI 1u
 #define SPECTRUM_OVL_CTX_GUI_MOVE_TEXT_LO 2u
@@ -36,6 +48,24 @@
 #define SPECTRUM_OVL_CTX_SAVELOAD_BUF_LO 2u
 #define SPECTRUM_OVL_CTX_SAVELOAD_BUF_HI 3u
 #define SPECTRUM_OVL_CTX_SAVELOAD_RESULT 4u
+#define SPECTRUM_OVL_CTX_RECOVERY_BUF_LO SPECTRUM_OVL_CTX_SAVELOAD_BUF_LO
+#define SPECTRUM_OVL_CTX_RECOVERY_BUF_HI SPECTRUM_OVL_CTX_SAVELOAD_BUF_HI
+#define SPECTRUM_OVL_CTX_RECOVERY_OUT_LO SPECTRUM_OVL_CTX_SAVELOAD_NAME_LO
+#define SPECTRUM_OVL_CTX_RECOVERY_OUT_HI SPECTRUM_OVL_CTX_SAVELOAD_NAME_HI
+#define SPECTRUM_OVL_CTX_RECOVERY_RESULT SPECTRUM_OVL_CTX_SAVELOAD_RESULT
+#define SPECTRUM_OVL_CTX_RECOVERY_FLAGS 5u
+/* Checkpoint link flags, stored in the SRC2 record (rcv_layout.inc). */
+#define SPECTRUM_OVL_CTX_RECOVERY_LINK 6u
+#define SPECTRUM_RECOVERY_LINK_PARTIAL 0x01u
+#define SPECTRUM_RECOVERY_LINK_UNLINKED 0x02u
+#define SPECTRUM_RECOVERY_LINK_HOST 0x04u
+#define SPECTRUM_RECOVERY_LINK_BLACK 0x08u
+#define SPECTRUM_RECOVERY_LINK_PLAYED 0x10u
+#define SPECTRUM_OVL_CTX_JOURNAL_REC_LO 0u
+#define SPECTRUM_OVL_CTX_JOURNAL_REC_HI 1u
+#define SPECTRUM_OVL_CTX_JOURNAL_FD 2u
+/* Append-only: nonzero until the statistics prologue has executed. */
+#define SPECTRUM_OVL_CTX_JOURNAL_CAPTURE_PENDING 7u
 
 #define SPECTRUM_OVL_CTX_RESTORE_SNAP_LO 0u
 #define SPECTRUM_OVL_CTX_RESTORE_SNAP_HI 1u
@@ -111,6 +141,28 @@
 /* Resident code writes this buffer, overlay entries mutate it, then resident
    code reads it again. Keep it volatile so C never caches values across the
    overlay call boundary. */
-#define spectrum_overlay_context ((volatile uint8_t *)NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_ADDR)
+#ifdef NETCHESSZX_HOST_SESSION_TEST
+#define spectrum_overlay_context netchesszx_host_overlay_context
+#else
+#define spectrum_overlay_context \
+    ((volatile uint8_t *)NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_ADDR)
+#endif
+
+/* Store a 16-bit field whose bytes sit at lo and hi == lo + 1: one word
+   store on the Z80 (little-endian), two byte stores elsewhere. */
+#ifdef NETCHESSZX_SDCC_IY
+#define SPECTRUM_OVL_CTX_SET16(lo, hi, value) do { \
+    (void)sizeof(char[((hi) == (lo) + 1u) ? 1 : -1]); \
+    *(volatile uint16_t *)(NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_ADDR + (lo)) = \
+        (uint16_t)(value); \
+} while (0)
+#else
+#define SPECTRUM_OVL_CTX_SET16(lo, hi, value) do { \
+    uint16_t spectrum_ovl_ctx_word = (uint16_t)(value); \
+    (void)sizeof(char[((hi) == (lo) + 1u) ? 1 : -1]); \
+    spectrum_overlay_context[(lo)] = (uint8_t)spectrum_ovl_ctx_word; \
+    spectrum_overlay_context[(hi)] = (uint8_t)(spectrum_ovl_ctx_word >> 8); \
+} while (0)
+#endif
 
 #endif

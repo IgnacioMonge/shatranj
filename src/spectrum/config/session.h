@@ -3,8 +3,9 @@
 
 #include <stdint.h>
 
-#include "common/protocol/game_protocol.h"
+#include "spectrum/session/identity.h"
 #include "spectrum/lowram_map.h"
+#include "common/protocol/platform_protocol.h"
 
 #ifndef NETCHESSZX_FASTCALL
 #ifdef NETCHESSZX_SDCC_IY
@@ -52,26 +53,13 @@
 #define NETCHESSZX_MQTT_CODE_MAX 16u
 #define NETCHESSZX_DIRECT_HOST_MAX 15u
 
-#define NETCHESSZX_SESSION_ROLE_HOST 0u
-#define NETCHESSZX_SESSION_ROLE_JOIN 1u
-
-#define NETCHESSZX_TRANSPORT_DIRECT 0u
-#define NETCHESSZX_TRANSPORT_MQTT 1u
-
-#define NETCHESSZX_COLOR_WHITE 0u
-#define NETCHESSZX_COLOR_BLACK 1u
-
 #define NETCHESSZX_NOTATION_COORD 0u
 #define NETCHESSZX_NOTATION_SAN 1u
 
 
 #define NETCHESSZX_PIECE_SET_STD 0u
+#define NETCHESSZX_PIECE_SET_COUNT 3u
 
-extern uint8_t netchesszx_session_role;
-extern uint8_t netchesszx_transport;
-extern uint8_t netchesszx_local_color;
-extern uint8_t netchesszx_host_color;
-extern uint8_t netchesszx_host_color_ready;
 extern uint8_t netchesszx_notation;
 extern uint8_t netchesszx_movement_hints;
 extern uint8_t netchesszx_board_theme_index;
@@ -83,32 +71,10 @@ extern __at(NETCHESSZX_LOWRAM_HINTED_ROWS_ADDR) uint8_t netchesszx_hinted_rows[8
 #else
 extern uint8_t netchesszx_hinted_rows[8];
 #endif
-extern uint16_t netchesszx_mqtt_session_id;
-#define netchesszx_text_game_start NETCHESS_PROTO_GAME_START
 
-void netchesszx_session_configure(uint8_t role,
-                                  uint8_t transport,
-                                  uint8_t host_color);
 void netchesszx_board_theme_apply(uint8_t theme);
 uint8_t netchesszx_piece_set_load(uint8_t set) NETCHESSZX_FASTCALL;
-const char *netchesszx_session_start_text(void);
 
-#define netchesszx_session_is_host() \
-    (netchesszx_session_role == NETCHESSZX_SESSION_ROLE_HOST)
-#define netchesszx_session_can_start_game() \
-    netchesszx_session_is_host()
-#define netchesszx_transport_is_mqtt() \
-    (netchesszx_transport == NETCHESSZX_TRANSPORT_MQTT)
-#define netchesszx_local_is_white() \
-    (netchesszx_local_color == NETCHESSZX_COLOR_WHITE)
-#define netchesszx_session_has_local_turn(white_turn) \
-    ((uint8_t)((white_turn) == netchesszx_local_is_white()))
-#define netchesszx_local_side_char() \
-    (netchesszx_local_is_white() ? 'W' : 'B')
-#define netchesszx_remote_side_char() \
-    (netchesszx_local_is_white() ? 'B' : 'W')
-#define netchesszx_local_side_name() \
-    (netchesszx_local_is_white() ? "WHITE" : "BLACK")
 #define netchesszx_notation_is_san() \
     (netchesszx_notation == NETCHESSZX_NOTATION_SAN)
 
@@ -117,6 +83,20 @@ extern char netchesszx_mqtt_code[NETCHESSZX_MQTT_CODE_MAX + 1u];
 extern const uint16_t netchesszx_mqtt_port;
 extern char netchesszx_direct_host[NETCHESSZX_DIRECT_HOST_MAX + 1u];
 extern uint16_t netchesszx_direct_port;
+/* "MNAME " followed by the configured player name (empty when unset): the
+   advisory line is sent as-is and the name is read in place. The peer name
+   is the last valid MNAME accepted from the current peer, or empty. */
+#if defined(NETCHESSZX_FIXED_LOW_RAM)
+/* Fixed low-RAM addresses, so resident and overlay code share no symbol. */
+#define netchesszx_player_name_line \
+    ((char *)NETCHESSZX_LOWRAM_PLAYER_NAME_LINE_ADDR)
+#define netchesszx_peer_name ((char *)NETCHESSZX_LOWRAM_PEER_NAME_ADDR)
+#else
+extern char netchesszx_player_name_line[NETCHESS_PROTO_NAME_LINE_SIZE];
+extern char netchesszx_peer_name[NETCHESS_PLAYER_NAME_SIZE];
+#endif
+#define netchesszx_player_name \
+    (netchesszx_player_name_line + NETCHESS_PROTO_NAME_PREFIX_LEN)
 extern int8_t netchesszx_timezone;
 extern int8_t netchesszx_timezone_last;
 extern uint8_t netchesszx_rtc_available;

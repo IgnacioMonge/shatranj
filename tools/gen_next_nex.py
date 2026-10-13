@@ -20,7 +20,7 @@ MAIN_BANKS = ((5, 0x4000), (2, 0x8000), (0, 0xC000))
 LOADER_COMPRESSED_BANK_BASE = 8
 LOADER_RAW_BANK_BASE = 16
 LOADER_RAW_BANK_COUNT = 15
-OVERLAY_PAGE_COUNT = 17
+OVERLAY_PAGE_COUNT = 18
 OVERLAY_EXEC_SIZE = 0x1000
 RESIDENT_MIRROR_BASE = 0x7000
 RESIDENT_MIRROR_END = RESIDENT_MIRROR_BASE + OVERLAY_EXEC_SIZE
@@ -221,6 +221,9 @@ def main(argv: list[str]) -> int:
     symbols = parse_map(args.map)
     pc = symbol(symbols, "__crt_org_code")
     sp = symbol(symbols, "__register_sp", "TAR__register_sp")
+    gap = sp - symbol(symbols, "__BSS_END_tail", "__BSS_tail")
+    if gap < 3072:
+        raise SystemExit(f"SP_GAP {gap} bytes is below Next hard floor 3072 bytes")
     if args.org != RESIDENT_MIRROR_BASE or pc != args.org:
         raise SystemExit("Next resident image must start at 0x7000")
     validate_resident_mirror(symbols)

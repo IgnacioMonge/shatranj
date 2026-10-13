@@ -7,7 +7,7 @@ PUBLIC _line_buf
 PUBLIC _NETCHESS_PROTO_ACK_PREFIX
 PUBLIC _NETCHESS_PROTO_NACK_PREFIX
 PUBLIC _spectrum_net_payload_scratch
-PUBLIC _spectrum_net_send_text
+PUBLIC _netchesszx_session_send_ack_text
 
 EXTERN _netchesszx_asm_push_frame_arg
 
@@ -96,5 +96,5 @@ _line_buf: DEFB 0
 _NETCHESS_PROTO_ACK_PREFIX: DEFB 0
 _NETCHESS_PROTO_NACK_PREFIX: DEFB 0
 _spectrum_net_payload_scratch:
-_spectrum_net_send_text:
+_netchesszx_session_send_ack_text:
     ret
