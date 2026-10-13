@@ -1,9 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/shatranj-logo-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/shatranj-logo-light.png">
-    <img src="docs/assets/shatranj-logo-light.png" alt="Shatranj" width="520">
-  </picture>
+  <img src="docs/assets/shatranj-banner.png" alt="Shatranj" width="760">
 </p>
 
 <p align="center">
@@ -359,7 +355,10 @@ Space/Enter.
 | `/load [name]` | Request restoration of a saved position | Qt; use FILE on Spectrum |
 
 Any other submitted text is sent as chat. Qt asks for `q`, `r`, `b`, or `n`
-on promotion; Spectrum clients promote to a queen automatically.
+on promotion; Spectrum clients promote to a queen automatically. The Spectrum
+menu's OFFER group sends the same `/takeback`, `/draw`, and `/resign`
+commands. While Stockfish plays your side, Qt refuses those three: the
+decisions belong to the engine.
 
 ## Build from source
 
