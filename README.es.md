@@ -1,9 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/shatranj-logo-dark.png">
-    <source media="(prefers-color-scheme: light)" srcset="docs/assets/shatranj-logo-light.png">
-    <img src="docs/assets/shatranj-logo-light.png" alt="Shatranj" width="520">
-  </picture>
+  <img src="docs/assets/shatranj-banner.png" alt="Shatranj" width="760">
 </p>
 
 <p align="center">
@@ -372,7 +368,10 @@ izquierda/derecha u `O`/`P` para elegir pestaña o grupo, arriba/abajo o
 | `/load [nombre]` | Solicitar restaurar una posición guardada | Qt; usa FILE en Spectrum |
 
 Cualquier otro texto se envía como chat. Qt solicita `q`, `r`, `b` o `n` al
-promocionar; los clientes Spectrum promocionan automáticamente a dama.
+promocionar; los clientes Spectrum promocionan automáticamente a dama. El
+grupo OFFER del menú del Spectrum envía los mismos comandos `/takeback`,
+`/draw` y `/resign`. Mientras Stockfish juega por ti, Qt rechaza esos tres:
+esas decisiones son del motor.
 
 ## Compilar desde el código fuente
 

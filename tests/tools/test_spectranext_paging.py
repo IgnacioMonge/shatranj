@@ -5,7 +5,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from test_spectrum_asm_vectors import required_tool
+from test_spectrum_asm_vectors import required_tool, z88dk_sources
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -39,7 +39,9 @@ def build_and_run(real_seam):
         "defc __CPU_RABBIT__=0\ndefc __CPU_8085__=0\ndefc __Z80=1\ndefc __Z80_NMOS=1\n"
     )
     assembler = required_tool("z88dk-z80asm")
-    helpers = Path(assembler).resolve().parents[1] / "libsrc/arch/z80/z80"
+    helpers = z88dk_sources(
+        assembler, "arch/z80/z80", ("asm_z80_push_di.asm", "asm_z80_pop_ei.asm")
+    )
     (work / "vector.asm").write_text(
         (ROOT / "tests/spectrum/spectranext_paging_vector.asm").read_text()
         + '\nEXTERN asm_z80_push_di, asm_z80_pop_ei\nINCLUDE "loader.asm"\n'
@@ -50,8 +52,7 @@ def build_and_run(real_seam):
         defines += ["-DREAL_SEAM", "-DSPXN_XFS_STATE_BASE=0x5B50", "-DSPXN_XFS_DIR_SCRATCH=0x662B"]
     for cmd in (
         [assembler, "-b", "-m", "-r0x8000", *defines, "-I.", "-O=.",
-         "-o=vector.bin", "vector.asm", str(helpers / "asm_z80_push_di.asm"),
-         str(helpers / "asm_z80_pop_ei.asm")],
+         "-o=vector.bin", "vector.asm", *(str(path) for path in helpers)],
         [required_tool("z88dk-ticks"), "-mz80", "-l", "0x8000", "-pc", "8000",
          "-end", "0", "-int", "10000", "-counter", "6000000",
          "-output", "vector.ram", "vector.bin"],

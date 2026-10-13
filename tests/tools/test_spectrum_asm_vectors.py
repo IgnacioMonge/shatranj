@@ -74,14 +74,20 @@ def assemble_vector(
     return binary.with_suffix(".map").read_text(encoding="utf-8")
 
 
-def sdcc_ix_helpers(assembler: str) -> list[Path]:
-    """z88dk's IX frame helpers: the installed sources, else the copies kept in
-    tests/spectrum for installs without libsrc (such as the CI image)."""
-    installed = Path(assembler).resolve().parents[1] / "libsrc/l/sdcc"
-    names = ("___sdcc_enter_ix.asm", "____sdcc_4_push_hlix.asm")
+def z88dk_sources(assembler: str, directory: str, names: tuple[str, ...]) -> list[Path]:
+    """z88dk library sources: the installed libsrc/<directory>, else the copies
+    kept in tests/spectrum/z88dk for installs without libsrc (the CI image)."""
+    installed = Path(assembler).resolve().parents[1] / "libsrc" / directory
     if all((installed / name).is_file() for name in names):
         return [installed / name for name in names]
-    return [ROOT / "tests/spectrum/z88dk_sdcc_ix_helpers.asm"]
+    return [ROOT / "tests/spectrum/z88dk" / name for name in names]
+
+
+def sdcc_ix_helpers(assembler: str) -> list[Path]:
+    """z88dk's IX frame helpers, with their real ABI."""
+    return z88dk_sources(
+        assembler, "l/sdcc", ("___sdcc_enter_ix.asm", "____sdcc_4_push_hlix.asm")
+    )
 
 
 def execute_vector(
