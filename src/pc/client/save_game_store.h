@@ -11,6 +11,7 @@ extern "C" {
 
 struct SaveSlotEntry {
     QString baseName;
+    QString fileName;
     QDateTime when;
     bool used = false;
     bool duplicate = false;

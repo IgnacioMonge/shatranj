@@ -65,6 +65,10 @@ target names.
 - `make full-check` is `module-guards test abi-check size-check nex-size-report`.
   One invocation rebuilds Classic TAP once and Next NEX once, then runs host
   tests. Do not run those targets as extra makes before or after it.
+  Its final recipe also executes the linked BOARD entry in Z80 for both targets
+  (`tests/tools/test_board_action_z80.py`). This adds no firmware build. To
+  inspect retained artifacts, pass their complete build directory directly to
+  that script, plus `--next` for a Next build; do not mix old maps and new OVLs.
 - `make abi-check` rebuilds Next NEX and Classic TAP. It is not a Python-only
   guard; `module-guards` already covers static overlay entry ABI. Do not also
   run `make tap`, `make nex`, `make size-check`, or `make nex-size-report`.
@@ -85,6 +89,18 @@ Linux, macOS, and Windows.
 A software gate cannot stand in for real hardware. Missing hardware evidence is
 reported as pending, never inferred as passing.
 
+## Toolchain Reproducibility
+
+The Spectrum CI image is pinned by digest; do not replace it with a mutable
+Docker tag. Local linked-size baselines are also verified with z88dk revision
+`762578732c`. The generated Classic and Next configuration stamps record the
+actual `zcc` and `z80asm` identity strings, so changing either executable
+invalidates cached firmware instead of silently reusing incompatible output.
+
+Before accepting a local size-baseline change, confirm that the first line of
+`zcc` identifies revision `762578732`. A different revision may be useful for
+an experiment, but its byte deltas do not justify changing a baseline.
+
 ## Version Source
 
 `VERSION` at the repository root is the only editable product version. It
@@ -97,9 +113,10 @@ code or build files.
 
 ## Real-Hardware Validation
 
-Real-hardware results belong in the release notes, issue, or commit they
-support, not in a permanent directory of run logs. Record concise pass, fail,
-or pending results together with:
+Real-hardware results belong in [`hardware-validation.md`](hardware-validation.md),
+the issue, or the commit they support, not in a permanent directory of run
+logs; release notes summarize them. Record concise pass, fail, or pending
+results together with:
 
 - commit and artifact hashes;
 - 48K, Next-TAP, or NEX target and Next core/firmware when applicable;

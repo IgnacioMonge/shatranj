@@ -1,3 +1,4 @@
+#ifndef SAVELOAD_NATIVE_ASM
 #include "spectrum/overlay/overlay_api.h"
 #include "spectrum/overlay/overlay_context.h"
 #include "common/savegame/savegame_format.h"
@@ -5,11 +6,19 @@
 #include "spectrum/lowram_map.h"
 #endif
 
-#if defined(NETCHESSZX_SPECTRANEXT) && !defined(NETCHESSZX_HOST_TEST)
+#if defined(NETCHESSZX_SPECTRANEXT) && !defined(NETCHESSZX_HOST_TEST) && \
+    !defined(STJ_SAVELOAD_ASM)
 #include "spxf.h"
-#elif defined(NETCHESSZX_SPECTRANEXT)
+#elif defined(NETCHESSZX_SPECTRANEXT) && !defined(STJ_SAVELOAD_ASM)
 int16_t spxf_replace_atomic(const char *target, const char *temp,
                             const void *buf, uint16_t len);
+#endif
+
+/* Classic routes LOAD/SAVE to the JOURNAL overlay (saveload.c) and links the
+   ASM persist append as entry 3; only ERASE stays live in this C file. */
+#if !defined(NETCHESSZX_NEXT) && !defined(NETCHESSZX_NEXT_BANKING) && \
+    !defined(NETCHESSZX_SPECTRANEXT) && !defined(NETCHESSZX_HOST_TEST)
+#define SAVELOAD_CLASSIC_JOURNAL 1
 #endif
 
 extern uint8_t esx_handle;
@@ -25,17 +34,22 @@ uint8_t esx_fclose(void);
 void esx_funlink(const char *path) __z88dk_fastcall;
 
 #ifdef NETCHESSZX_SPECTRANEXT
+void esx_frename(const char *path) __z88dk_fastcall;
 void esx_opendir(const char *path) __z88dk_fastcall;
 void esx_mkdir(const char *path) __z88dk_fastcall;
 void esx_commit(const char *path) __z88dk_fastcall;
 #define SAVELOAD_CONFIG_DIR "/CFG"
 #define SAVELOAD_DIR "/CFG/"
+#ifndef STJ_SAVELOAD_ASM
 /* Distinct from the CONFIG staging name: both live on the one slot. */
 #define SAVELOAD_TEMP_PATH "/CFG/SHATSAVE.TMP"
+#endif
 #else
 #define SAVELOAD_DIR "/SYS/CONFIG/"
 void esx_mkdir(const char *path) __z88dk_fastcall;
+#ifndef SAVELOAD_CLASSIC_JOURNAL
 static const char saveload_config_dir[] = "/SYS/CONFIG";
+#endif
 #endif
 #define SAVELOAD_EXT ".STJ"
 #define SAVELOAD_NAME_MAX 8u
@@ -53,14 +67,35 @@ static char saveload_path[SAVELOAD_PATH_MAX];
 
 #ifdef NETCHESSZX_SPECTRANEXT
 #if !defined(NETCHESSZX_HOST_TEST)
+#ifdef STJ_SAVELOAD_ASM
+#define SAVELOAD_SPECTRANEXT_PATH_SIZE 18u
+#define SAVELOAD_PATH_ARG \
+    ((char *)NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR + 108u)
+#define SAVELOAD_TRASH_PATH_ARG \
+    (SAVELOAD_PATH_ARG + SAVELOAD_SPECTRANEXT_PATH_SIZE)
+typedef char saveload_spectranext_path_capacity_check[
+    (sizeof(SAVELOAD_DIR) - 1u + SAVELOAD_NAME_MAX +
+     sizeof(SAVELOAD_EXT) == SAVELOAD_SPECTRANEXT_PATH_SIZE) ? 1 : -1];
+typedef char saveload_stage_capacity_check[
+    (108u + SAVELOAD_SPECTRANEXT_PATH_SIZE * 2u <=
+     NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_SIZE) ? 1 : -1];
+
+static void saveload_stage_paths(void)
+{
+    spectrum_append_text(SAVELOAD_PATH_ARG, saveload_path);
+}
+#else
 #define SAVELOAD_PATH_ARG \
     ((char *)NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR)
 #define SAVELOAD_TEMP_PATH_ARG (SAVELOAD_PATH_ARG + SAVELOAD_PATH_MAX)
 #define SAVELOAD_CONFIG_DIR_ARG \
     (SAVELOAD_TEMP_PATH_ARG + sizeof(SAVELOAD_TEMP_PATH))
+#define SAVELOAD_TRASH_PATH_ARG \
+    (SAVELOAD_CONFIG_DIR_ARG + sizeof(SAVELOAD_CONFIG_DIR))
 typedef char saveload_stage_capacity_check[
     (SAVELOAD_PATH_MAX + sizeof(SAVELOAD_TEMP_PATH) +
-     sizeof(SAVELOAD_CONFIG_DIR) <= NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_SIZE)
+     sizeof(SAVELOAD_CONFIG_DIR) + SAVELOAD_PATH_MAX <=
+     NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_SIZE)
         ? 1 : -1];
 
 static void saveload_stage_paths(void)
@@ -69,17 +104,40 @@ static void saveload_stage_paths(void)
     spectrum_append_text(SAVELOAD_TEMP_PATH_ARG, SAVELOAD_TEMP_PATH);
     spectrum_append_text(SAVELOAD_CONFIG_DIR_ARG, SAVELOAD_CONFIG_DIR);
 }
+#endif
+
+static void saveload_stage_trash_path(void)
+{
+    char *end = spectrum_append_text(SAVELOAD_TRASH_PATH_ARG, saveload_path);
+
+    end[-3] = 'D';
+    end[-2] = 'E';
+    end[-1] = 'L';
+}
 #else
 #define SAVELOAD_PATH_ARG saveload_path
 #define SAVELOAD_TEMP_PATH_ARG SAVELOAD_TEMP_PATH
 #define SAVELOAD_CONFIG_DIR_ARG SAVELOAD_CONFIG_DIR
+static char saveload_host_trash_path[SAVELOAD_PATH_MAX];
+#define SAVELOAD_TRASH_PATH_ARG saveload_host_trash_path
 #define saveload_stage_paths() ((void)0)
+static void saveload_stage_trash_path(void)
+{
+    uint8_t i = 0u;
+
+    while ((saveload_host_trash_path[i] = saveload_path[i]) != '\0') {
+        ++i;
+    }
+    saveload_host_trash_path[i - 3u] = 'D';
+    saveload_host_trash_path[i - 2u] = 'E';
+    saveload_host_trash_path[i - 1u] = 'L';
+}
 #endif
 #else
 #define SAVELOAD_PATH_ARG saveload_path
 #endif
 
-#ifdef NETCHESSZX_SPECTRANEXT
+#if defined(NETCHESSZX_SPECTRANEXT) && !defined(STJ_SAVELOAD_ASM)
 static uint8_t saveload_ensure_dir(void)
 {
     esx_opendir(SAVELOAD_CONFIG_DIR_ARG);
@@ -118,6 +176,7 @@ static char saveload_upper(char c) __z88dk_fastcall
     return c;
 }
 
+#if !defined(SAVELOAD_CLASSIC_JOURNAL) && !defined(STJ_SAVELOAD_ASM)
 static char saveload_b32_char(uint8_t v) __z88dk_fastcall
 {
     if (v < 10u) {
@@ -150,9 +209,49 @@ static uint8_t saveload_stamp_valid(uint8_t year,
     return 1u;
 }
 
+static uint8_t saveload_month_days(uint8_t year, uint8_t month)
+{
+    if (month == 2u) {
+        return (uint8_t)(28u + ((year & 3u) == 0u));
+    }
+    return (uint8_t)(30u + ((month + (month > 7u)) & 1u));
+}
+
+static uint16_t saveload_adjust_date(uint16_t date, int16_t days)
+{
+    uint8_t year = (uint8_t)(date >> 9);
+    uint8_t month = (uint8_t)((date >> 5) & 15u);
+    uint8_t day = (uint8_t)(date & 31u);
+
+    while (days > 0) {
+        if (++day > saveload_month_days(year, month)) {
+            day = 1u;
+            if (++month > 12u) {
+                month = 1u;
+                ++year;
+            }
+        }
+        --days;
+    }
+    while (days < 0) {
+        if (--day == 0u) {
+            if (--month == 0u) {
+                month = 12u;
+                --year;
+            }
+            day = saveload_month_days(year, month);
+        }
+        ++days;
+    }
+    return (uint16_t)(((uint16_t)year << 9) |
+                      ((uint16_t)month << 5) | day);
+}
+
 static void saveload_write_stamp(char *out) __z88dk_fastcall
 {
-    uint16_t date = spectrum_net_runtime_fat_date();
+    uint16_t date = saveload_adjust_date(
+        spectrum_net_runtime_fat_date(),
+        spectrum_net_runtime_fat_day_delta());
     uint16_t time = spectrum_net_runtime_fat_time();
     uint8_t year = (uint8_t)(date >> 9);
     uint8_t month = (uint8_t)((date >> 5) & 15u);
@@ -178,6 +277,8 @@ static void saveload_write_stamp(char *out) __z88dk_fastcall
     out[5] = (char)('0' + minute);
 }
 
+#endif
+
 static uint8_t saveload_build_path(const char *name, uint8_t stamp_slot)
 {
     uint8_t i;
@@ -189,13 +290,18 @@ static uint8_t saveload_build_path(const char *name, uint8_t stamp_slot)
     for (i = 0u; saveload_dir[i] != '\0'; ++i) {
         saveload_path[out++] = saveload_dir[i];
     }
+#if defined(SAVELOAD_CLASSIC_JOURNAL) || defined(STJ_SAVELOAD_ASM)
+    (void)stamp_slot;
+#else
     if (stamp_slot && name[0] >= '0' && name[0] <= '9' &&
         name[1] >= '0' && name[1] <= '9' && name[2] == '\0') {
         saveload_path[out++] = name[0];
         saveload_path[out++] = name[1];
         saveload_write_stamp(saveload_path + out);
         out = (uint8_t)(out + 6u);
-    } else {
+    } else
+#endif
+    {
         for (i = 0u; name[i] != '\0'; ++i) {
             if (i >= SAVELOAD_NAME_MAX || !saveload_name_char_ok(name[i])) {
                 return 0u;
@@ -215,36 +321,79 @@ static const char *saveload_ctx_name(uint8_t *ctx)
                           ((uint16_t)ctx[SPECTRUM_OVL_CTX_SAVELOAD_NAME_HI] << 8));
 }
 
+static uint8_t saveload_erase_file(const char *name, uint8_t *result)
+{
+    *result = SPECTRUM_OVL_SAVELOAD_ERR_NAME;
+    if (!saveload_build_path(name, 0u)) {
+        return 0u;
+    }
+#ifdef NETCHESSZX_SPECTRANEXT
+    saveload_stage_paths();
+    saveload_stage_trash_path();
+#endif
+    *result = SPECTRUM_OVL_SAVELOAD_ERR_OPEN;
+#ifdef NETCHESSZX_SPECTRANEXT
+    /* Flash-backed XFS files reject UNLINK with EIO. Rename each save to its
+       matching filtered .DEL path so the firmware does not have to replace a
+       shared flash-backed tombstone. */
+    esx_buf = (uint16_t)SAVELOAD_TRASH_PATH_ARG;
+    esx_frename(SAVELOAD_PATH_ARG);
+#else
+    esx_funlink(SAVELOAD_PATH_ARG);
+#endif
+    if (!esx_result) {
+        return 0u;
+    }
+    *result = SPECTRUM_OVL_SAVELOAD_OK;
+    return 1u;
+}
+
+#ifdef NETCHESSZX_HOST_TEST
+uint8_t netchesszx_saveload_test_erase(const char *name, uint8_t *result)
+{
+    return saveload_erase_file(name, result);
+}
+#endif
+
+uint8_t saveload_erase_nczs_ovl(uint8_t *ctx) __z88dk_fastcall
+{
+    return saveload_erase_file(
+        saveload_ctx_name(ctx),
+        &ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT]);
+}
+
+#ifdef SAVELOAD_CLASSIC_JOURNAL
+/* Entries 0/1 are unreachable on Classic; keep the entry table shape. */
+uint8_t saveload_load_nczs_ovl(uint8_t *ctx) __z88dk_fastcall
+{
+    ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT] = SPECTRUM_OVL_SAVELOAD_ERR_OPEN;
+    return 0u;
+}
+
+uint8_t saveload_save_nczs_ovl(uint8_t *ctx) __z88dk_fastcall
+{
+    ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT] = SPECTRUM_OVL_SAVELOAD_ERR_OPEN;
+    return 0u;
+}
+#else
+#ifdef STJ_SAVELOAD_ASM
+/* Entries 0/1 are the shared STJ1 codec (asm/overlay/journal/stj_codec.asm);
+   no C bodies and no wire-snapshot files. */
+#else
 static char *saveload_ctx_buf(uint8_t *ctx)
 {
     return (char *)((uint16_t)ctx[SPECTRUM_OVL_CTX_SAVELOAD_BUF_LO] |
                     ((uint16_t)ctx[SPECTRUM_OVL_CTX_SAVELOAD_BUF_HI] << 8));
 }
 
-uint8_t saveload_erase_nczs_ovl(uint8_t *ctx) __z88dk_fastcall
+static uint8_t saveload_load_file(const char *name,
+                                  char *buf,
+                                  uint8_t *result)
 {
-    ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT] = SPECTRUM_OVL_SAVELOAD_ERR_NAME;
-    if (!saveload_build_path(saveload_ctx_name(ctx), 0u)) {
-        return 0u;
-    }
-#ifdef NETCHESSZX_SPECTRANEXT
-    saveload_stage_paths();
-#endif
-    ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT] = SPECTRUM_OVL_SAVELOAD_ERR_OPEN;
-    esx_funlink(SAVELOAD_PATH_ARG);
-    if (!esx_result) {
-        return 0u;
-    }
-    ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT] = SPECTRUM_OVL_SAVELOAD_OK;
-    return 1u;
-}
+    char extra;
 
-uint8_t saveload_load_nczs_ovl(uint8_t *ctx) __z88dk_fastcall
-{
-    char *buf = saveload_ctx_buf(ctx);
-
-    ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT] = SPECTRUM_OVL_SAVELOAD_ERR_NAME;
-    if (buf == 0 || !saveload_build_path(saveload_ctx_name(ctx), 0u)) {
+    *result = SPECTRUM_OVL_SAVELOAD_ERR_NAME;
+    if (buf == 0 || !saveload_build_path(name, 0u)) {
         return 0u;
     }
 #ifdef NETCHESSZX_SPECTRANEXT
@@ -252,7 +401,7 @@ uint8_t saveload_load_nczs_ovl(uint8_t *ctx) __z88dk_fastcall
 #endif
     esx_fopen(SAVELOAD_PATH_ARG);
     if (esx_handle == 0u) {
-        ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT] = SPECTRUM_OVL_SAVELOAD_ERR_OPEN;
+        *result = SPECTRUM_OVL_SAVELOAD_ERR_OPEN;
         return 0u;
     }
 #ifndef NETCHESSZX_SPECTRANEXT
@@ -261,12 +410,36 @@ uint8_t saveload_load_nczs_ovl(uint8_t *ctx) __z88dk_fastcall
     esx_buf = (uint16_t)buf;
     esx_count = NETCHESSZX_SAVE_WIRE_B64_SIZE;
     esx_fread();
-    if (esx_fclose() || esx_result != NETCHESSZX_SAVE_WIRE_B64_SIZE) {
-        ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT] = SPECTRUM_OVL_SAVELOAD_ERR_DATA;
+    if (esx_result == NETCHESSZX_SAVE_WIRE_B64_SIZE) {
+        esx_buf = (uint16_t)&extra;
+        esx_count = 1u;
+        esx_fread();
+    } else {
+        esx_result = 1u;
+    }
+    if (esx_fclose() || esx_result != 0u) {
+        *result = SPECTRUM_OVL_SAVELOAD_ERR_DATA;
         return 0u;
     }
-    ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT] = SPECTRUM_OVL_SAVELOAD_OK;
+    *result = SPECTRUM_OVL_SAVELOAD_OK;
     return 1u;
+}
+
+#ifdef NETCHESSZX_HOST_TEST
+uint8_t netchesszx_saveload_test_load(const char *name,
+                                      char *buf,
+                                      uint8_t *result)
+{
+    return saveload_load_file(name, buf, result);
+}
+#endif
+
+uint8_t saveload_load_nczs_ovl(uint8_t *ctx) __z88dk_fastcall
+{
+    return saveload_load_file(
+        saveload_ctx_name(ctx),
+        saveload_ctx_buf(ctx),
+        &ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT]);
 }
 
 static uint8_t saveload_save_file(const char *name,
@@ -330,3 +503,15 @@ uint8_t saveload_save_nczs_ovl(uint8_t *ctx) __z88dk_fastcall
         saveload_ctx_buf(ctx),
         &ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT]);
 }
+#endif
+
+#ifndef SAVELOAD_APPEND_ASM
+/* Keep the entry table shape when no ASM append is linked. */
+uint8_t saveload_journal_append_ovl(uint8_t *ctx) __z88dk_fastcall
+{
+    ctx[SPECTRUM_OVL_CTX_SAVELOAD_RESULT] = SPECTRUM_OVL_SAVELOAD_ERR_OPEN;
+    return 0u;
+}
+#endif
+#endif
+#endif /* SAVELOAD_NATIVE_ASM */

@@ -1,0 +1,16 @@
+{
+  "schema": 2,
+  "owner": "netchess-classic",
+  "version": "1.2.1-dev.chat.1+g1c91f41",
+  "launchers": [
+    {
+      "name": "NetChessZX Classic",
+      "bundle_id": "com.ignaciomongegarcia.netchesszx.classic",
+      "arguments": [
+        "--program", "netchess", "--target", "classic",
+        "--netchess", "../.."
+      ],
+      "icon": "../../client/shatranj.icns"
+    }
+  ]
+}

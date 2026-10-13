@@ -7,7 +7,7 @@ PUBLIC _line_buf
 PUBLIC _NETCHESS_PROTO_ACK_PREFIX
 PUBLIC _NETCHESS_PROTO_NACK_PREFIX
 PUBLIC _spectrum_net_payload_scratch
-PUBLIC _spectrum_net_send_text
+PUBLIC _netchesszx_session_send_ack_text
 
 EXTERN _netchesszx_asm_proto_copy_token
 
@@ -92,6 +92,6 @@ _spectrum_net_payload_scratch:
     ld hl, dummy_payload
     ret
 
-_spectrum_net_send_text:
+_netchesszx_session_send_ack_text:
     ld l, 1
     ret

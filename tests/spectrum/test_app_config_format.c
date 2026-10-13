@@ -122,6 +122,14 @@ int main(void)
     refresh_crc(record);
     assert(netchesszx_app_config_validate(record));
 
+    /* The player-name tail follows the CRC-protected record. */
+    assert(NETCHESSZX_APP_CONFIG_NAME_OFF == NETCHESSZX_APP_CONFIG_SIZE);
+    assert(NETCHESSZX_APP_CONFIG_FILE_SIZE ==
+           NETCHESSZX_APP_CONFIG_SIZE + NETCHESS_PLAYER_NAME_SIZE);
+    make_valid(record);
+    memcpy(record + NETCHESSZX_APP_CONFIG_NAME_OFF, "ZX-81_2026", 11u);
+    assert(netchesszx_app_config_validate(record));
+
     puts("app connection config format tests ok");
     return 0;
 }

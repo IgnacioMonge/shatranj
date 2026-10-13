@@ -1,0 +1,2 @@
+# Preserve the upstream Roller source byte-for-byte on every host.
+asm/vendor/roller/roller.inc -text

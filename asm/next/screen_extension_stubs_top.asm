@@ -19,10 +19,6 @@ _spectrum_render_clock:              call next_extension_restore
                                      jp next_ext_render_clock
 _spectrum_render_game_timer_clear:   call next_extension_restore
                                      jp next_ext_render_game_timer_clear
-_spectrum_render_game_timer_char:    call next_extension_restore
-                                     jp next_ext_render_game_timer_char
-_spectrum_render_menu_timer_char:    call next_extension_restore
-                                     jp next_ext_render_menu_timer_char
 _spectrum_render_turn_label:         call next_extension_restore
                                      jp next_ext_render_turn_label
 _spectrum_render_notice:             call next_extension_restore

@@ -1,5 +1,11 @@
 SECTION code_user
 
+INCLUDE "ui_layout.inc"
+
+IFDEF NETCHESSZX_NEXT
+INCLUDE "assets/next/theme_constants.asm"
+ENDIF
+
 PUBLIC _menu_config_run_ovl_entry
 PUBLIC _menu_config_paint_attrs_ovl_entry
 PUBLIC _menu_config_validate_ip_ovl_entry
@@ -36,12 +42,15 @@ ROW_BOARD       EQU 7
 ROW_SET         EQU 8
 ROW_HINTS       EQU 9
 ROW_ACTION      EQU 10
+ROW_NAME        EQU 11
 SETUP_CLEAR_ENDPOINT EQU 0xfe
 CTX_KEY         EQU 0x5fe0
 CTX_FORCE_LO    EQU 0x5fe1
 CTX_CLEAR_FROM  EQU 0x5fe3
 CTX_FLAGS       EQU 0x5fe6
-PAINT_MASK_ALL EQU 0x03ef
+PAINT_MASK_ALL EQU 0x0bef
+
+INCLUDE "asm/app/player_name_layout.inc"
 KEY_UP          EQU 0x81
 KEY_DOWN        EQU 0x82
 FLAG_PAINT      EQU 0x02
@@ -71,9 +80,16 @@ menu_config_run_dirty:
     bit 1, c
     ld hl, menu_config_line_link
     call nz, menu_config_info_line
-    ld a, c
-    and 0x60
-    call nz, menu_config_show_game_setup
+    bit 5, c
+    jr nz, menu_config_run_game_header
+    bit 6, c
+    jr z, menu_config_run_game_header_done
+    ld a, (_setup_visible_mask)
+    bit 5, a
+    jr nz, menu_config_run_game_header_done
+menu_config_run_game_header:
+    call menu_config_show_game_setup
+menu_config_run_game_header_done:
     bit 5, c
     ld hl, menu_config_line_color
     call nz, menu_config_info_line
@@ -137,52 +153,48 @@ menu_config_render_incremental:
     ; recreate COLOR only when its info-panel pixels are blank.
     ld hl, (_setup_visible_mask)
     ld a, l
-    and 0x0f
+    and 0x0c
     ld l, a
     ld h, 0
     ld (menu_config_render_dirty), hl
     ld a, (_setup_visible_mask)
     bit 5, a
     jr nz, menu_config_endpoint_color
-    ld a, 14
+    ld a, NETCHESSZX_SETUP_SCREEN_ROW_COLOR
     call menu_config_clear_row
     jr menu_config_endpoint_action
 menu_config_endpoint_color:
-    ld hl, 0x48d2
-    ld a, (hl)
-    inc hl
-    or (hl)
-    inc hl
-    or (hl)
-    jr nz, menu_config_endpoint_action
+    ld a, (_spectrum_overlay_context)
+    bit 5, a
+    jr z, menu_config_endpoint_action
     ld hl, menu_config_line_color
     call menu_config_info_line
 menu_config_endpoint_action:
     ld a, (_setup_visible_mask + 1)
     bit 2, a
     jr nz, menu_config_endpoint_apply
-    ld a, 20
+    ld a, NETCHESSZX_SETUP_SCREEN_ROW_ACTION
     call menu_config_clear_row
 menu_config_endpoint_apply:
     ld hl, (menu_config_render_dirty)
     jr menu_config_render_apply
 menu_config_render_incremental_normal:
-    ld hl, (_setup_visible_mask)
+    ld hl, 0
     ld (menu_config_render_dirty), hl
     cp 0xff
     jr z, menu_config_render_force
     cp ROW_ACTION
     jr nz, menu_config_render_clear_normal
-    ld a, 13
+    ld a, NETCHESSZX_SETUP_CLEAR_ACTION_FROM
     jr menu_config_render_clear
 menu_config_render_clear_normal:
     cp ROW_TIME
     jr c, menu_config_render_clear
     jr nz, menu_config_render_clear_game
-    ld a, 3
+    ld a, NETCHESSZX_SETUP_CLEAR_TIME_FROM
     jr menu_config_render_clear
 menu_config_render_clear_game:
-    add a, 2
+    add a, NETCHESSZX_SETUP_GAME_ROW_OFFSET
 menu_config_render_clear:
     ld l, a
     call menu_config_clear_tail
@@ -216,26 +228,24 @@ menu_config_render_apply:
     ld c, l
     call menu_config_run_dirty
 menu_config_render_overlay_done:
+    ld a, (_spectrum_overlay_context + 3)
+    cp SETUP_CLEAR_ENDPOINT
+    jr nz, menu_config_paint_attrs_all
     ld hl, (menu_config_render_dirty)
-    ld a, h
-    or a
-    jr nz, menu_config_paint_attrs_all
-    ld a, l
-    and 0xc0
-    jr nz, menu_config_paint_attrs_all
     ; CONNECTION-only dirty (ENDPOINT): keep GAME SETUP attrs, including
     ; BOARD swatches, on screen. COLOR attrs follow visibility.
     ld a, (_setup_visible_mask)
     and 0x20
     or l
+    or 3
     ld l, a
     jp menu_config_paint_attrs_masked
 
 menu_config_clear_tail:
     ld a, l
-    add a, 7
+    add a, NETCHESSZX_SETUP_CLEAR_TAIL_ROW_OFFSET
 menu_config_clear_tail_loop:
-    cp 21
+    cp NETCHESSZX_SETUP_CLEAR_LIMIT_ROW
     ret nc
     push af
     call menu_config_clear_row
@@ -249,13 +259,13 @@ menu_config_clear_row:
     rrca
     rrca
     rrca
-    add a, 18
+    add a, NETCHESSZX_INFO_PANEL_COL
     ld e, a
     ld a, c
     and 0x18
     add a, 0x40
     ld d, a
-    ld b, 8
+    ld b, NETCHESSZX_CHAR_SCANLINES
 menu_config_clear_pixels:
     push bc
     push de
@@ -263,7 +273,7 @@ menu_config_clear_pixels:
     ld l, e
     ld (hl), 0
     inc de
-    ld bc, 13
+    ld bc, NETCHESSZX_INFO_PANEL_WIDTH_BYTES - 1
     ldir
     pop de
     pop bc
@@ -276,11 +286,11 @@ menu_config_clear_pixels:
     srl a
     add a, 0x58
     ld h, a
-    ld (hl), 0x07
+    ld (hl), NETCHESSZX_ATTR_TEXT
     ld d, h
     ld e, l
     inc de
-    ld bc, 13
+    ld bc, NETCHESSZX_INFO_PANEL_WIDTH_BYTES - 1
     ldir
     ret
 
@@ -342,6 +352,9 @@ menu_config_paint_attrs_masked:
     ld a, (menu_config_paint_mask + 1)
     bit 0, a
     call nz, menu_config_paint_set_attrs
+    ld a, (menu_config_paint_mask + 1)
+    bit 3, a
+    call nz, menu_config_paint_name_attrs
     ld l, 1
     ret
 
@@ -433,34 +446,50 @@ menu_config_nav_mark_flag:
     ld (CTX_FLAGS), a
     ret
 
+; A = 0 previous / 1 next. Same screen order as SETUP's su_order_step.
 menu_config_nav_step_row:
-    or a
-    jr z, menu_config_nav_step_prev
+    ld d, a
     ld a, (_setup_cursor)
-    inc a
-menu_config_nav_step_next_loop:
-    cp 11
-    jr nc, menu_config_nav_step_restore
+menu_config_nav_step_loop:
+    call menu_config_nav_order_step
+    jr c, menu_config_nav_step_restore
     call menu_config_nav_visible
     ld a, e
     ret nz
-    inc a
-    jr menu_config_nav_step_next_loop
-menu_config_nav_step_prev:
-    ld a, (_setup_cursor)
-    or a
-    jr z, menu_config_nav_step_restore
-    dec a
-menu_config_nav_step_prev_loop:
-    call menu_config_nav_visible
-    ld a, e
-    ret nz
-    or a
-    jr z, menu_config_nav_step_restore
-    dec a
-    jr menu_config_nav_step_prev_loop
+    jr menu_config_nav_step_loop
 menu_config_nav_step_restore:
     ld a, (_setup_cursor)
+    ret
+
+; A = row, D = 0 previous / 1 next. NAME sits between TIME and COLOR.
+menu_config_nav_order_step:
+    dec d
+    inc d
+    jr z, menu_config_nav_order_prev
+    cp ROW_TIME
+    jr z, menu_config_nav_order_name
+    cp ROW_NAME
+    jr z, menu_config_nav_order_color
+    inc a
+    cp ROW_ACTION + 1
+    ccf
+    ret
+menu_config_nav_order_prev:
+    cp ROW_COLOR
+    jr z, menu_config_nav_order_name
+    cp ROW_NAME
+    jr z, menu_config_nav_order_time
+    sub 1
+    ret
+; Reached only through an equal CP, so CF is already clear.
+menu_config_nav_order_name:
+    ld a, ROW_NAME
+    ret
+menu_config_nav_order_color:
+    ld a, ROW_COLOR
+    ret
+menu_config_nav_order_time:
+    ld a, ROW_TIME
     ret
 
 menu_config_nav_visible:
@@ -519,21 +548,17 @@ menu_config_setup_screen_row:
     jr nz, menu_config_setup_screen_row_normal
     dec a
 menu_config_setup_screen_row_normal:
-    ld e, a
-menu_config_setup_screen_row_norm:
-    ld a, e
     cp ROW_COLOR
-    ld a, e
     jr c, menu_config_setup_screen_row_base
-    add a, 2
+    add a, NETCHESSZX_SETUP_GAME_ROW_OFFSET
 menu_config_setup_screen_row_base:
-    add a, 7
+    add a, NETCHESSZX_SETUP_SCREEN_ROW_BASE
     ret
 menu_config_setup_screen_row_time:
-    ld a, 10
+    ld a, NETCHESSZX_SETUP_SCREEN_ROW_TIME
     ret
 menu_config_setup_screen_row_action:
-    ld a, 20
+    ld a, NETCHESSZX_SETUP_SCREEN_ROW_ACTION
     ret
 
 menu_config_paint_binary_attrs:
@@ -580,7 +605,7 @@ menu_config_paint_binary_active:
     add hl, hl
     add hl, hl
     add hl, hl
-    ld de, 0x5812
+    ld de, NETCHESSZX_SETUP_ATTR_BASE
     add hl, de
     ex (sp), hl
     ld b, (hl)
@@ -598,7 +623,7 @@ menu_config_paint_binary_left:
     ld c, b
     ex (sp), hl
     call menu_config_paint_left_binary
-    ld a, 5
+    ld a, NETCHESSZX_SETUP_BINARY_GAP_CELLS
     sub c
 menu_config_paint_binary_gap:
     inc hl
@@ -666,7 +691,7 @@ menu_config_prepare_binary_row_done:
     ret
 
 menu_config_header_span:
-    ld a, 0x03
+    ld a, NETCHESSZX_ATTR_SETUP_HEADER
     jp menu_config_attr_span
 
 menu_config_paint_left_binary:
@@ -741,10 +766,10 @@ menu_config_paint_room_attrs:
     ld a, (menu_config_visible_l)
     bit 2, a
     ret z
-    ld hl, 0x5932
-    ld de, 0x5935
+    ld hl, NETCHESSZX_SETUP_ROOM_LABEL_ATTR
+    ld de, NETCHESSZX_SETUP_ROOM_VALUE_ATTR
     push de
-    ld b, 3
+    ld b, NETCHESSZX_SETUP_ROOM_HEADER_WIDTH
     call menu_config_header_span
     pop hl
     ld a, (menu_config_values)
@@ -761,14 +786,14 @@ menu_config_paint_room_attrs:
     call menu_config_text_selected
     push hl
     ld e, 0
-    ld b, 8
+    ld b, NETCHESSZX_SETUP_DIRECT_IP_MAX_ATTRS
     call menu_config_option_span
     pop hl
     call menu_config_direct_ip_width
     ld b, a
     jr menu_config_room_width_done
 menu_config_room_mqtt:
-    ld b, 4
+    ld b, NETCHESSZX_SETUP_MQTT_ROOM_ATTRS
 menu_config_room_width_done:
     ld a, 4
     ld c, 2
@@ -799,10 +824,50 @@ menu_config_direct_ip_width_ready:
 menu_config_direct_ip_nonempty:
     add a, 2
     srl a
-    cp 9
+    cp NETCHESSZX_SETUP_DIRECT_IP_MAX_ATTRS + 1
     ret c
-    ld a, 8
+    ld a, NETCHESSZX_SETUP_DIRECT_IP_MAX_ATTRS
     ret
+
+; NAME label, then its value span sized to the name like the DIRECT IP.
+menu_config_paint_name_attrs:
+    ld a, (menu_config_visible_h)
+    bit 3, a
+    ret z
+    ld hl, NETCHESSZX_SETUP_NAME_LABEL_ATTR
+    ld b, NETCHESSZX_SETUP_NAME_HEADER_WIDTH
+    call menu_config_header_span
+    ld c, ROW_NAME
+    ld d, 0
+    ld a, (menu_config_defined_h)
+    bit 3, a
+    jr z, menu_config_name_selected_done
+    ld a, (_setup_room_editing)
+    or a
+    jr z, menu_config_name_selected
+    ld a, (_setup_edit_row)
+    cp c
+    jr z, menu_config_name_selected_done
+menu_config_name_selected:
+    inc d
+menu_config_name_selected_done:
+    call menu_config_focus_box
+    ; Cells = (length + 2) / 2: the name starts on a cell's right nibble,
+    ; and an empty name still owns the one cell of its cursor.
+    push hl
+    ld hl, PLAYER_NAME
+    ld b, 2
+    xor a
+menu_config_name_length:
+    cp (hl)
+    jr z, menu_config_name_length_done
+    inc hl
+    inc b
+    jr menu_config_name_length
+menu_config_name_length_done:
+    pop hl
+    srl b
+    jp menu_config_option_span
 
 menu_config_paint_mqtt_attrs:
     ld a, (menu_config_visible_l)
@@ -812,9 +877,9 @@ menu_config_paint_mqtt_attrs:
     or a
     jr z, menu_config_port_attrs
     ; HIVEMQ starts with JOIN at attr 26 after the 4-pixel value shift.
-    ld hl, 0x593a
-    ld b, 4
-    ld a, 0x05
+    ld hl, NETCHESSZX_SETUP_MQTT_JOIN_ATTR
+    ld b, NETCHESSZX_SETUP_MQTT_JOIN_ATTRS
+    ld a, NETCHESSZX_ATTR_SETUP_SELECTED
     jp menu_config_attr_span
 menu_config_port_attrs:
     ld a, (menu_config_visible_l)
@@ -822,8 +887,8 @@ menu_config_port_attrs:
     ret z
     ; Colon plus five port digits occupy attrs 29-31 (':' shares PORT[0]'s
     ; cell and therefore PORT's colour). All five digits stay on-screen.
-    ld hl, 0x593d
-    ld b, 3
+    ld hl, NETCHESSZX_SETUP_PORT_ATTR
+    ld b, NETCHESSZX_SETUP_PORT_ATTRS
     ld a, 8
     ld c, 3
     call menu_config_text_selected
@@ -833,18 +898,18 @@ menu_config_port_attrs:
     jr z, menu_config_port_unfocused
     ; PORT's marker replaces ':' while focused.
     push hl
-    ld hl, 0x4b3d
+    ld hl, NETCHESSZX_SETUP_PORT_MARKER_TOP
     res 7, (hl)
-    ld h, 0x4e
+    ld h, NETCHESSZX_SETUP_PORT_MARKER_BOTTOM_PAGE
     res 7, (hl)
     pop hl
     jp menu_config_option_span
 menu_config_port_unfocused:
     call menu_config_option_span
     ; Restore ':' after removing the PORT marker.
-    ld hl, 0x4b3d
+    ld hl, NETCHESSZX_SETUP_PORT_MARKER_TOP
     set 7, (hl)
-    ld h, 0x4e
+    ld h, NETCHESSZX_SETUP_PORT_MARKER_BOTTOM_PAGE
     set 7, (hl)
     ret
 
@@ -868,15 +933,15 @@ menu_config_paint_board_attrs:
     ld a, (menu_config_visible_l)
     bit 7, a
     ret z
-    ld hl, 0x5a12
-    ld b, 4
+    ld hl, NETCHESSZX_SETUP_BOARD_ATTR
+    ld b, NETCHESSZX_SETUP_BOARD_HEADER_WIDTH
     call menu_config_header_span
     ld a, (menu_config_cursor)
     cp ROW_BOARD
     jr nz, menu_config_board_not_cursor
     ld a, (menu_config_board_theme)
     ld l, a
-    jp menu_config_board_swatches
+    jr menu_config_board_swatches_go
 menu_config_board_not_cursor:
     ld a, (menu_config_defined_l)
     bit 7, a
@@ -884,17 +949,18 @@ menu_config_board_not_cursor:
     ld a, (menu_config_board_theme)
     add a, 5
     ld l, a
-    jp menu_config_board_swatches
+    jr menu_config_board_swatches_go
 menu_config_board_not_defined:
     ld l, 0xff
+menu_config_board_swatches_go:
     jp menu_config_board_swatches
 
 menu_config_paint_set_attrs:
     ld a, (menu_config_visible_h)
     bit 0, a
     ret z
-    ld hl, 0x5a32
-    ld b, 3
+    ld hl, NETCHESSZX_SETUP_SET_ATTR
+    ld b, NETCHESSZX_SETUP_SET_HEADER_WIDTH
     call menu_config_header_span
     ld a, (menu_config_defined_h)
     bit 0, a
@@ -910,9 +976,10 @@ menu_config_set_selected_store:
     jr nz, menu_config_set_not_cursor
     ld a, (menu_config_piece_set)
     ld l, a
-    jp _menu_config_piece_set_options_asm
+    jr menu_config_set_options
 menu_config_set_not_cursor:
     ld l, 0xff
+menu_config_set_options:
     jp _menu_config_piece_set_options_asm
 
 menu_config_option_span:
@@ -925,16 +992,16 @@ menu_config_option_span:
     ; paper leaves padding spaces invisible.
     ld a, d
     or a
-    ld a, 0x47
+    ld a, NETCHESSZX_ATTR_SETUP_FOCUS
     jr z, menu_config_attr_span
     dec a
     jr menu_config_attr_span
 menu_config_option_not_focused:
     ld a, d
     or a
-    ld a, 0x05
+    ld a, NETCHESSZX_ATTR_SETUP_SELECTED
     jr nz, menu_config_attr_span
-    ld a, 0x07
+    ld a, NETCHESSZX_ATTR_TEXT
 menu_config_attr_span:
     ld (hl), a
     inc hl
@@ -970,22 +1037,22 @@ menu_config_marker_focus_ready:
     add a, a
     ld e, a
     ld a, d
-    cp 14
+    cp NETCHESSZX_SETUP_SHIFT_FIRST_ROW
     jr c, menu_config_marker_col
-    cp 19
+    cp NETCHESSZX_SETUP_SHIFT_LIMIT_ROW
     jr nc, menu_config_marker_col
     dec e
 menu_config_marker_col:
     ld a, b
     or a
-    ld c, 0x03
+    ld c, NETCHESSZX_ATTR_SETUP_HEADER
     jr z, menu_config_marker_attr_ready
-    ld c, 0x47
+    ld c, NETCHESSZX_ATTR_SETUP_FOCUS
 menu_config_marker_attr_ready:
     ld a, d
-    cp 14
+    cp NETCHESSZX_SETUP_SHIFT_FIRST_ROW
     jr c, menu_config_marker_attr_store
-    cp 19
+    cp NETCHESSZX_SETUP_SHIFT_LIMIT_ROW
     jr nc, menu_config_marker_attr_store
     dec hl
 menu_config_marker_attr_store:
@@ -1011,7 +1078,7 @@ menu_config_marker_attr_store:
     ld de, menu_config_marker_right
 menu_config_marker_pixels:
     inc h
-    ld c, 6
+    ld c, NETCHESSZX_SETUP_MARKER_SCANLINES
 menu_config_marker_scan:
     ld a, (de)
     cpl
@@ -1046,16 +1113,16 @@ _menu_config_validate_ip_ovl_entry:
 _menu_config_piece_set_options_asm:
     ld c, l
     ld b, 0
-    ld hl, 0x5a36
-    ld d, 2
+    ld hl, NETCHESSZX_SETUP_SET_OPTION0_ATTR
+    ld d, NETCHESSZX_SETUP_SET_OPTION_WIDTH
     call menu_config_piece_set_option_span
     ld b, 1
-    ld hl, 0x5a39
-    ld d, 2
+    ld hl, NETCHESSZX_SETUP_SET_OPTION1_ATTR
+    ld d, NETCHESSZX_SETUP_SET_OPTION_WIDTH
     call menu_config_piece_set_option_span
     ld b, 2
-    ld hl, 0x5a3c
-    ld d, 2
+    ld hl, NETCHESSZX_SETUP_SET_OPTION2_ATTR
+    ld d, NETCHESSZX_SETUP_SET_OPTION_WIDTH
 menu_config_piece_set_option_span:
     ld e, 0
     ld a, c
@@ -1075,21 +1142,20 @@ menu_config_piece_set_option_store:
 menu_config_piece_set_option_attr:
     ld a, c
     cp b
-    jr z, menu_config_piece_set_option_focus
     ld a, (menu_config_piece_selected)
+    jr z, menu_config_piece_set_option_focus
     cp b
     jr z, menu_config_piece_set_option_selected
-    ld a, 0x07
+    ld a, NETCHESSZX_ATTR_TEXT
     ret
 menu_config_piece_set_option_focus:
-    ld a, (menu_config_piece_selected)
     cp b
-    ld a, 0x47
+    ld a, NETCHESSZX_ATTR_SETUP_FOCUS
     ret nz
     dec a
     ret
 menu_config_piece_set_option_selected:
-    ld a, 0x06
+    ld a, NETCHESSZX_ATTR_SETUP_SELECTED
     ret
 
 ; Swatches read the per-platform theme attrs straight from the resident DAT.
@@ -1097,12 +1163,12 @@ menu_config_piece_set_option_selected:
 IFDEF NETCHESSZX_NEXT_BANKING
 menu_config_dat_light_attrs EQU 0x3500 + 786
 ELSE
-menu_config_dat_light_attrs EQU 0x6000 + 786
+menu_config_dat_light_attrs EQU 0x6001 + 786
 ENDIF
 
 menu_config_board_swatches:
     ld c, l
-    ld hl, 0x5a16
+    ld hl, NETCHESSZX_SETUP_BOARD_SWATCH_ATTR
     ld b, 0
     ld de, menu_config_dat_light_attrs
 menu_config_board_swatch_loop:
@@ -1113,14 +1179,14 @@ menu_config_board_swatch_loop:
     inc de
     inc b
     ld a, b
-    cp 5
+    cp NETCHESSZX_SETUP_BOARD_SWATCH_COUNT
     jr nz, menu_config_board_swatch_loop
     ret
 menu_config_board_swatch:
 IFDEF NETCHESSZX_NEXT
-    cp 0x37
+    cp NEXT_BOARD_WOOD_ATTR
     jr nz, menu_config_board_swatch_attr_ready
-    ld a, 0xc1
+    ld a, NEXT_BOARD_WOOD_SWATCH_ATTR
 menu_config_board_swatch_attr_ready:
 ENDIF
     push af
@@ -1146,22 +1212,22 @@ menu_config_board_swatch_focus:
 IFDEF NETCHESSZX_NEXT
     ; Keep the ULA+ palette group selected by the theme attribute.
 ELSE
-    or 0x40
+    or NETCHESSZX_SETUP_BOARD_SWATCH_FOCUS_BIT
 ENDIF
 menu_config_board_swatch_store:
     ld (hl), a
     inc hl
-    ld (hl), 0x07
+    ld (hl), NETCHESSZX_ATTR_TEXT
     inc hl
     ; Keep the original 4-pixel bar under the chip as a second focus cue.
     ld a, b
     add a, a
-    add a, 0x16
+    add a, NETCHESSZX_SETUP_BOARD_SWATCH_BAR_COL
     ld e, a
-    ld d, 0x57
+    ld d, NETCHESSZX_SETUP_BOARD_SWATCH_BAR_PAGE
     ld a, c
     cp b
-    ld a, 0xf0
+    ld a, NETCHESSZX_SETUP_BOARD_SWATCH_BAR_ON
     jr z, menu_config_board_swatch_bar
     xor a
 menu_config_board_swatch_bar:
@@ -1169,29 +1235,29 @@ menu_config_board_swatch_bar:
     ret
 
 menu_config_line_game:
-    DEFB 7, "GAME  CREATE    JOIN", 0
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_GAME, "GAME  CREATE    JOIN", 0
 menu_config_line_link:
-    DEFB 8, "LINK  MQTT      DIRECT", 0
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_LINK, "LINK  MQTT      DIRECT", 0
 menu_config_line_color:
-    DEFB 14, "COLOR  WHITE     BLACK", 0
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_COLOR, "COLOR  WHITE     BLACK", 0
 menu_config_line_notation:
-    DEFB 15, "NOTAT  COORD     SAN", 0
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_NOTATION, "NOTAT  COORD     SAN", 0
 menu_config_line_board:
-    DEFB 16, "BOARD  ", 127, "   ", 127, "   ", 127, "   ", 127, "   ", 127, 0
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_BOARD, "BOARD  ", 127, "   ", 127, "   ", 127, "   ", 127, "   ", 127, 0
 menu_config_line_set:
 IFDEF NETCHESSZX_NEXT
-    DEFB 17, "SET    CALI  MPCH  TOTY", 0
+INCLUDE "assets/next/piece_set_menu.asm"
 ELSE
-    DEFB 17, "SET    BRRY  SPCY  PIXL", 0
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_SET, "SET    BRRY  SPCY  PIXL", 0
 ENDIF
 menu_config_line_hints:
-    DEFB 18, "HINTS  OFF       ON", 0
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_HINTS, "HINTS  OFF       ON", 0
 menu_config_binary_attrs:
-    DEFB 1, 0x00, 3, 4, 3
-    DEFB 2, 0x41, 3, 3, 4
-    DEFB 32, 0x05, 4, 3, 3
-    DEFB 64, 0x06, 4, 3, 2
-    DEFB 2, 0x89, 4, 2, 1
+    DEFB 1, 0x00, NETCHESSZX_SETUP_GAME_LABEL_WIDTH, NETCHESSZX_SETUP_GAME_LEFT_WIDTH, NETCHESSZX_SETUP_GAME_RIGHT_WIDTH
+    DEFB 2, 0x41, NETCHESSZX_SETUP_LINK_LABEL_WIDTH, NETCHESSZX_SETUP_LINK_LEFT_WIDTH, NETCHESSZX_SETUP_LINK_RIGHT_WIDTH
+    DEFB 32, 0x05, NETCHESSZX_SETUP_COLOR_LABEL_WIDTH, NETCHESSZX_SETUP_COLOR_LEFT_WIDTH, NETCHESSZX_SETUP_COLOR_RIGHT_WIDTH
+    DEFB 64, 0x06, NETCHESSZX_SETUP_NOTATION_LABEL_WIDTH, NETCHESSZX_SETUP_NOTATION_LEFT_WIDTH, NETCHESSZX_SETUP_NOTATION_RIGHT_WIDTH
+    DEFB 2, 0x89, NETCHESSZX_SETUP_HINTS_LABEL_WIDTH, NETCHESSZX_SETUP_HINTS_LEFT_WIDTH, NETCHESSZX_SETUP_HINTS_RIGHT_WIDTH
     DEFB 0
 menu_config_values:
     DEFB 0

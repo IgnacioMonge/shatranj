@@ -11,16 +11,20 @@ from pathlib import Path
 SOURCE_DIR = "src/spectrum"
 DIRECT_SOURCE = f"{SOURCE_DIR}/session/direct.c"
 APP_SOURCE = f"{SOURCE_DIR}/app/app.c"
-SOURCE_SUFFIXES = {".c", ".h"}
+TRANSITION_SOURCE = f"{SOURCE_DIR}/session/transitions.inc"
+SOURCE_SUFFIXES = {".c", ".h", ".inc"}
 REQUIRED_DIRECT = (
     "netchesszx_session_direct_send_hello(",
     "netchesszx_session_direct_apply_hello(",
     "netchesszx_session_direct_apply_start_side(",
 )
 REQUIRED_APP = (
+    '"spectrum/session/transitions.inc"',
+    "game_message_loop(",
+)
+REQUIRED_TRANSITIONS = (
     "NETCHESSZX_SESSION_EVENT_DIRECT_HELLO",
     "session_control_handle_event(",
-    "game_message_loop(",
 )
 FORBIDDEN = (
     (re.compile(r"common/session/"), "generic session-core include"),
@@ -52,6 +56,7 @@ def check_sources(sources: dict[str, str], makefile: str) -> list[str]:
     errors: list[str] = []
     direct = sources.get(DIRECT_SOURCE)
     app = sources.get(APP_SOURCE)
+    transitions = sources.get(TRANSITION_SOURCE)
 
     if direct is None:
         errors.append(f"{DIRECT_SOURCE}: missing compact DIRECT implementation")
@@ -66,6 +71,13 @@ def check_sources(sources: dict[str, str], makefile: str) -> list[str]:
         for required in REQUIRED_APP:
             if required not in app:
                 errors.append(f"{APP_SOURCE}: missing compact DIRECT path {required}")
+
+    if transitions is None:
+        errors.append(f"{TRANSITION_SOURCE}: missing compact transition owner")
+    else:
+        for required in REQUIRED_TRANSITIONS:
+            if required not in transitions:
+                errors.append(f"{TRANSITION_SOURCE}: missing compact path {required}")
 
     for path in sorted(sources):
         source = sources[path]
@@ -110,6 +122,7 @@ def self_test() -> None:
     clean = {
         DIRECT_SOURCE: "\n".join(REQUIRED_DIRECT),
         APP_SOURCE: "\n".join(REQUIRED_APP),
+        TRANSITION_SOURCE: "\n".join(REQUIRED_TRANSITIONS),
     }
     makefile = "SPECTRUM_SRC := src/spectrum/app/app.c\nPIECE_ASM := pieces.asm\n"
     if check_sources(clean, makefile):

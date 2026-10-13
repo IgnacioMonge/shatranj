@@ -60,10 +60,7 @@ _spectrum_gui_edit_tick:
 
 edit_put_cell:
     ld e, a
-    ld a, (edit_row)
-    ld b, a
-    ld a, (edit_cell_col)
-    ld c, a
+    ld bc, (edit_cell_col)
     ld a, e
 
 ; A=character, B=screen row, C=4-pixel cell column.
@@ -109,9 +106,9 @@ _edit_buf:     DEFS 2
 _edit_max:     DEFS 1
 _edit_len:     DEFS 1
 _edit_pos:     DEFS 1
+edit_cell_col: DEFS 1
 edit_row:      DEFS 1
 edit_cell_ch:  DEFS 1
-edit_cell_col: DEFS 1
 edit_on:       DEFS 1
 edit_vis:      DEFS 1
 edit_phase:    DEFS 1

@@ -1,6 +1,8 @@
 #ifndef NETCHESSZX_SPECTRUM_BOARD_APPLY_IMPL_H
 #define NETCHESSZX_SPECTRUM_BOARD_APPLY_IMPL_H
 
+#include "common/chess/action.h"
+
 /* Shared source for the production BOARD overlay and host board tests.
    Resident builds of board.c deliberately do not include this file. */
 static void board_apply_set_cell(uint8_t index, char piece)
@@ -47,31 +49,30 @@ static void board_apply_clear_castle_rights(uint8_t from_idx, uint8_t to_idx,
     }
 }
 
-static uint8_t board_apply_parsed_move(const char *move,
-                                       uint8_t from_row, uint8_t from_col,
-                                       uint8_t to_row, uint8_t to_col,
-                                       spectrum_board_undo_t *undo)
+/* Accepted action: caller has checked coordinates and rules for this position.
+   This owner checks promotion/piece consistency before writing board or undo. */
+static uint8_t board_apply_action(const netchesszx_action_t *action,
+                                  spectrum_board_undo_t *undo)
 {
-    uint8_t from_idx = (uint8_t)((from_row << 3) + from_col);
-    uint8_t to_idx = (uint8_t)((to_row << 3) + to_col);
+    uint8_t from_idx = action->from;
+    uint8_t to_idx = action->to;
+    uint8_t from_row = (uint8_t)(from_idx >> 3);
+    uint8_t from_col = (uint8_t)(from_idx & 7u);
+    uint8_t to_row = (uint8_t)(to_idx >> 3);
+    uint8_t to_col = (uint8_t)(to_idx & 7u);
     char piece = chess_board[from_idx];
     char target = chess_board[to_idx];
     uint8_t promotion = (uint8_t)((piece == 'P' && to_row == 0u) ||
                                   (piece == 'p' && to_row == 7u));
-    char promo = move[4];
+    char promo = action->promo;
 
     if (piece == '.' || piece_side(piece) != side_to_move ||
         (target != '.' && piece_side(target) == side_to_move)) {
         return 0u;
     }
-    if (promo >= 'A' && promo <= 'Z') {
-        promo = (char)(promo - ('A' - 'a'));
-    }
     if ((promotion &&
-         (move[4] == '\0' || move[5] != '\0' ||
-          (promo != 'q' && promo != 'r' &&
-           promo != 'b' && promo != 'n'))) ||
-        (!promotion && move[4] != '\0')) {
+         (promo != 'q' && promo != 'r' && promo != 'b' && promo != 'n')) ||
+        (!promotion && promo != '\0')) {
         return 0u;
     }
 
@@ -113,7 +114,7 @@ static uint8_t board_apply_parsed_move(const char *move,
     }
 
     if (promotion) {
-        piece = promotion_piece(piece, move[4]);
+        piece = promotion_piece(piece, promo);
     }
 
     board_apply_set_cell(to_idx, piece);
@@ -121,6 +122,31 @@ static uint8_t board_apply_parsed_move(const char *move,
     side_to_move ^= 1u;
     return 1u;
 }
+
+#ifdef NETCHESSZX_HOST_TEST
+/* Preserve the resident/BOARD context ABI and its borrowed move buffer.
+   Decode immediately; the action lives only during this synchronous call. */
+static uint8_t board_apply_parsed_move(const char *move,
+                                       uint8_t from_row, uint8_t from_col,
+                                       uint8_t to_row, uint8_t to_col,
+                                       spectrum_board_undo_t *undo)
+{
+    netchesszx_action_t action;
+    char promo = move[4];
+
+    if (promo != '\0') {
+        if (move[5] != '\0') {
+            return 0u;
+        }
+        /* Only q/r/b/n survive the action owner's validation below. */
+        promo = (char)(promo | 0x20u);
+    }
+    action.from = (uint8_t)((from_row << 3) + from_col);
+    action.to = (uint8_t)((to_row << 3) + to_col);
+    action.promo = promo;
+    return board_apply_action(&action, undo);
+}
+#endif
 
 static void board_apply_undo_restore(const spectrum_board_undo_t *undo)
 {

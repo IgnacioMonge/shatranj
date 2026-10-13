@@ -3,7 +3,7 @@
 [English](README.md) · [Guía de usuario](../README.es.md) · [Guía del cliente Qt](../client/README.es.md)
 
 Este directorio contiene la documentación de ingeniería mantenida para
-Shatranj 1.2. Los dos contratos normativos son deliberadamente independientes
+Shatranj 1.3. Los dos contratos normativos son deliberadamente independientes
 del transporte y del cliente:
 
 - [`wire-contract.md`](wire-contract.md): payloads, framing TCP Direct por
@@ -18,6 +18,29 @@ del transporte y del cliente:
   transversales aceptadas y su motivo.
 - [`maintenance.md`](maintenance.md): reglas soportadas de build, validación y
   mantenimiento de releases.
+
+## Estado actual y seguimiento
+
+- [`handoff.md`](handoff.md): dónde está el proyecto, qué está validado y
+  dónde, y la lista única de trabajo pendiente. Léelo primero al retomar.
+- [`hardware-validation.md`](hardware-validation.md): resultados en hardware
+  real con builds y hashes de los artefactos.
+- [`post-refactor-backlog.md`](post-refactor-backlog.md): peticiones
+  numeradas, decisiones y experimentos opcionales.
+- [`game-stats.md`](game-stats.md): estadísticas de fin de partida y reinicio
+  solo para el anfitrión, con el registro de verificación.
+- [`game-journal-design.md`](game-journal-design.md): diario de jugadas en
+  disco y saves STJ1.
+- [`game-recovery-experiment.md`](game-recovery-experiment.md) y
+  [`game-recovery-handoff.md`](game-recovery-handoff.md): recuperación de
+  partida interrumpida: diseño, costes, evidencia en hardware y pendientes.
+- [`spectrum-connection-config.md`](spectrum-connection-config.md): pantalla
+  Setup, RTC de respaldo e invariantes del estado SAVE.
+- [`spectranext-direct.md`](spectranext-direct.md): arranque directo de
+  Spectranext por HTTP(S): paquete, vida de los recursos y reglas de
+  publicación.
+- [`zesarux-zxespemu.md`](zesarux-zxespemu.md): harness local ZEsarUX y
+  ESP-UART virtual.
 
 La implementación es común para Qt Windows/macOS/Linux, ZX Spectrum Classic,
 Spectrum Next y SpectraNext. El C común posee las reglas de ajedrez, protocolo, sesión y
@@ -40,7 +63,8 @@ make full-check    # guards cross-target de release
 
 El cliente Linux está soportado y probado; se compila contra el Qt del sistema.
 El workflow **Build Linux AppImage** empaqueta x86_64, conserva los artefactos
-de ejecuciones manuales y adjunta el paquete a una release publicada. Las
+de ejecuciones manuales; adjuntarlos a una release publicada es un paso
+manual aparte. Las
 variables de configuración Spectrum son `PORT`, `MQTT_HOST`, `MQTT_PORT`
 y `MQTT_CODE`; úsalas solo para un build Spectrum configurado. El flujo
 público Qt usa CMake mediante los targets del repositorio; no documentamos

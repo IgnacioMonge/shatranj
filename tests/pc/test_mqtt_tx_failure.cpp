@@ -451,6 +451,14 @@ bool runMqttHostPeerReplacementCase()
         std::fputs("FAIL: MQTT host did not show peer machine\n", stderr);
         return false;
     }
+    if (!window.testStatusBarProjection()) {
+        std::fputs("FAIL: status bar lost the result or the pending answer\n", stderr);
+        return false;
+    }
+    if (!window.testBotIdentity()) {
+        std::fputs("FAIL: Stockfish identity leaked the user name or unlocked input\n", stderr);
+        return false;
+    }
     window.testFeedMqtt("w2b", "MACH NXT", false);
     window.testFeedMqtt("b2w", "MACH ZZ", false);
     window.testFeedMqtt("b2w", "MACH NXT", true);
@@ -805,6 +813,98 @@ bool runDirectRemoteMoveFlashCancellationCase()
     return ok;
 }
 
+bool runDirectPlayerNameCase()
+{
+    QTcpServer server;
+    if (!server.listen(QHostAddress::LocalHost, 0)) {
+        std::fputs("FAIL: listen for player name exchange\n", stderr);
+        return false;
+    }
+
+    MainWindow window;
+    window.testSetPlayerName(QStringLiteral("tester"));
+    window.testStartDirectGuestConnection(QStringLiteral("127.0.0.1"),
+                                          server.serverPort());
+    QElapsedTimer wait;
+    wait.start();
+    while (!server.hasPendingConnections() && wait.elapsed() < 2000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
+    std::unique_ptr<QTcpSocket> peer(
+        server.hasPendingConnections() ? server.nextPendingConnection()
+                                       : nullptr);
+    if (!peer || takeDirectBytes(peer.get()) !=
+                     QByteArrayLiteral("HELLO DIRECT GUEST\n")) {
+        std::fputs("FAIL: player name guest HELLO\n", stderr);
+        return false;
+    }
+    const QStringList idle = window.testMoveHeaderLabels();
+    const QByteArray hostHello =
+        QByteArrayLiteral("HELLO DIRECT HOST WHITE=HOST\n");
+    if (peer->write(hostHello) != hostHello.size() ||
+        !peer->waitForBytesWritten(2000)) {
+        std::fputs("FAIL: send player name host HELLO\n", stderr);
+        return false;
+    }
+    QByteArray announced;
+    wait.restart();
+    while ((!announced.contains("MNAME TESTER\n") ||
+            !announced.contains(expectedLocalMachPayload() + '\n')) &&
+           wait.elapsed() < 2000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        announced.append(peer->readAll());
+    }
+    const int machAt = announced.indexOf(expectedLocalMachPayload() + '\n');
+    const int nameAt = announced.indexOf("MNAME TESTER\n");
+    const bool sent = window.testSessionReady() && machAt >= 0 &&
+                      nameAt >= 0 && machAt > nameAt &&
+                      announced.count("MNAME TESTER\n") == 1;
+    const QStringList ownOnly = window.testMoveHeaderLabels();
+
+    const QByteArray names = QByteArrayLiteral(
+        "MNAME pepe\nMNAME CONSTANTINO\nMNAME PEPE\n");
+    bool received = false;
+    if (sent && peer->write(names) == names.size() &&
+        peer->waitForBytesWritten(2000)) {
+        wait.restart();
+        while (window.testMoveHeaderLabels().first() != QStringLiteral("PEPE") &&
+               wait.elapsed() < 2000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        }
+        received = window.testMoveHeaderLabels() ==
+                   QStringList({QStringLiteral("PEPE"),
+                                QStringLiteral("TESTER")});
+    }
+
+    window.testSocket()->abort();
+    peer->abort();
+    wait.restart();
+    while (window.testSessionReady() && wait.elapsed() < 2000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
+    const QStringList after = window.testMoveHeaderLabels();
+    const QStringList colours = {QStringLiteral("WHITE"),
+                                 QStringLiteral("BLACK")};
+    window.testSetPlayerName(QString());
+    QSettings settings;
+    settings.remove(QStringLiteral("player/name"));
+
+    const bool ok = idle == colours && sent &&
+                    ownOnly == QStringList({QStringLiteral("WHITE"),
+                                            QStringLiteral("TESTER")}) &&
+                    received && after == colours;
+    if (!ok) {
+        std::fprintf(stderr,
+                     "FAIL: player name exchange idle=%s sent=%d own=%s "
+                     "received=%d after=%s bytes=%s\n",
+                     idle.join(',').toUtf8().constData(), sent ? 1 : 0,
+                     ownOnly.join(',').toUtf8().constData(), received ? 1 : 0,
+                     after.join(',').toUtf8().constData(),
+                     announced.constData());
+    }
+    return ok;
+}
+
 bool runDirectHostPreHelloCancelCase()
 {
     QTcpServer portPicker;
@@ -1088,6 +1188,7 @@ int main(int argc, char *argv[])
         return 1;
     }
     if (!window.testResignRestartUiProjection() ||
+        !window.testGameStatsProjection() ||
         !window.testRestoredMoveProjection() ||
         !runMqttClientIdCase(window) ||
         !runMqttPreSubackReplayCase() ||
@@ -1101,7 +1202,8 @@ int main(int argc, char *argv[])
         !runMqttGuestHostReplacementCase() ||
         !runConnectedWindowShutdownCase() ||
         !runSubscriptionWriteFailureCase(window) ||
-        !runTxFailureCase(window)) {
+        !runTxFailureCase(window) ||
+        !runDirectPlayerNameCase()) {
         return 1;
     }
     std::puts("pc mqtt lifecycle, tx failure, and direct retry policy: ok");

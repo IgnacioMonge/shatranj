@@ -89,19 +89,19 @@ static void test_common_protocol_events(void)
                  NETCHESSZX_SESSION_EVENT_ACK_RESIGN,
                  "ack resign");
     expect_event("ACK GAME STARTED", 0u, 0u,
-                 NETCHESSZX_SESSION_EVENT_ACK_MOVE,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN,
                  "ack game start boundary");
     expect_event("ACK RESETX", 0u, 0u,
-                 NETCHESSZX_SESSION_EVENT_ACK_MOVE,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN,
                  "ack reset boundary");
     expect_event("ACK DRAWjunk", 0u, 0u,
-                 NETCHESSZX_SESSION_EVENT_ACK_MOVE,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN,
                  "ack draw boundary");
     expect_event("ACK RESIGNED", 0u, 0u,
-                 NETCHESSZX_SESSION_EVENT_ACK_MOVE,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN,
                  "ack resign boundary");
     expect_event("ACK GAME START BUSY", 0u, 0u,
-                 NETCHESSZX_SESSION_EVENT_ACK_MOVE,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN,
                  "ack game start rejects detail");
     expect_event("NACK 12",
                  0u,
@@ -127,17 +127,27 @@ static void test_common_protocol_events(void)
                  NETCHESSZX_SESSION_EVENT_NACK_RESET,
                  "nack reset reason");
     expect_event("NACK GAME STARTED", 0u, 0u,
-                 NETCHESSZX_SESSION_EVENT_NACK_MOVE,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN,
                  "nack game start boundary");
     expect_event("NACK RESETX", 0u, 0u,
-                 NETCHESSZX_SESSION_EVENT_NACK_MOVE,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN,
                  "nack reset boundary");
     expect_event("NACK DRAW BUSY", 0u, 0u,
-                 NETCHESSZX_SESSION_EVENT_NACK_MOVE,
-                 "nack draw boundary");
+                 NETCHESSZX_SESSION_EVENT_NACK_DRAW,
+                 "nack draw reason");
     expect_event("NACK RESIGN", 0u, 0u,
-                 NETCHESSZX_SESSION_EVENT_NACK_MOVE,
-                 "nack resign remains move nack");
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN,
+                 "unsupported nack resign");
+    expect_event("ACK 12 e4", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_ACK_MOVE, "ack notation");
+    expect_event("NACK 12 BUSY", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_NACK_MOVE, "nack move reason");
+    expect_event("ACK 12X", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN, "numeric reply boundary");
+    expect_event("NACK ", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN, "empty reply");
+    expect_event("ACK 123456", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN, "reply ply capacity");
     expect_event("BYE",
                  0u,
                  0u,
@@ -148,6 +158,21 @@ static void test_common_protocol_events(void)
                  0u,
                  NETCHESSZX_SESSION_EVENT_HOST_BUSY,
                  "direct busy");
+    /* Whole-payload tokens do not match with a tail. */
+    expect_event("BYE ", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN, "bye with a tail");
+    expect_event("BUSY ", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN, "busy with a tail");
+    expect_event("BUSYX", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN, "busy prefix");
+    expect_event("CANCEL DRAW 1", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN, "cancel draw with a tail");
+    expect_event("CANCEL RESETX", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN, "cancel reset prefix");
+    expect_event("MOVE", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_UNKNOWN, "move without its space");
+    expect_event("CHAT ", 0u, 0u,
+                 NETCHESSZX_SESSION_EVENT_CHAT, "empty chat");
     expect_event("MACH ZX", 0u, 0u,
                  NETCHESSZX_SESSION_EVENT_MACH_ZX,
                  "mach zx");

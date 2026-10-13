@@ -70,6 +70,8 @@ C_WRAPPERS = {
         "_input_edit_setup_line_ovl",
     "asm/overlay/menu_logic/entry_menu_logic.asm::_status_phase_ovl_entry":
         "_status_phase_ovl",
+    "asm/overlay/menu_logic/entry_menu_logic.asm::_status_moves_header_ovl_entry":
+        "_status_moves_header_ovl",
     "asm/overlay/mqtt_tx/entry_mqtt_tx.asm::_mqtt_tx_send_text_ovl_entry":
         "_mqtt_tx_send_text_ovl",
     "asm/overlay/mqtt_tx/entry_mqtt_tx.asm::_mqtt_tx_publish_setup_ovl_entry":
@@ -84,10 +86,33 @@ C_WRAPPERS = {
         "_saveload_save_nczs_ovl",
     "asm/overlay/saveload/entry_saveload.asm::_saveload_erase_nczs_ovl_entry":
         "_saveload_erase_nczs_ovl",
+    "asm/overlay/saveload/entry_saveload.asm::_saveload_journal_append_ovl_entry":
+        "_saveload_journal_append_ovl",
+    # JOURNAL delegates to the shared STJ1 codec (asm/overlay/journal/
+    # stj_codec.asm) so Next can link the same codec inside SAVELOAD.
+    "asm/overlay/journal/entry_journal.asm::_journal_load_ovl_entry":
+        "_stj_load_ovl",
+    "asm/overlay/journal/entry_journal.asm::_journal_save_ovl_entry":
+        "_stj_save_ovl",
+    "asm/overlay/recovery/entry_recovery.asm::_recovery_capture_ovl_entry":
+        "_recovery_capture_ovl",
+    "asm/overlay/recovery/entry_recovery.asm::_recovery_retire_ovl_entry":
+        "_recovery_retire_ovl",
+    # RECOVERY builds alias the resume probe/stage; others keep an ASM stub.
+    "asm/overlay/control/entry_control.asm::_control_recovery_resume_ovl_entry":
+        "_recovery_resume_ovl",
 }
 
 ASM_ENTRIES = {
+    "asm/overlay/journal/entry_journal.asm::_journal_load_ovl_entry",
+    "asm/overlay/journal/entry_journal.asm::_journal_save_ovl_entry",
+    "asm/overlay/recovery/entry_recovery.asm::_recovery_write_ovl_entry",
+    # SpectraNext journal builds jump to rcv_replay.asm; others return.
+    "asm/overlay/recovery/entry_recovery.asm::_recovery_replay_ovl_entry",
+    "asm/overlay/control/entry_control.asm::_control_recovery_resume_ovl_entry",
     "asm/overlay/about/entry_about.asm::_about_render_ovl_entry",
+    "asm/overlay/about/entry_about.asm::_game_stats_render_ovl_entry",
+    "asm/overlay/menu_logic/entry_menu_logic.asm::_chlog_render_ovl_entry",
     "asm/overlay/board/entry_board.asm::_board_snapshot_save_ovl_entry",
     "asm/overlay/control/entry_control.asm::_control_format_busy_ovl_entry",
     "asm/overlay/gui_log/entry_gui_log.asm::_gui_log_animate_board_ovl_entry",
@@ -124,6 +149,7 @@ PRIVATE_ENTRY_MACROS = {
 ENTRY_TABLES = {
     "asm/overlay/about/entry_about.asm": [
         ("SPECTRUM_OVL_ABOUT_RENDER", "_about_render_ovl_entry"),
+        ("SPECTRUM_OVL_ABOUT_STATS", "_game_stats_render_ovl_entry"),
     ],
     "asm/overlay/board/entry_board.asm": [
         ("SPECTRUM_OVL_BOARD_APPLY", "_board_apply_ovl_entry"),
@@ -134,6 +160,7 @@ ENTRY_TABLES = {
     "asm/overlay/control/entry_control.asm": [
         ("SPECTRUM_OVL_CONTROL_CLASSIFY", "_control_classify_ovl_entry"),
         ("SPECTRUM_OVL_CONTROL_FORMAT_BUSY_PRIVATE", "_control_format_busy_ovl_entry"),
+        ("SPECTRUM_OVL_CONTROL_RECOVERY_RESUME", "_control_recovery_resume_ovl_entry"),
     ],
     "asm/overlay/config/entry_config.asm": [
         ("SPECTRUM_OVL_CONFIG_LOAD", "_config_load_ovl_entry"),
@@ -170,6 +197,8 @@ ENTRY_TABLES = {
     ],
     "asm/overlay/menu_logic/entry_menu_logic.asm": [
         ("SPECTRUM_OVL_STATUS_PHASE", "_status_phase_ovl_entry"),
+        ("SPECTRUM_OVL_STATUS_MOVES_HEADER", "_status_moves_header_ovl_entry"),
+        ("SPECTRUM_OVL_STATUS_CHLOG", "_chlog_render_ovl_entry"),
     ],
     "asm/overlay/mqtt_connect/entry_mqtt_connect.asm": [
         ("SPECTRUM_OVL_MQTT_CONNECT_START", "_mqtt_connect_start_ovl"),
@@ -203,6 +232,18 @@ ENTRY_TABLES = {
         ("SPECTRUM_OVL_SAVELOAD_LOAD_NCZS", "_saveload_load_nczs_ovl_entry"),
         ("SPECTRUM_OVL_SAVELOAD_SAVE_NCZS", "_saveload_save_nczs_ovl_entry"),
         ("SPECTRUM_OVL_SAVELOAD_ERASE_NCZS", "_saveload_erase_nczs_ovl_entry"),
+        ("SPECTRUM_OVL_SAVELOAD_JOURNAL_APPEND",
+         "_saveload_journal_append_ovl_entry"),
+    ],
+    "asm/overlay/journal/entry_journal.asm": [
+        ("SPECTRUM_OVL_JOURNAL_LOAD", "_journal_load_ovl_entry"),
+        ("SPECTRUM_OVL_JOURNAL_SAVE", "_journal_save_ovl_entry"),
+    ],
+    "asm/overlay/recovery/entry_recovery.asm": [
+        ("SPECTRUM_OVL_RECOVERY_WRITE", "_recovery_write_ovl_entry"),
+        ("SPECTRUM_OVL_RECOVERY_CAPTURE", "_recovery_capture_ovl_entry"),
+        ("SPECTRUM_OVL_RECOVERY_REPLAY", "_recovery_replay_ovl_entry"),
+        ("SPECTRUM_OVL_RECOVERY_RETIRE", "_recovery_retire_ovl_entry"),
     ],
     "asm/overlay/input_edit/entry_input_edit.asm": [
         ("SPECTRUM_OVL_INPUT_EDIT_RENDER", "_input_edit_render_ovl_entry"),
@@ -270,12 +311,11 @@ def check_wrappers(root: Path) -> list[str]:
 
 def check_dispatchers(root: Path) -> list[str]:
     errors: list[str] = []
+    # Callee ABI: the dispatcher pops its packed (ovl_id, entry_id) word.
     expected_decode = [
-        "ld hl, 2",
-        "add hl, sp",
-        "ld a, (hl)",
-        "inc hl",
-        "ld b, (hl)",
+        "pop hl",
+        "pop bc",
+        "push hl",
     ]
     expected = [
         "pop de",
@@ -298,16 +338,14 @@ def check_dispatchers(root: Path) -> list[str]:
         lines = path.read_text(encoding="utf-8").splitlines()
         decoded = instructions_after_label(lines, "_spectrum_overlay_exec_cached")
         if rel == "asm/esxdos/overlay_loader.asm":
-            expected_spxn_guard = [
-                "ifdef netchesszx_spectranext",
-                "ld a, (_spxn_rom_held)",
+            expected_guard = [
+                "ld a, (ovl_call_active)",
                 "or a",
                 "jr nz, ovl_exec_nested_fail",
-                "endif",
             ]
-            decode_ok = decoded == expected_spxn_guard + expected_decode
+            decode_ok = decoded == expected_decode + expected_guard + ["ld a, c"]
         else:
-            decode_ok = decoded == expected_decode
+            decode_ok = decoded == expected_decode + ["ld a, c"]
         if not decode_ok:
             errors.append(f"{path}: dispatcher must decode packed overlay arguments directly")
         canonical = instructions_after_label(lines, "ovl_args_canonical")
@@ -359,6 +397,8 @@ def instructions_after_label(lines: list[str], label: str) -> list[str]:
         if LABEL_RE.match(raw_line):
             break
         instruction = raw_line.split(";", 1)[0].strip().lower()
+        if instruction.startswith(("public ", "extern ", "include ")):
+            continue
         if instruction:
             instructions.append(re.sub(r"\s+", " ", instruction))
     return instructions
@@ -366,7 +406,11 @@ def instructions_after_label(lines: list[str], label: str) -> list[str]:
 
 def check_rules_stack_contract(root: Path) -> list[str]:
     path = root / "asm" / "overlay" / "rules" / "rules_stub.asm"
-    lines = path.read_text(encoding="utf-8").splitlines()
+    text = path.read_text(encoding="utf-8")
+    include = "asm/app/rules_hints_coordinator.inc"
+    if f'INCLUDE "{include}"' in text:
+        text = text.replace(f'INCLUDE "{include}"', (root / include).read_text(encoding="utf-8"))
+    lines = text.splitlines()
     errors: list[str] = []
     expected_prefix = ["push ix", "push iy", "call rules_import_board"]
 
@@ -389,15 +433,14 @@ def check_setup_editability(root: Path) -> list[str]:
     errors: list[str] = []
     endpoint = instructions_after_label(lines, "su_room_editable")
     if endpoint != [
+        "ld a, (_setup_choice + 1)",
+        "or a",
+        "jr nz, su_re_mqtt",
         "ld a, (_setup_cursor)",
         "cp 3",
         "jr z, su_re_port",
-        "sub 2",
+        "cp 2",
         "jr nz, su_re_false",
-        "ld hl, _netchesszx_mqtt_code + 2",
-        "ld a, (_setup_choice + 1)",
-        "or a",
-        "ret nz",
         "ld hl, _netchesszx_direct_host",
         "ld a, (_setup_choice)",
         "or a",
@@ -407,13 +450,20 @@ def check_setup_editability(root: Path) -> list[str]:
     port = instructions_after_label(lines, "su_re_port")
     if port != [
         "ld hl, _setup_port_text",
-        "ld a, (_setup_choice + 1)",
-        "or a",
-        "jr nz, su_re_false",
         "inc a",
         "ret",
     ]:
         errors.append(f"{path}: PORT must remain a separate DIRECT-only control")
+    mqtt = instructions_after_label(lines, "su_re_mqtt")
+    if mqtt != [
+        "ld a, (_setup_cursor)",
+        "cp 2",
+        "jr nz, su_re_false",
+        "ld hl, _netchesszx_mqtt_code + 2",
+        "inc a",
+        "ret",
+    ]:
+        errors.append(f"{path}: MQTT ROOM must remain the only editable MQTT endpoint")
     auto_room = instructions_after_label(lines, "su_link_auto_room")
     if auto_room[-3:] != [
         "ld a, 2",
@@ -421,9 +471,20 @@ def check_setup_editability(root: Path) -> list[str]:
         "jp su_define_row_and_finish",
     ]:
         errors.append(f"{path}: CREATE DIRECT must keep the static local IP defined")
-    host_direct = instructions_after_label(lines, "su_as_host_direct")
-    if host_direct != ["ld a, 3", "jr su_as_store_next"]:
-        errors.append(f"{path}: CREATE DIRECT must focus PORT after LINK")
+    # CREATE: MQTT and a DIRECT host with a valid stored port continue at
+    # TIME with IP/PORT defined; only an invalid port stops on PORT.
+    create_endpoint = instructions_after_label(lines, "su_as_create_endpoint")
+    if create_endpoint != [
+        "or h",
+        "call z, su_parse_port",
+        "ld a, 3",
+        "jr z, su_as_store_next",
+        "call su_set_defined_rows_2_3",
+        "ld a, 4",
+        "jr su_as_store_next",
+    ]:
+        errors.append(f"{path}: CREATE DIRECT must keep a valid PORT and "
+                      "continue at TIME")
     focus = instructions_after_label(lines, "su_visible_a")
     if focus != ["ld e, a"]:
         errors.append(f"{path}: endpoint controls must remain navigable")
@@ -532,15 +593,16 @@ def check_lowram_addresses(root: Path) -> list[str]:
     errors: list[str] = []
     lowram = parse_lowram_defines(root / "src" / "spectrum" / "lowram_map.h")
     screen = parse_asm_equ(root / "asm" / "spectrum" / "screen.asm")
+    hints = parse_asm_equ(root / "asm" / "app" / "board_hints_contract.inc")
     loader = parse_asm_equ(root / "asm" / "esxdos" / "overlay_loader.asm")
     context = lowram.get("NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_ADDR")
     rules_board = lowram.get("NETCHESSZX_LOWRAM_RULES_BOARD_ADDR")
 
     check_expected_addr(
         errors,
-        "asm/spectrum/screen.asm",
+        "asm/app/board_hints_contract.inc",
         rules_board,
-        screen,
+        hints,
         "NETCHESSZX_RULES_BOARD_BASE",
     )
     check_expected_addr(
@@ -590,6 +652,7 @@ def check_entry_tables(root: Path) -> list[str]:
         root / "src" / "spectrum" / "overlay" / "overlay.h"
     )
     screen_values = parse_screen_equ(root / "asm" / "spectrum" / "screen.asm")
+    screen_values.update(parse_screen_equ(root / "asm" / "app" / "board_hints_contract.inc"))
 
     for index, name in enumerate(ORDER):
         macro = "SPECTRUM_OVL_STATUS" if name == "MENU_LOGIC" else f"SPECTRUM_OVL_{name}"
@@ -597,6 +660,18 @@ def check_entry_tables(root: Path) -> list[str]:
             errors.append(
                 f"tools/gen_overlay_atlas.py: {name} index {index} != {macro} {overlay_values.get(macro)!r}"
             )
+
+    # JOURNAL is the first atlas extra (Makefile ATLAS_EXTRA); its id follows ORDER.
+    if overlay_values.get("SPECTRUM_OVL_JOURNAL") != len(ORDER):
+        errors.append(
+            f"src/spectrum/overlay/overlay.h: SPECTRUM_OVL_JOURNAL "
+            f"{overlay_values.get('SPECTRUM_OVL_JOURNAL')!r} != first atlas extra {len(ORDER)}"
+        )
+    if overlay_values.get("SPECTRUM_OVL_RECOVERY") != len(ORDER) + 1:
+        errors.append(
+            f"src/spectrum/overlay/overlay.h: SPECTRUM_OVL_RECOVERY "
+            f"{overlay_values.get('SPECTRUM_OVL_RECOVERY')!r} != Classic second atlas extra {len(ORDER) + 1}"
+        )
 
     for rel, expected in ENTRY_TABLES.items():
         path = root / rel

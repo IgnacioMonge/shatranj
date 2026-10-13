@@ -1,0 +1,311 @@
+{
+  "artifacts": [
+    {
+      "bytes": 36281,
+      "ok": true,
+      "path": "release/SHATRANJ.tap",
+      "sha256": "3b43e4d9da6af681f016e22555dc1038510fbd12478de6e55fee7e27c94be366"
+    },
+    {
+      "bytes": 36493,
+      "ok": true,
+      "path": "release/SHATRANJ.OVL",
+      "sha256": "ade9c81ac7dfabf3ddfa4fe37cd982d8c0289f53ac0ab39ea1bf87d55808d284"
+    },
+    {
+      "bytes": 4899,
+      "ok": true,
+      "path": "release/SHATRANJ.DAT",
+      "sha256": "23dad24acc6ab1fdfbe6b0956413cbab57028406d2be1ddaadad293746d392e6"
+    }
+  ],
+  "burst_bytes_max": 1200,
+  "bursts": 10,
+  "chat_lines": 120,
+  "events": [
+    [
+      372748.468,
+      "IN",
+      "HELLO DIRECT HOST WHITE=HOST"
+    ],
+    [
+      372748.468,
+      "OUT",
+      "1 lines, 12 bytes: MNAME BURST .. MNAME BURST"
+    ],
+    [
+      372748.468,
+      "INFO",
+      "ready; waiting for GAME START on the Spectrum"
+    ],
+    [
+      372748.625,
+      "IN",
+      "HELLO DIRECT HOST WHITE=HOST"
+    ],
+    [
+      372748.765,
+      "IN",
+      "MACH ZX"
+    ],
+    [
+      372748.921,
+      "IN",
+      "MNAME IGNACIO"
+    ],
+    [
+      372753.796,
+      "IN",
+      "GAME START WHITE=HOST"
+    ],
+    [
+      372753.796,
+      "OUT",
+      "16 lines, 606 bytes: ACK GAME START .. PING"
+    ],
+    [
+      372756.906,
+      "IN",
+      "MOVE 1 e2e4"
+    ],
+    [
+      372756.906,
+      "OUT",
+      "32 lines, 1200 bytes: ACK 1 .. PING"
+    ],
+    [
+      372764.906,
+      "OUT",
+      "1 lines, 12 bytes: MOVE 2 e7e5 .. MOVE 2 e7e5"
+    ],
+    [
+      372766.734,
+      "IN",
+      "ACK 2"
+    ],
+    [
+      372771.718,
+      "IN",
+      "MOVE 3 g1f3"
+    ],
+    [
+      372771.718,
+      "OUT",
+      "32 lines, 1200 bytes: ACK 3 .. PING"
+    ],
+    [
+      372779.734,
+      "OUT",
+      "1 lines, 12 bytes: MOVE 4 b8c6 .. MOVE 4 b8c6"
+    ],
+    [
+      372781.515,
+      "IN",
+      "ACK 4"
+    ],
+    [
+      372786.093,
+      "IN",
+      "MOVE 5 f1b5"
+    ],
+    [
+      372786.093,
+      "OUT",
+      "32 lines, 1200 bytes: ACK 5 .. PING"
+    ],
+    [
+      372794.14,
+      "OUT",
+      "1 lines, 12 bytes: MOVE 6 a7a6 .. MOVE 6 a7a6"
+    ],
+    [
+      372795.89,
+      "IN",
+      "ACK 6"
+    ],
+    [
+      372799.812,
+      "IN",
+      "MOVE 7 b5a4"
+    ],
+    [
+      372799.812,
+      "OUT",
+      "32 lines, 1200 bytes: ACK 7 .. PING"
+    ],
+    [
+      372807.843,
+      "OUT",
+      "1 lines, 12 bytes: MOVE 8 g8f6 .. MOVE 8 g8f6"
+    ],
+    [
+      372809.562,
+      "IN",
+      "ACK 8"
+    ],
+    [
+      372815.75,
+      "IN",
+      "MOVE 9 e1g1"
+    ],
+    [
+      372815.75,
+      "OUT",
+      "16 lines, 597 bytes: ACK 9 .. PING"
+    ],
+    [
+      372815.75,
+      "INFO",
+      "script finished"
+    ]
+  ],
+  "failures": [
+    "29 PING without ACK"
+  ],
+  "label": "single-read loader, working tree on 53ae5258",
+  "move_ack_seconds": [
+    9.828,
+    9.797,
+    9.797,
+    9.75
+  ],
+  "moves_received": 5,
+  "moves_sent": 4,
+  "ok": false,
+  "our_move_resends": 4,
+  "ping_acked": 24,
+  "ping_latency_max_seconds": 45.812,
+  "ping_lost": 29,
+  "ping_sent": 53,
+  "plies": 9,
+  "target": "192.168.0.198:5000",
+  "wire": {
+    "ack": {
+      "inbound": 28,
+      "outbound": 0
+    },
+    "artifacts": [],
+    "cleanup": {
+      "listener_closed": false,
+      "sockets_closed": true
+    },
+    "close": {
+      "clean": true,
+      "events": [
+        {
+          "at": "2026-10-03T17:40:52.403743Z",
+          "reason": "probe_done",
+          "side": "local"
+        }
+      ],
+      "local": true,
+      "local_count": 1,
+      "peer": false,
+      "peer_count": 0,
+      "reason": "probe_done"
+    },
+    "config": {
+      "ack_delay": 0.0,
+      "machine": "PC",
+      "max_frame_size": 47,
+      "ping_interval": 3.0,
+      "require_mach": false,
+      "white_owner": "HOST"
+    },
+    "duration_seconds": 0.0,
+    "ended_at": null,
+    "failures": [],
+    "frames": {
+      "bytes_in": 402,
+      "bytes_out": 6205,
+      "inbound": 38,
+      "malformed": 0,
+      "nul": 0,
+      "outbound": 190,
+      "oversize": 0,
+      "received": 38,
+      "send_failures": 0,
+      "sent": 190
+    },
+    "handshake": {
+      "attempted": 1,
+      "completed": 1,
+      "ok": false,
+      "peer_machine": "ZX",
+      "required": true
+    },
+    "mode": "guest",
+    "ok": false,
+    "ping": {
+      "ack_delay_max_seconds": 0.0,
+      "ack_delay_seconds": 0.0,
+      "ack_delayed": 0,
+      "ack_delays_seconds": [],
+      "ack_latencies_seconds": [
+        0.14100000000325963,
+        1.4690000000409782,
+        6.094000000040978,
+        6.89100000000326,
+        9.14000000001397,
+        9.952999999979511,
+        12.73399999999674,
+        17.59399999998277,
+        18.70299999997951,
+        21.68699999997625,
+        24.73399999999674,
+        27.14100000000326,
+        28.31199999997625,
+        27.15700000000652,
+        27.09399999998277,
+        27.09399999998277,
+        27.875,
+        30.82799999997951,
+        33.85999999998603,
+        38.04700000002049,
+        39.85999999998603,
+        42.89100000000326,
+        45.81199999997625,
+        43.21799999999348
+      ],
+      "ack_received": 24,
+      "ack_sent": 0,
+      "inbound": 0,
+      "outbound": 53,
+      "unanswered": 0
+    },
+    "reconnect": {
+      "attempts": 0,
+      "configured": 0,
+      "failures": 0,
+      "required": 0,
+      "required_met": true,
+      "succeeded": 0
+    },
+    "requirements": {
+      "duration_seconds": 0.0,
+      "handshake": true,
+      "reconnects": 0
+    },
+    "result": "FAIL",
+    "role": "GUEST",
+    "schema": "spcx-direct-conformance/v1",
+    "schema_version": 1,
+    "sessions": [
+      {
+        "duration_seconds": 95.60899999999674,
+        "frames": {
+          "inbound": 38,
+          "outbound": 190
+        },
+        "index": 0,
+        "local_hello": "HELLO DIRECT GUEST",
+        "local_mach": "PC",
+        "peer_hello": "HELLO DIRECT HOST WHITE=HOST",
+        "peer_mach": "ZX",
+        "started_at": "2026-10-03T17:39:16.802748Z",
+        "state": "closed"
+      }
+    ],
+    "started_at": "2026-10-03T17:39:16.802748Z"
+  }
+}

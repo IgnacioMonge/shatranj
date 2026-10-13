@@ -4,19 +4,16 @@
 #include <string.h>
 
 static char host_move_log[224];
-static char host_chat_log[252];
 static char host_clock[8];
 
 #define NETCHESSZX_SPECTRUM_LOWRAM_MAP_H
 #define NETCHESSZX_LOWRAM_MOVE_LOG_ADDR ((uintptr_t)host_move_log)
-#define NETCHESSZX_LOWRAM_CHAT_LOG_ADDR ((uintptr_t)host_chat_log)
 #define NETCHESSZX_LOWRAM_CLOCK_SAVE_ADDR ((uintptr_t)host_clock)
 #define NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_ADDR 0u
 #define NETCHESSZX_LOWRAM_OVERLAY_CONTEXT_SIZE 8u
 
 uint16_t last_ply_seen;
 uint8_t move_line_count;
-uint8_t chat_line_count;
 
 #include "../../src/spectrum/overlay/gui_log_ovl.c"
 
@@ -31,24 +28,28 @@ static void check(int condition, const char *message)
     }
 }
 
-char chat_clean_char(uint8_t c)
+void gui_log_copy_move(char *out, const char *move)
 {
-    return c >= ' ' && c <= '~' ? (char)c : ' ';
-}
+    const char *clock = host_clock;
+    uint8_t i;
 
-uint8_t chat_word_len(const char *text)
-{
-    uint8_t len = 0u;
-
-    while (text[len] != '\0' && text[len] != ' ' && len < 24u) {
-        ++len;
+    if (move == 0) {
+        (void)spectrum_append_text(out, NETCHESSZX_UI_EVENT_RESTORED);
+        return;
     }
-    return len;
-}
-
-void chat_copy_clock_line(char *line)
-{
-    memcpy(line + 1, host_clock, 6u);
+    if (clock[0] == '\0') {
+        clock = "--:-- ";
+    }
+    for (i = 0u; i < 6u; ++i) {
+        *out++ = clock[i];
+    }
+    for (i = 0u; i < 7u && move[i] != '\0'; ++i) {
+        *out++ = move[i];
+    }
+    for (; i < 7u; ++i) {
+        *out++ = ' ';
+    }
+    *out = '\0';
 }
 
 uint16_t gui_log_parse_ply(const char *text)
@@ -67,31 +68,15 @@ void clear_move_line(char *line)
     memset(line, ' ', NETCHESSZX_MOVE_SLOT_SIZE);
 }
 
-void clear_log_line(char *line)
-{
-    memset(line, 0, NETCHESSZX_CHAT_SLOT_SIZE);
-}
-
 void scroll_move_lines(char *base)
 {
     memmove(base, base + NETCHESSZX_MOVE_SLOT_SIZE,
             (NETCHESSZX_MOVE_ROWS - 1u) * NETCHESSZX_MOVE_SLOT_SIZE);
 }
 
-void scroll_chat_lines(char *base)
-{
-    memmove(base, base + NETCHESSZX_CHAT_SLOT_SIZE,
-            (NETCHESSZX_CHAT_ROWS - 1u) * NETCHESSZX_CHAT_SLOT_SIZE);
-}
-
 char *move_line_at(char *line, uint8_t index)
 {
     return line + ((uint16_t)index * NETCHESSZX_MOVE_SLOT_SIZE);
-}
-
-char *log_line_at(char *line, uint8_t index)
-{
-    return line + ((uint16_t)index * NETCHESSZX_CHAT_SLOT_SIZE);
 }
 
 char *spectrum_append_text(char *dst, const char *src)
@@ -120,8 +105,6 @@ void spectrum_render_moves_scroll(void)
     render_events[render_event_count++] = 'S';
 }
 
-void spectrum_render_chat_at(const char *line) { (void)line; }
-void spectrum_render_chat_scroll(void) {}
 
 static void seed_full_move_log(void)
 {
@@ -198,6 +181,31 @@ int main(void)
     check(move_line_count == 1u && render_event_count == 1u &&
               render_events[0] == 'M',
           "black-only restored marker renders one row");
+
+    memset(host_move_log, 0, sizeof(host_move_log));
+    memcpy(host_clock, "--:-- ", 7u);
+    move_line_count = 0u;
+    last_ply_seen = 0u;
+    gui_log_add_move("1", "e2e4", 0u);
+    gui_log_add_move("2", "e7e8q", 0u);
+    gui_log_add_move("3", "g8f6", 0u);
+    ctx[SPECTRUM_OVL_CTX_GUI_MOVE_PLY_LO] = 3u;
+    ctx[SPECTRUM_OVL_CTX_GUI_MOVE_PLY_HI] = 0u;
+    ctx[SPECTRUM_OVL_CTX_GUI_RENDER] = 0u;
+    check(gui_log_remove_last_move_ovl(ctx) == 1u, "takeback removes the ply");
+    check(move_line_count == 1u && last_ply_seen == 2u,
+          "loaded history ends on the second ply");
+    check(strncmp(host_move_log, "--:-- e2e4", 10) == 0, "white cell kept");
+    check(strncmp(host_move_log + 18, "--:-- e7e8q", 11) == 0,
+          "promotion cell kept");
+    check(strstr(host_move_log, "g8f6") == 0, "undone move is gone");
+    gui_log_add_move("3", "d2d4", 0u);
+    check(move_line_count == 2u && last_ply_seen == 3u,
+          "next ply follows the loaded history");
+    check(strncmp(host_move_log + 32, "--:-- d2d4", 10) == 0,
+          "next move is on the following row");
+    check(strncmp(host_move_log, "--:-- e2e4", 10) == 0,
+          "loaded white move stays in place");
 
     puts("gui log tests passed");
     return 0;

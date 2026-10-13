@@ -44,7 +44,11 @@ public:
     bool testRestoreUiIdle() const;
     void testSetMqttWriteFailure(bool enabled);
     bool testSessionReady() const;
+    QString testChatLogText() const;
+    QString testChatDraft() const;
+    void testSetChatDraft(const QString &text);
     QString testStatusContextText() const;
+    bool testStatusBarProjection();
     bool testStatusBarAligned();
     bool testDisconnectButtonAvailable() const;
     QByteArray testMqttClientId(bool host) const;
@@ -60,9 +64,19 @@ public:
     void testClickConnectButton();
     bool testReplaceDirectClientBeforeDisconnect();
     bool testResignRestartUiProjection();
+    bool testGameStatsProjection();
     bool testRestoredMoveProjection();
     bool testSessionEndPresentation();
     bool testCancelPendingPieceFlash();
+    void testSetPlayerName(const QString &name);
+    bool testBotIdentity();
+    QStringList testMoveHeaderLabels() const;
+    // Opens the Draw prompt (modal); false when the button is disabled.
+    bool testClickDrawButton();
+    QString testTurnLabelText() const;
+    // Bot identity, clock running, no session: the chat announcement must
+    // keep retrying beyond a handful of refusals.
+    bool testEngineAnnounceKeepsRetrying();
 
 private:
     std::unique_ptr<MainWindowImpl> impl_;

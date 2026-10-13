@@ -11,8 +11,8 @@ INCLUDE "next_graphics_defs.asm"
     jp _spectrum_render_status_error
     jp _spectrum_render_clock
     jp _spectrum_render_game_timer_clear
-    jp _spectrum_render_game_timer_char
-    jp _spectrum_render_menu_timer_char
+    jp next_retired_timer_char   ; retain retired slots; no resident stubs
+    jp next_retired_timer_char
     jp _spectrum_render_turn_label
     jp _spectrum_render_notice
     jp _spectrum_render_notice_error
@@ -53,4 +53,7 @@ INCLUDE "next_graphics_defs.asm"
     jp draw_char64_at_tmp
     jp draw_input_cursor_at_tmp
 
-INCLUDE "asm/spectrum/screen.asm"
+next_retired_timer_char:
+    ret
+
+INCLUDE "asm/next/screen.asm"

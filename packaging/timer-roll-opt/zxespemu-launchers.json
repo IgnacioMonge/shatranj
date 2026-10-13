@@ -1,0 +1,20 @@
+{
+  "schema": 2,
+  "owner": "netchess-timer-roll",
+  "version": "1.2.1-dev.timer-roll.1+g2315891.dirty",
+  "launchers": [
+    {
+      "name": "NetChessZX Classic Timer Roll PRUEBA",
+      "bundle_id": "com.ignaciomongegarcia.netchesszx.timer-roll.classic",
+      "arguments": [
+        "--program",
+        "netchess",
+        "--target",
+        "classic",
+        "--netchess",
+        "../.."
+      ],
+      "icon": "../../client/shatranj.icns"
+    }
+  ]
+}

@@ -1,0 +1,503 @@
+{
+  "artifacts": [],
+  "burst_bytes_max": 394,
+  "bursts": 0,
+  "chat_lines": 58,
+  "events": [
+    [
+      373660.125,
+      "OUT",
+      "2 lines, 53 bytes: CHAT T0001 tail 1.............................. .. PING"
+    ],
+    [
+      373660.468,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373660.609,
+      "ROW",
+      "{\"acked\": 1, \"acked_with_check\": 2, \"bytes\": 53, \"chat_lines\": 1, \"pings\": 1, \"seconds\": 0.34, \"shape\": \"tail\", \"verdict\": \"ok\"}"
+    ],
+    [
+      373663.64,
+      "OUT",
+      "3 lines, 101 bytes: CHAT T0002..................................... .. PING"
+    ],
+    [
+      373664.031,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373664.187,
+      "ROW",
+      "{\"acked\": 1, \"acked_with_check\": 2, \"bytes\": 101, \"chat_lines\": 2, \"pings\": 1, \"seconds\": 0.39, \"shape\": \"tail\", \"verdict\": \"ok\"}"
+    ],
+    [
+      373667.218,
+      "OUT",
+      "4 lines, 149 bytes: CHAT T0004..................................... .. PING"
+    ],
+    [
+      373667.781,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373667.921,
+      "ROW",
+      "{\"acked\": 1, \"acked_with_check\": 2, \"bytes\": 149, \"chat_lines\": 3, \"pings\": 1, \"seconds\": 0.56, \"shape\": \"tail\", \"verdict\": \"ok\"}"
+    ],
+    [
+      373670.921,
+      "OUT",
+      "5 lines, 197 bytes: CHAT T0007..................................... .. PING"
+    ],
+    [
+      373671.703,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373671.843,
+      "ROW",
+      "{\"acked\": 1, \"acked_with_check\": 2, \"bytes\": 197, \"chat_lines\": 4, \"pings\": 1, \"seconds\": 0.78, \"shape\": \"tail\", \"verdict\": \"ok\"}"
+    ],
+    [
+      373674.89,
+      "OUT",
+      "6 lines, 245 bytes: CHAT T0011..................................... .. PING"
+    ],
+    [
+      373675.843,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373675.984,
+      "ROW",
+      "{\"acked\": 1, \"acked_with_check\": 2, \"bytes\": 245, \"chat_lines\": 5, \"pings\": 1, \"seconds\": 0.95, \"shape\": \"tail\", \"verdict\": \"ok\"}"
+    ],
+    [
+      373679.031,
+      "OUT",
+      "7 lines, 293 bytes: CHAT T0016..................................... .. PING"
+    ],
+    [
+      373680.078,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373680.234,
+      "ROW",
+      "{\"acked\": 1, \"acked_with_check\": 2, \"bytes\": 293, \"chat_lines\": 6, \"pings\": 1, \"seconds\": 1.05, \"shape\": \"tail\", \"verdict\": \"ok\"}"
+    ],
+    [
+      373683.25,
+      "OUT",
+      "9 lines, 389 bytes: CHAT T0022..................................... .. PING"
+    ],
+    [
+      373684.578,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373684.718,
+      "ROW",
+      "{\"acked\": 1, \"acked_with_check\": 2, \"bytes\": 389, \"chat_lines\": 8, \"pings\": 1, \"seconds\": 1.33, \"shape\": \"tail\", \"verdict\": \"ok\"}"
+    ],
+    [
+      373687.718,
+      "OUT",
+      "3 lines, 58 bytes: PING .. PING"
+    ],
+    [
+      373688.156,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373688.312,
+      "ROW",
+      "{\"acked\": 2, \"acked_with_check\": 3, \"bytes\": 58, \"chat_lines\": 1, \"pings\": 2, \"seconds\": 0.44, \"shape\": \"mid\", \"verdict\": \"ok\"}"
+    ],
+    [
+      373691.312,
+      "OUT",
+      "4 lines, 106 bytes: PING .. PING"
+    ],
+    [
+      373691.828,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373691.968,
+      "ROW",
+      "{\"acked\": 2, \"acked_with_check\": 3, \"bytes\": 106, \"chat_lines\": 2, \"pings\": 2, \"seconds\": 0.52, \"shape\": \"mid\", \"verdict\": \"ok\"}"
+    ],
+    [
+      373694.968,
+      "OUT",
+      "5 lines, 154 bytes: PING .. PING"
+    ],
+    [
+      373701.421,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373709.421,
+      "ROW",
+      "{\"acked\": 1, \"acked_with_check\": 2, \"bytes\": 154, \"chat_lines\": 3, \"pings\": 2, \"seconds\": 6.45, \"shape\": \"mid\", \"verdict\": \"lost\"}"
+    ],
+    [
+      373712.453,
+      "OUT",
+      "6 lines, 202 bytes: PING .. PING"
+    ],
+    [
+      373720.187,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373728.203,
+      "ROW",
+      "{\"acked\": 1, \"acked_with_check\": 2, \"bytes\": 202, \"chat_lines\": 4, \"pings\": 2, \"seconds\": 7.73, \"shape\": \"mid\", \"verdict\": \"lost\"}"
+    ],
+    [
+      373731.234,
+      "OUT",
+      "7 lines, 250 bytes: PING .. PING"
+    ],
+    [
+      373740.234,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373748.281,
+      "ROW",
+      "{\"acked\": 1, \"acked_with_check\": 2, \"bytes\": 250, \"chat_lines\": 5, \"pings\": 2, \"seconds\": 9.0, \"shape\": \"mid\", \"verdict\": \"lost\"}"
+    ],
+    [
+      373751.312,
+      "OUT",
+      "8 lines, 298 bytes: PING .. PING"
+    ],
+    [
+      373761.625,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373769.64,
+      "ROW",
+      "{\"acked\": 1, \"acked_with_check\": 2, \"bytes\": 298, \"chat_lines\": 6, \"pings\": 2, \"seconds\": 10.31, \"shape\": \"mid\", \"verdict\": \"lost\"}"
+    ],
+    [
+      373772.671,
+      "OUT",
+      "10 lines, 394 bytes: PING .. PING"
+    ],
+    [
+      373784.734,
+      "OUT",
+      "1 lines, 5 bytes: PING .. PING"
+    ],
+    [
+      373792.765,
+      "ROW",
+      "{\"acked\": 1, \"acked_with_check\": 2, \"bytes\": 394, \"chat_lines\": 8, \"pings\": 2, \"seconds\": 12.06, \"shape\": \"mid\", \"verdict\": \"lost\"}"
+    ]
+  ],
+  "failures": [],
+  "label": "sweep single-read build",
+  "move_ack_seconds": [],
+  "moves_received": 0,
+  "moves_sent": 0,
+  "ok": true,
+  "our_move_resends": 0,
+  "sweep": [
+    {
+      "acked": 1,
+      "acked_with_check": 2,
+      "bytes": 53,
+      "chat_lines": 1,
+      "pings": 1,
+      "seconds": 0.34,
+      "shape": "tail",
+      "verdict": "ok"
+    },
+    {
+      "acked": 1,
+      "acked_with_check": 2,
+      "bytes": 101,
+      "chat_lines": 2,
+      "pings": 1,
+      "seconds": 0.39,
+      "shape": "tail",
+      "verdict": "ok"
+    },
+    {
+      "acked": 1,
+      "acked_with_check": 2,
+      "bytes": 149,
+      "chat_lines": 3,
+      "pings": 1,
+      "seconds": 0.56,
+      "shape": "tail",
+      "verdict": "ok"
+    },
+    {
+      "acked": 1,
+      "acked_with_check": 2,
+      "bytes": 197,
+      "chat_lines": 4,
+      "pings": 1,
+      "seconds": 0.78,
+      "shape": "tail",
+      "verdict": "ok"
+    },
+    {
+      "acked": 1,
+      "acked_with_check": 2,
+      "bytes": 245,
+      "chat_lines": 5,
+      "pings": 1,
+      "seconds": 0.95,
+      "shape": "tail",
+      "verdict": "ok"
+    },
+    {
+      "acked": 1,
+      "acked_with_check": 2,
+      "bytes": 293,
+      "chat_lines": 6,
+      "pings": 1,
+      "seconds": 1.05,
+      "shape": "tail",
+      "verdict": "ok"
+    },
+    {
+      "acked": 1,
+      "acked_with_check": 2,
+      "bytes": 389,
+      "chat_lines": 8,
+      "pings": 1,
+      "seconds": 1.33,
+      "shape": "tail",
+      "verdict": "ok"
+    },
+    {
+      "acked": 2,
+      "acked_with_check": 3,
+      "bytes": 58,
+      "chat_lines": 1,
+      "pings": 2,
+      "seconds": 0.44,
+      "shape": "mid",
+      "verdict": "ok"
+    },
+    {
+      "acked": 2,
+      "acked_with_check": 3,
+      "bytes": 106,
+      "chat_lines": 2,
+      "pings": 2,
+      "seconds": 0.52,
+      "shape": "mid",
+      "verdict": "ok"
+    },
+    {
+      "acked": 1,
+      "acked_with_check": 2,
+      "bytes": 154,
+      "chat_lines": 3,
+      "pings": 2,
+      "seconds": 6.45,
+      "shape": "mid",
+      "verdict": "lost"
+    },
+    {
+      "acked": 1,
+      "acked_with_check": 2,
+      "bytes": 202,
+      "chat_lines": 4,
+      "pings": 2,
+      "seconds": 7.73,
+      "shape": "mid",
+      "verdict": "lost"
+    },
+    {
+      "acked": 1,
+      "acked_with_check": 2,
+      "bytes": 250,
+      "chat_lines": 5,
+      "pings": 2,
+      "seconds": 9.0,
+      "shape": "mid",
+      "verdict": "lost"
+    },
+    {
+      "acked": 1,
+      "acked_with_check": 2,
+      "bytes": 298,
+      "chat_lines": 6,
+      "pings": 2,
+      "seconds": 10.31,
+      "shape": "mid",
+      "verdict": "lost"
+    },
+    {
+      "acked": 1,
+      "acked_with_check": 2,
+      "bytes": 394,
+      "chat_lines": 8,
+      "pings": 2,
+      "seconds": 12.06,
+      "shape": "mid",
+      "verdict": "lost"
+    }
+  ],
+  "target": "192.168.0.198:5000",
+  "wire": {
+    "ack": {
+      "inbound": 30,
+      "outbound": 0
+    },
+    "artifacts": [],
+    "cleanup": {
+      "listener_closed": false,
+      "sockets_closed": true
+    },
+    "close": {
+      "clean": true,
+      "events": [
+        {
+          "at": "2026-10-03T17:56:44.491295Z",
+          "reason": "probe_done",
+          "side": "local"
+        }
+      ],
+      "local": true,
+      "local_count": 1,
+      "peer": false,
+      "peer_count": 0,
+      "reason": "probe_done"
+    },
+    "config": {
+      "ack_delay": 0.0,
+      "machine": "PC",
+      "max_frame_size": 47,
+      "ping_interval": 3.0,
+      "require_mach": false,
+      "white_owner": "HOST"
+    },
+    "duration_seconds": 0.0,
+    "ended_at": null,
+    "failures": [],
+    "frames": {
+      "bytes_in": 482,
+      "bytes_out": 2986,
+      "inbound": 40,
+      "malformed": 0,
+      "nul": 0,
+      "outbound": 95,
+      "oversize": 0,
+      "received": 40,
+      "send_failures": 0,
+      "sent": 95
+    },
+    "handshake": {
+      "attempted": 1,
+      "completed": 1,
+      "ok": false,
+      "peer_machine": "ZX",
+      "required": true
+    },
+    "mode": "guest",
+    "ok": false,
+    "ping": {
+      "ack_delay_max_seconds": 0.0,
+      "ack_delay_seconds": 0.0,
+      "ack_delayed": 0,
+      "ack_delays_seconds": [],
+      "ack_latencies_seconds": [
+        0.34299999999348074,
+        0.14100000000325963,
+        0.39100000000325963,
+        0.1559999999590218,
+        0.5630000000237487,
+        0.13999999995576218,
+        0.7820000000065193,
+        0.14000000001396984,
+        0.9529999999795109,
+        0.14100000000325963,
+        1.0469999999622814,
+        0.15600000001722947,
+        1.327999999979511,
+        0.14000000001396984,
+        0.18800000002374873,
+        0.4380000000237487,
+        0.1559999999590218,
+        0.18800000002374873,
+        0.5160000000032596,
+        0.14000000001396984,
+        0.25,
+        6.64100000000326,
+        0.2970000000204891,
+        7.9060000000172295,
+        0.21899999998277053,
+        9.10899999999674,
+        0.28100000001722947,
+        10.51600000000326,
+        0.26600000000325963,
+        12.204000000027008
+      ],
+      "ack_received": 30,
+      "ack_sent": 0,
+      "inbound": 0,
+      "outbound": 35,
+      "unanswered": 0
+    },
+    "reconnect": {
+      "attempts": 0,
+      "configured": 0,
+      "failures": 0,
+      "required": 0,
+      "required_met": true,
+      "succeeded": 0
+    },
+    "requirements": {
+      "duration_seconds": 0.0,
+      "handshake": true,
+      "reconnects": 0
+    },
+    "result": "FAIL",
+    "role": "GUEST",
+    "schema": "spcx-direct-conformance/v1",
+    "schema_version": 1,
+    "sessions": [
+      {
+        "duration_seconds": 145.65600000001723,
+        "frames": {
+          "inbound": 40,
+          "outbound": 95
+        },
+        "index": 0,
+        "local_hello": "HELLO DIRECT GUEST",
+        "local_mach": "PC",
+        "peer_hello": "HELLO DIRECT HOST WHITE=HOST",
+        "peer_mach": "ZX",
+        "started_at": "2026-10-03T17:54:18.835017Z",
+        "state": "closed"
+      }
+    ],
+    "started_at": "2026-10-03T17:54:18.835017Z"
+  }
+}

@@ -4,10 +4,16 @@
 #include <stdint.h>
 
 #include "spectrum/config/session.h"
+#include "common/protocol/platform_protocol.h"
 
+/* The CRC-protected version 1 record is followed by an optional player-name
+   tail: 1.2 files are exactly the 46-byte record, 1.3 files add 11 bytes. */
 #define NETCHESSZX_APP_CONFIG_VERSION 1u
 #define NETCHESSZX_APP_CONFIG_SIZE 46u
-#define NETCHESSZX_APP_CONFIG_READ_SIZE (NETCHESSZX_APP_CONFIG_SIZE + 1u)
+#define NETCHESSZX_APP_CONFIG_NAME_OFF NETCHESSZX_APP_CONFIG_SIZE
+#define NETCHESSZX_APP_CONFIG_FILE_SIZE \
+    (NETCHESSZX_APP_CONFIG_SIZE + NETCHESS_PLAYER_NAME_SIZE)
+#define NETCHESSZX_APP_CONFIG_READ_SIZE (NETCHESSZX_APP_CONFIG_FILE_SIZE + 1u)
 
 #define NETCHESSZX_APP_CONFIG_MAGIC_0 0u
 #define NETCHESSZX_APP_CONFIG_MAGIC_1 1u
@@ -40,7 +46,7 @@
 #define NETCHESSZX_APP_CONFIG_GAME_SET_SHIFT 6u
 /* Mirrors the cycle limits in asm/overlay/setup/entry_setup.asm. */
 #define NETCHESSZX_APP_CONFIG_THEME_COUNT 5u
-#define NETCHESSZX_APP_CONFIG_SET_COUNT 3u
+#define NETCHESSZX_APP_CONFIG_SET_COUNT NETCHESSZX_PIECE_SET_COUNT
 
 static uint8_t netchesszx_app_config_crc8(const uint8_t *record)
 {

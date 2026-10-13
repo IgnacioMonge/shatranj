@@ -20,17 +20,13 @@
 #define SPECTRUM_LINK_PREFLIGHT_OK 1u
 #define SPECTRUM_LINK_PREFLIGHT_RETRYING 2u
 #define SPECTRUM_LINK_PREFLIGHT_OVL_FAIL 3u
-#define SPECTRUM_LINK_MQTT_SETUP_RETAINED 1u
-#define SPECTRUM_LINK_MQTT_SETUP_CLEAR 2u
-/* Compact mirrors of the stable common session-route ABI. */
-#define SPECTRUM_LINK_ROUTE_PRESENCE 2u
-#define SPECTRUM_LINK_ROUTE_PRESENCE_PEER 5u
+#define SPECTRUM_NET_MQTT_CONNECT_WILL 0x01u
 
 /* Transport contract shared by Spectrum and Next:
    - read_payload() copies a transport-owned RX payload into caller storage.
    - payload_scratch() returns storage unused by the active backend; it may
      borrow inactive-backend storage but never the active RX queue/parser.
-   - send_text(), send_ping(), and background_drain() may pump the transport,
+   - send() and background_drain() may pump the transport,
      but must not destroy a queued RX payload before read_payload() copies it.
    - link state belongs here; board/game/session state belongs above this API. */
 
@@ -41,9 +37,7 @@ uint8_t spectrum_net_wait_pc_connect(void);
 void spectrum_net_direct_peer_mark_valid(void);
 int16_t spectrum_net_read_payload(char *payload, uint8_t payload_cap);
 uint8_t spectrum_net_send_text(const char *text) NETCHESSZX_FASTCALL;
-uint8_t spectrum_net_send_ping(void);
 char *spectrum_net_payload_scratch(void);
-uint8_t spectrum_net_link_activity(void);
 uint8_t spectrum_net_payload_flags(void);
 void spectrum_net_background_drain(void);
 /* Resident-only clock retry plus transport pump. */
@@ -62,7 +56,6 @@ void spectrum_net_clock_retry_cancel(void);
 #define spectrum_link_direct_peer_mark_valid spectrum_net_direct_peer_mark_valid
 #define spectrum_link_read_payload spectrum_net_read_payload
 #define spectrum_link_send_text spectrum_net_send_text
-#define spectrum_link_send_ping spectrum_net_send_ping
 #define spectrum_link_payload_scratch spectrum_net_payload_scratch
 #define spectrum_link_payload_flags spectrum_net_payload_flags
 #define spectrum_link_background_drain spectrum_net_background_drain_clock
@@ -71,20 +64,15 @@ void spectrum_net_clock_retry_cancel(void);
 #define spectrum_link_clock_retry_start spectrum_net_clock_retry_start
 #define spectrum_link_clock_retry_cancel spectrum_net_clock_retry_cancel
 
-uint8_t spectrum_net_mqtt_start(void);
-uint8_t spectrum_net_mqtt_activate_side(void);
-uint8_t spectrum_net_mqtt_probe_seat(void);
-uint8_t spectrum_net_mqtt_publish_presence(void);
-uint8_t spectrum_net_mqtt_publish_offline(uint8_t route) NETCHESSZX_FASTCALL;
+uint8_t spectrum_net_mqtt_connect(uint8_t flags) NETCHESSZX_FASTCALL;
+uint8_t spectrum_net_mqtt_subscribe_side(void);
+uint8_t spectrum_net_mqtt_subscribe_seat(void);
+void spectrum_net_mqtt_set_publish_flags(uint8_t flags) NETCHESSZX_FASTCALL;
+uint8_t spectrum_net_mqtt_publish(const char *payload) NETCHESSZX_FASTCALL;
 uint8_t spectrum_net_mqtt_publish_setup(uint8_t mode) NETCHESSZX_FASTCALL;
+uint8_t spectrum_net_mqtt_publish_presence(uint8_t flags) NETCHESSZX_FASTCALL;
 void mqtt_abort_stream_mode(void);
 
-#define spectrum_link_mqtt_start spectrum_net_mqtt_start
-#define spectrum_link_mqtt_activate_side spectrum_net_mqtt_activate_side
-#define spectrum_link_mqtt_probe_seat spectrum_net_mqtt_probe_seat
-#define spectrum_link_mqtt_publish_presence spectrum_net_mqtt_publish_presence
-#define spectrum_link_mqtt_publish_offline spectrum_net_mqtt_publish_offline
-#define spectrum_link_mqtt_publish_setup spectrum_net_mqtt_publish_setup
-#define spectrum_link_mqtt_stop mqtt_abort_stream_mode
+#define spectrum_net_mqtt_stop mqtt_abort_stream_mode
 
 #endif

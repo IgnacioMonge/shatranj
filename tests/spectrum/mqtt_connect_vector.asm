@@ -9,12 +9,13 @@ PUBLIC _net_preflight_ovl
 PUBLIC _mqtt_probe_seat_ovl
 PUBLIC _netchesszx_mqtt_code
 PUBLIC _netchesszx_local_color
-PUBLIC _netchesszx_session_role
 PUBLIC _netchesszx_mqtt_session_id
+PUBLIC _spectrum_overlay_context
 
 EXTERN _mqtt_connect_packet_ovl
 
 mqtt_packet_ovl EQU 0x672b
+_spectrum_overlay_context EQU 0x5fe0
 
 test_start:
     ld sp, 0xff00
@@ -23,8 +24,9 @@ test_start:
     ld hl, 0x1234
     ld (0x5c78), hl
 
+    ld a, 1
+    ld (_spectrum_overlay_context), a
     xor a
-    ld (_netchesszx_session_role), a
     ld (_netchesszx_local_color), a
     ld hl, 1
     ld (_netchesszx_mqtt_session_id), hl
@@ -34,9 +36,8 @@ test_start:
     call packet_matches
     jp nz, test_bad_host_white
 
-    xor a
-    ld (_netchesszx_session_role), a
-    inc a
+    ld a, 1
+    ld (_spectrum_overlay_context), a
     ld (_netchesszx_local_color), a
     ld hl, 65535
     ld (_netchesszx_mqtt_session_id), hl
@@ -46,9 +47,8 @@ test_start:
     call packet_matches
     jp nz, test_bad_host_black
 
-    ld a, 1
-    ld (_netchesszx_session_role), a
     xor a
+    ld (_spectrum_overlay_context), a
     ld (_netchesszx_local_color), a
     call _mqtt_connect_packet_ovl
     ld de, guest_white_expected
@@ -56,8 +56,9 @@ test_start:
     call packet_matches
     jp nz, test_bad_guest_white
 
-    ld a, 1
-    ld (_netchesszx_session_role), a
+    xor a
+    ld (_spectrum_overlay_context), a
+    inc a
     ld (_netchesszx_local_color), a
     call _mqtt_connect_packet_ovl
     ld de, guest_black_expected
@@ -113,8 +114,6 @@ _netchesszx_mqtt_code:
     DEFM "NC1234"
     DEFB 0
 _netchesszx_local_color:
-    DEFB 0
-_netchesszx_session_role:
     DEFB 0
 _netchesszx_mqtt_session_id:
     DEFW 0

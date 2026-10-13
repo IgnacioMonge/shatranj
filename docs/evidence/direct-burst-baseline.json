@@ -1,0 +1,271 @@
+{
+  "artifacts": [],
+  "burst_bytes_max": 1200,
+  "bursts": 7,
+  "chat_lines": 84,
+  "events": [
+    [
+      372480.906,
+      "IN",
+      "HELLO DIRECT HOST WHITE=HOST"
+    ],
+    [
+      372480.906,
+      "OUT",
+      "1 lines, 12 bytes: MNAME BURST .. MNAME BURST"
+    ],
+    [
+      372480.906,
+      "INFO",
+      "ready; waiting for GAME START on the Spectrum"
+    ],
+    [
+      372481.078,
+      "IN",
+      "HELLO DIRECT HOST WHITE=HOST"
+    ],
+    [
+      372481.234,
+      "IN",
+      "MACH ZX"
+    ],
+    [
+      372481.375,
+      "IN",
+      "MNAME IGNACIO"
+    ],
+    [
+      372489.828,
+      "IN",
+      "GAME START WHITE=HOST"
+    ],
+    [
+      372489.828,
+      "OUT",
+      "16 lines, 606 bytes: ACK GAME START .. PING"
+    ],
+    [
+      372496.203,
+      "IN",
+      "MOVE 1 e2e4"
+    ],
+    [
+      372496.203,
+      "OUT",
+      "32 lines, 1200 bytes: ACK 1 .. PING"
+    ],
+    [
+      372504.203,
+      "OUT",
+      "1 lines, 12 bytes: MOVE 2 e7e5 .. MOVE 2 e7e5"
+    ],
+    [
+      372506.265,
+      "IN",
+      "ACK 2"
+    ],
+    [
+      372511.109,
+      "IN",
+      "MOVE 3 g1f3"
+    ],
+    [
+      372511.109,
+      "OUT",
+      "32 lines, 1200 bytes: ACK 3 .. PING"
+    ],
+    [
+      372519.125,
+      "OUT",
+      "1 lines, 12 bytes: MOVE 4 b8c6 .. MOVE 4 b8c6"
+    ],
+    [
+      372521.218,
+      "IN",
+      "ACK 4"
+    ],
+    [
+      372525.734,
+      "IN",
+      "MOVE 5 f1b5"
+    ],
+    [
+      372525.734,
+      "OUT",
+      "32 lines, 1200 bytes: ACK 5 .. PING"
+    ],
+    [
+      372533.75,
+      "OUT",
+      "1 lines, 12 bytes: MOVE 6 a7a6 .. MOVE 6 a7a6"
+    ],
+    [
+      372535.734,
+      "IN",
+      "ACK 6"
+    ],
+    [
+      372554.14,
+      "IN",
+      "MOVE 7 e1g1"
+    ],
+    [
+      372554.14,
+      "FAIL",
+      "off script: got e1g1, expected b5a4"
+    ]
+  ],
+  "failures": [
+    "off script: got e1g1, expected b5a4"
+  ],
+  "label": "baseline 0cf37b1e chunked reader",
+  "move_ack_seconds": [
+    10.062,
+    10.093,
+    10.0
+  ],
+  "moves_received": 3,
+  "moves_sent": 3,
+  "ok": false,
+  "our_move_resends": 3,
+  "ping_acked": 29,
+  "ping_latency_max_seconds": 45.844,
+  "ping_lost": 21,
+  "ping_sent": 50,
+  "plies": 6,
+  "target": "192.168.0.198:5000",
+  "wire": {
+    "ack": {
+      "inbound": 32,
+      "outbound": 0
+    },
+    "artifacts": [],
+    "cleanup": {
+      "listener_closed": false,
+      "sockets_closed": true
+    },
+    "close": {
+      "clean": true,
+      "events": [
+        {
+          "at": "2026-10-03T17:37:02.928459Z",
+          "reason": "probe_done",
+          "side": "local"
+        }
+      ],
+      "local": true,
+      "local_count": 1,
+      "peer": false,
+      "peer_count": 0,
+      "reason": "probe_done"
+    },
+    "config": {
+      "ack_delay": 0.0,
+      "machine": "PC",
+      "max_frame_size": 47,
+      "ping_interval": 3.0,
+      "require_mach": false,
+      "white_owner": "HOST"
+    },
+    "duration_seconds": 0.0,
+    "ended_at": null,
+    "failures": [],
+    "frames": {
+      "bytes_in": 489,
+      "bytes_out": 4426,
+      "inbound": 46,
+      "malformed": 0,
+      "nul": 0,
+      "outbound": 147,
+      "oversize": 0,
+      "received": 46,
+      "send_failures": 0,
+      "sent": 147
+    },
+    "handshake": {
+      "attempted": 1,
+      "completed": 1,
+      "ok": false,
+      "peer_machine": "ZX",
+      "required": true
+    },
+    "mode": "guest",
+    "ok": false,
+    "ping": {
+      "ack_delay_max_seconds": 0.0,
+      "ack_delay_seconds": 0.0,
+      "ack_delayed": 0,
+      "ack_delays_seconds": [],
+      "ack_latencies_seconds": [
+        0.10999999998603016,
+        0.10899999999674037,
+        2.0929999999934807,
+        3.26500000001397,
+        6.953000000037719,
+        9.187000000034459,
+        9.204000000027008,
+        10.453000000037719,
+        11.84299999999348,
+        15.51500000001397,
+        17.89000000001397,
+        20.98399999999674,
+        25.15600000001723,
+        26.82800000003772,
+        29.93800000002375,
+        27.39100000000326,
+        27.20299999997951,
+        27.969000000040978,
+        27.139999999955762,
+        29.92200000002049,
+        33.0,
+        35.95299999997951,
+        38.93699999997625,
+        41.93699999997625,
+        45.84399999998277,
+        45.81300000002375,
+        45.56200000003446,
+        45.34400000004098,
+        45.31300000002375
+      ],
+      "ack_received": 29,
+      "ack_sent": 0,
+      "inbound": 0,
+      "outbound": 50,
+      "unanswered": 0
+    },
+    "reconnect": {
+      "attempts": 0,
+      "configured": 0,
+      "failures": 0,
+      "required": 0,
+      "required_met": true,
+      "succeeded": 0
+    },
+    "requirements": {
+      "duration_seconds": 0.0,
+      "handshake": true,
+      "reconnects": 0
+    },
+    "result": "FAIL",
+    "role": "GUEST",
+    "schema": "spcx-direct-conformance/v1",
+    "schema_version": 1,
+    "sessions": [
+      {
+        "duration_seconds": 133.71899999998277,
+        "frames": {
+          "inbound": 46,
+          "outbound": 147
+        },
+        "index": 0,
+        "local_hello": "HELLO DIRECT GUEST",
+        "local_mach": "PC",
+        "peer_hello": "HELLO DIRECT HOST WHITE=HOST",
+        "peer_mach": "ZX",
+        "started_at": "2026-10-03T17:34:49.203289Z",
+        "state": "closed"
+      }
+    ],
+    "started_at": "2026-10-03T17:34:49.203289Z"
+  }
+}

@@ -1,43 +1,38 @@
 {
   "schema": 2,
   "owner": "netchess",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "launchers": [
     {
-      "name": "NetChessZX Classic",
-      "bundle_id": "com.ignaciomongegarcia.netchesszx.classic",
-      "arguments": [
-        "--program", "netchess", "--target", "classic",
-        "--netchess", "."
-      ],
-      "icon": "client/shatranj.icns"
-    },
-    {
-      "name": "NetChessZX Next",
-      "bundle_id": "com.ignaciomongegarcia.netchesszx.next",
-      "arguments": [
-        "--program", "netchess", "--target", "next",
-        "--netchess", "."
-      ],
-      "icon": "client/shatranj.icns"
-    },
-    {
-      "name": "NetChessZX SpectraNext",
-      "bundle_id": "com.ignaciomongegarcia.netchesszx.spectranext",
-      "runtime": "fusex",
+      "name": "Shatranj Classic",
+      "bundle_id": "com.ignaciomongegarcia.netchesszx.zx",
       "arguments": [
         "--program",
-        "spectranext",
-        "--spectranext-manifest",
-        "./packaging/spectranext/port.json"
+        "netchess",
+        "--target",
+        "classic",
+        "--netchess",
+        "."
       ],
       "icon": "client/shatranj.icns"
     },
     {
-      "name": "NetChessZX SpectraNext Installer",
-      "bundle_id": "com.ignaciomongegarcia.netchesszx.spectranext-installer",
+      "name": "Shatranj Next",
+      "bundle_id": "com.ignaciomongegarcia.netchesszx.next",
+      "arguments": [
+        "--program",
+        "netchess",
+        "--target",
+        "next",
+        "--netchess",
+        "."
+      ],
+      "icon": "client/shatranj.icns"
+    },
+    {
+      "name": "Shatranj SpectraNext",
+      "bundle_id": "com.ignaciomongegarcia.netchesszx.spectranext",
       "runtime": "fusex",
-      "mode": "installer",
       "arguments": [
         "--program",
         "spectranext",

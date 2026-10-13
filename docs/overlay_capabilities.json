@@ -7,12 +7,22 @@
   "overlays": {
     "about": {
       "allowed_caps": [
+        "render",
         "storage"
       ],
       "allowed_symbols": [
         "ovl_close_overlay_file",
         "ovl_read_chunked",
-        "spxn_xfs_fseek"
+        "spxn_dat_bind",
+        "spectrum_game_stats",
+        "netchesszx_session_state",
+        "spectrum_journal_pend",
+        "netchesszx_local_color",
+        "netchesszx_board_light_attr",
+        "spectrum_frame_wait",
+        "spectrum_append_u16",
+        "piece_sprites_16x16",
+        "pixel_down_hl"
       ]
     },
     "board": {
@@ -32,13 +42,16 @@
         "text"
       ],
       "allowed_symbols": [
+        "spxn_rom_error",
         "spectrum_net_background_drain",
         "setup_config_record"
       ]
     },
     "control": {
       "allowed_caps": [
+        "config",
         "runtime",
+        "storage",
         "text"
       ],
       "allowed_symbols": [
@@ -55,7 +68,11 @@
         "NETCHESS_PROTO_NACK_RESET",
         "NETCHESS_PROTO_TAKEBACK_PREFIX",
         "netchess_after_prefix",
-        "netchess_mqtt_session_parse_u16_token"
+        "netchess_mqtt_session_parse_u16_token",
+        "netchess_proto_takeback_ply",
+        "spectrum_journal_fd",
+        "spectrum_journal_pend",
+        "spectrum_net_background_drain"
       ]
     },
     "direct": {
@@ -85,7 +102,7 @@
         "spectrum_net_background_drain"
       ]
     },
-      "gui_log": {
+    "gui_log": {
       "allowed_caps": [
         "gui",
         "gui_state",
@@ -93,19 +110,26 @@
         "render",
         "runtime",
         "text",
-          "time",
-            "uart"
-        ],
-        "allowed_symbols": [
-          "netchesszx_asm_move_parse_coords",
-          "netchesszx_move_parse_coords"
-        ]
-      },
+        "time",
+        "uart"
+      ],
+      "allowed_symbols": [
+        "compute_pixel_base",
+        "netchesszx_asm_move_parse_coords",
+        "netchesszx_move_parse_coords",
+        "piece_scan",
+        "pixel_down_hl",
+        "tmp_scan"
+      ]
+    },
     "status": {
       "allowed_caps": [
         "config",
         "gui",
+        "gui_state",
+        "libc",
         "net",
+        "render",
         "runtime",
         "session",
         "text"
@@ -126,6 +150,7 @@
         "gui",
         "gui_state",
         "libc",
+        "render",
         "runtime"
       ],
       "allowed_symbols": [
@@ -166,6 +191,7 @@
         "config",
         "gui_state",
         "libc",
+        "render",
         "runtime",
         "text"
       ]
@@ -261,6 +287,39 @@
         "text"
       ]
     },
+    "journal": {
+      "allowed_caps": [
+        "net",
+        "runtime",
+        "storage"
+      ],
+      "allowed_symbols": [
+        "spxn_rom_error",
+        "spxn_regs",
+        "spxn_xfs_fseek",
+        "spectrum_journal_fd",
+        "spectrum_journal_pend"
+      ]
+    },
+    "recovery": {
+      "allowed_caps": [
+        "board_view",
+        "config",
+        "runtime",
+        "session",
+        "storage"
+      ],
+      "allowed_symbols": [
+        "spectrum_time_snapshot",
+        "spectrum_journal_fd",
+        "spectrum_journal_pend",
+        "spectrum_journal_count",
+        "spectrum_journal_crc",
+        "side_to_move",
+        "castle_rights",
+        "ep_square"
+      ]
+    },
     "saveload": {
       "allowed_caps": [
         "libc",
@@ -268,6 +327,23 @@
         "runtime",
         "storage",
         "text"
+      ],
+      "allowed_symbols": [
+        "spectrum_game_stats",
+        "spectrum_stats_undo",
+        "netchesszx_session_state",
+        "spectrum_time_snapshot",
+        "spectrum_journal_fd",
+        "spectrum_journal_pend",
+        "spxn_rom_error",
+        "spxn_xfs_fseek",
+        "last_ply_seen",
+        "move_line_count",
+        "spectrum_gui_side_panels_visible",
+        "spectrum_render_moves",
+        "spectrum_journal_warning",
+        "spectrum_journal_count",
+        "spectrum_journal_crc"
       ]
     },
     "setup": {

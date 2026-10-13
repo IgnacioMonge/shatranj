@@ -2,7 +2,7 @@
 
 [Español](README.es.md) · [Project documentation](../docs/README.md)
 
-Qt desktop client for Shatranj 1.2. Windows, macOS, and Linux use the same
+Qt desktop client for Shatranj 1.3. Windows, macOS, and Linux use the same
 implementation and support both transports:
 
 - **Direct TCP**: a host listens for one guest; the guest connects to the
@@ -17,14 +17,31 @@ adapter.
 
 ## Using the Qt client
 
+The complete user manual, in English and Spanish, ships with the client:
+press **?** or F1 in the program, or read
+[`manual.en.md`](../assets/pc-client/manual/manual.en.md). It covers
+Preferences and playing with the Stockfish engine. The notes below are a
+short summary.
+
+The **Game stats** toggle (the bar-chart icon between Load game and **Log**)
+shows the statistics over the board, during a game and after checkmate,
+stalemate, resignation or an agreed draw, and hides them when pressed again;
+moves and chat stay visible, and the page updates after every move. The host
+may request **Restart Game**; the guest must consent, and
+declining it ends the session for both.
+Statistics cover completed turns and actual captures in this game; applied
+loads/restores start an empty partial sample. See [the metrics](../docs/game-stats.md).
+
 1. Select `Direct` or `MQTT` and enter the required endpoint/room settings.
+   Optionally set your name in **Preferences → Player** (up to ten of `A-Z 0-9 - _`); it is remembered
+   and shown to the opponent in the move-list header.
 2. Choose `Host` or `Guest`; the host selects the colour and starts the game.
 3. Click a source square and a target square on your turn.
 4. Use the chat box for messages; pressing Enter sends the current line.
 5. Use the command forms below when a session control action is needed:
 
    ```text
-   /draw       offer a draw or rematch
+   /draw       offer a draw
    /resign     resign the current game
    /takeback   request undo of the last applied ply
    /save [name] save the current position locally
@@ -90,7 +107,8 @@ linker children suspended under process-managed agent hosts.
 bundle, or builds the supported and tested Linux executable against the system
 Qt installation. The **Build Linux AppImage** GitHub Actions workflow packages
 and inspects a self-contained x86_64 AppImage, uploads it as a workflow
-artifact, and attaches it to a published release. On macOS,
+artifact. Attaching that artifact to a published release is a separate manual
+step. On macOS,
 the command also installs the current bundle at `/Applications/Shatranj.app`;
 set `CLIENT_MAC_APPLICATIONS_DIR` to choose another Applications directory.
 

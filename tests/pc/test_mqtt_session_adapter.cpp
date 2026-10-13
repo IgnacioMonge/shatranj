@@ -237,6 +237,51 @@ static void reachReady(DesktopSessionAdapter &adapter, DesktopActionBatch &batch
           "join publish reaches READY with timer replacement");
 }
 
+static void reachActive(DesktopSessionAdapter &adapter, DesktopActionBatch &batch)
+{
+    reachReady(adapter, batch);
+    check(adapter.enqueueMqttRx(1u, "meta", false, "GAME START") &&
+              adapter.takeNextBatch(&batch),
+          "active adapter receives GAME START");
+    const uint8_t tx = sendId(batch);
+    adapter.enqueueTxResult(tx, SESSION_TX_OK);
+    check(adapter.takeNextBatch(&batch) &&
+              hasSessionStatus(batch, SESSION_CHANGED_STARTED),
+          "active adapter starts game");
+}
+
+static void testFiveActionMoveCollision()
+{
+    DesktopSessionAdapter adapter;
+    DesktopActionBatch batch;
+    uint8_t tx;
+
+    reachActive(adapter, batch);
+    adapter.enqueueLocalRequest(SESSION_REQUEST_MOVE, 0u, "e2e4",
+                                SESSION_PHASE_ACTIVE);
+    check(adapter.takeNextBatch(&batch), "collision local move drains");
+    tx = sendId(batch);
+    adapter.enqueueTxResult(tx, SESSION_TX_OK);
+    check(adapter.takeNextBatch(&batch), "collision move handoff drains");
+    check(adapter.enqueueMqttRx(1u, "w2b", false, "PING") &&
+              adapter.takeNextBatch(&batch),
+          "collision ping drains");
+    tx = sendId(batch);
+    adapter.enqueueTxResult(tx, SESSION_TX_OK);
+    check(adapter.takeNextBatch(&batch), "collision ping handoff drains");
+    check(adapter.enqueueMqttRx(1u, "w2b", false, "MOVE 2 e7e5") &&
+              adapter.takeNextBatch(&batch) && batch.count == 5u,
+          "collision keeps the complete five-action batch");
+    check(batch.actions[0].action.type == SESSION_ACT_TIMER_CANCEL &&
+              batch.actions[1].action.type == SESSION_ACT_DELIVER_GAME &&
+              batch.actions[1].payload == QByteArray("e2e4") &&
+              batch.actions[2].action.type == SESSION_ACT_TIMER_CANCEL &&
+              batch.actions[3].action.type == SESSION_ACT_DELIVER_GAME &&
+              batch.actions[3].payload == QByteArray("e7e5") &&
+              batch.actions[4].action.type == SESSION_ACT_TIMER_SET,
+          "collision preserves timer and move action order");
+}
+
 static void testLinkDownPriority()
 {
     DesktopSessionAdapter adapter;
@@ -268,13 +313,26 @@ static void testReadyStartedEndedAndRoutes()
               action->payload == QByteArray("ACK GAME START") &&
               action->action.data.send.route == SESSION_ROUTE_CONTROL &&
               action->action.data.send.retained == 0u &&
-              action->action.data.send.link_id == 1u,
-          "start ACK preserves live control route");
+              action->action.data.send.link_id == 1u &&
+              adapter.mqttTopicSuffixForRoute(
+                  action->action.data.send.route) == "b2w",
+          "start ACK uses the PC lateral topic from its productive action");
     const uint8_t startTx = sendId(batch);
     adapter.enqueueTxResult(startTx, SESSION_TX_OK);
     check(adapter.takeNextBatch(&batch) &&
               hasSessionStatus(batch, SESSION_CHANGED_STARTED),
           "start publish reaches STARTED");
+
+    adapter.enqueueTimeout(SESSION_TIMER_LIVENESS);
+    check(adapter.takeNextBatch(&batch), "MQTT liveness timeout drains");
+    action = findAction(batch, SESSION_ACT_SEND);
+    check(action != nullptr && action->payload == QByteArray("PING") &&
+              action->action.data.send.route == SESSION_ROUTE_CONTROL &&
+              adapter.mqttTopicSuffixForRoute(
+                  action->action.data.send.route) == "b2w",
+          "PING uses the lateral topic from its productive action");
+    adapter.enqueueTxResult(sendId(batch), SESSION_TX_OK);
+    check(adapter.takeNextBatch(&batch), "PING publish result drains");
 
     check(adapter.enqueueMqttRx(1u, "netchesszx/v1/room/w2b", false,
                             "CHAT hi") &&
@@ -309,6 +367,12 @@ static void testReadyStartedEndedAndRoutes()
     adapter.enqueueLocalRequest(SESSION_REQUEST_MOVE, 0u, "e2e4",
                                 SESSION_PHASE_ACTIVE);
     check(adapter.takeNextBatch(&batch), "local MQTT move drains");
+    action = findAction(batch, SESSION_ACT_SEND);
+    check(action != nullptr && action->payload == QByteArray("MOVE 1 e2e4") &&
+              action->action.data.send.route == SESSION_ROUTE_GAME &&
+              adapter.mqttTopicSuffixForRoute(
+                  action->action.data.send.route) == "b2w",
+          "MOVE uses the lateral topic from its productive action");
     const uint8_t moveTx = sendId(batch);
     adapter.enqueueTxResult(moveTx, SESSION_TX_OK);
     check(adapter.takeNextBatch(&batch), "move publish result drains");
@@ -333,6 +397,33 @@ static void testReadyStartedEndedAndRoutes()
     adapter.enqueueTimeout(SESSION_TIMER_LIVENESS);
     check(adapter.takeNextBatch(&batch) && batch.count == 0u,
           "stale timer is inert after cancellation");
+}
+
+static void testAckResetUsesPeerAckTopic()
+{
+    DesktopSessionAdapter adapter;
+    DesktopActionBatch batch;
+    const DesktopOwnedAction *action;
+
+    reachActive(adapter, batch);
+    check(adapter.enqueueMqttRx(1u, "w2b", false, "RESET") &&
+              adapter.takeNextBatch(&batch),
+          "remote RESET opens a decision");
+    action = findAction(batch, SESSION_ACT_REQUEST_DECISION);
+    check(action != nullptr &&
+              action->action.data.decision.control == SESSION_REQUEST_RESET,
+          "remote RESET exposes its productive decision action");
+    const uint8_t requestId = action == nullptr
+        ? 0u : action->action.data.decision.request_id;
+
+    adapter.enqueueUserDecision(requestId, SESSION_DECISION_ACCEPT);
+    check(adapter.takeNextBatch(&batch), "accepted RESET drains");
+    action = findAction(batch, SESSION_ACT_SEND);
+    check(action != nullptr && action->payload == QByteArray("ACK RESET") &&
+              action->action.data.send.route == SESSION_ROUTE_ACK &&
+              adapter.mqttTopicSuffixForRoute(
+                  action->action.data.send.route) == "ack_w",
+          "ACK RESET uses the peer ACK topic from its productive action");
 }
 
 static void testEndReasons()
@@ -408,8 +499,10 @@ int main(int argc, char **argv)
 
     testRoutingAndTxFailure();
     testBootstrapMetaSubscription();
+    testFiveActionMoveCollision();
     testLinkDownPriority();
     testReadyStartedEndedAndRoutes();
+    testAckResetUsesPeerAckTopic();
     testEndReasons();
     testBusy();
 

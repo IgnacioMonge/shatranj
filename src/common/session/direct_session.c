@@ -216,9 +216,11 @@ static uint8_t direct_arm_liveness(SessionState *state,
     if (!state->peer_ready ||
         (state->pending_control != 0u &&
          !(state->pending_origin == DIRECT_ORIGIN_LOCAL &&
-           (state->pending_control == SESSION_REQUEST_RESET ||
+           ((state->timer_mask & (uint8_t)(1u << SESSION_TIMER_DECISION)) != 0u ||
+            state->takeback_cancel_pending ||
+           ((state->pending_control == SESSION_REQUEST_RESET ||
             state->pending_control == SESSION_REQUEST_DRAW) &&
-           state->pending_value != 0u))) {
+            state->pending_value != 0u))))) {
         return 1u;
     }
     return direct_emit_timer_set(state,
@@ -240,6 +242,14 @@ static uint8_t direct_rearm_liveness_after_rx(SessionState *state,
                                      direct_liveness_ticks(state));
     }
     return direct_arm_liveness(state, actions, count);
+}
+
+static uint8_t direct_credit_rx(SessionState *state, uint8_t count)
+{
+    if (count != 0u && count != DIRECT_RX_UNHANDLED) {
+        state->liveness_misses = 0u;
+    }
+    return count;
 }
 
 static uint8_t direct_send_hello(SessionState *state,
@@ -345,7 +355,9 @@ static uint8_t direct_send_takeback(SessionState *state,
     char value[6];
     uint8_t i = 0u;
     uint8_t j = 0u;
-    const char *prefix = NETCHESS_PROTO_TAKEBACK_PREFIX;
+    const char *prefix = state->takeback_cancel_pending
+                            ? NETCHESS_PROTO_CANCEL_TAKEBACK_PREFIX
+                            : NETCHESS_PROTO_TAKEBACK_PREFIX;
 
     session_u16_text(value, state->pending_value);
     while (prefix[i] != '\0') {
@@ -558,6 +570,7 @@ static uint8_t direct_tx_ok_control_reply(SessionState *state,
     case DIRECT_TX_ACK_START:
         if (state->pending_value == 0u) {
             state->phase = SESSION_PHASE_ACTIVE;
+            state->accepted_draw = 0u;
             state->current_ply = 0u;
             session_clear_duplicate(state);
             if (!session_emit_session(actions, &count,
@@ -575,6 +588,7 @@ static uint8_t direct_tx_ok_control_reply(SessionState *state,
     case DIRECT_TX_ACK_RESET:
         if (state->pending_request_id != 0u) {
             state->phase = SESSION_PHASE_ACTIVE;
+            state->accepted_draw = 0u;
             state->current_ply = 0u;
             if (!session_emit_game(actions, &count, SESSION_DELIVER_CONTROL, 0u,
                                   SESSION_REQUEST_RESET, 0, 0u) ||
@@ -600,16 +614,13 @@ static uint8_t direct_tx_ok_control_reply(SessionState *state,
             }
         }
         state->phase = SESSION_PHASE_OVER;
-        state->pending_control = SESSION_REQUEST_RESET;
-        state->pending_origin = DIRECT_ORIGIN_REMOTE;
+        state->accepted_draw = 1u;
+        state->pending_control = 0u;
+        state->pending_origin = DIRECT_ORIGIN_NONE;
         state->pending_request_id = 0u;
         state->pending_value = 0u;
         state->control_retries = 0u;
-        if (!session_emit_timer_cancel(state, actions, &count,
-                                      SESSION_TIMER_LIVENESS) ||
-            !direct_emit_timer_set(state, actions, &count,
-                                   SESSION_TIMER_CONTROL,
-                                   SESSION_DIRECT_REPLY_TICKS)) {
+        if (!direct_arm_liveness(state, actions, &count)) {
             return 0u;
         }
         break;
@@ -644,16 +655,15 @@ static uint8_t direct_tx_ok_control_reply(SessionState *state,
 
 static uint8_t direct_tx_ok_crossed_control(SessionState *state,
                                             uint8_t tx_kind,
-                                            uint8_t *tx_scratch,
-                                            uint8_t tx_capacity,
                                             SessionAction *actions,
                                             uint8_t count)
 {
     switch (tx_kind) {
     case DIRECT_TX_ACK_DRAW_CROSSED:
         state->phase = SESSION_PHASE_OVER;
-        state->pending_control = SESSION_REQUEST_RESET;
-        state->pending_origin = DIRECT_ORIGIN_LOCAL;
+        state->accepted_draw = 1u;
+        state->pending_control = 0u;
+        state->pending_origin = DIRECT_ORIGIN_NONE;
         state->pending_request_id = 0u;
         state->control_retries = 0u;
         state->pending_value = 0u;
@@ -661,9 +671,7 @@ static uint8_t direct_tx_ok_crossed_control(SessionState *state,
                               SESSION_DELIVER_CONTROL_RESULT,
                               SESSION_CONTROL_ACCEPTED,
                               SESSION_REQUEST_DRAW, 0, 0u) ||
-            !direct_send_text(state, "RESET", tx_scratch, tx_capacity,
-                              actions, &count, state->active_link,
-                              DIRECT_TX_RESET)) {
+            !direct_arm_liveness(state, actions, &count)) {
             return 0u;
         }
         break;
@@ -675,6 +683,7 @@ static uint8_t direct_tx_ok_crossed_control(SessionState *state,
                                     : SESSION_DELIVER_CONTROL;
 
         state->phase = SESSION_PHASE_ACTIVE;
+        state->accepted_draw = 0u;
         state->current_ply = 0u;
         session_clear_duplicate(state);
         state->pending_control = 0u;
@@ -701,20 +710,10 @@ static uint8_t direct_tx_ok_crossed_control(SessionState *state,
                               SESSION_REQUEST_RESIGN, 0, 0u)) {
             return 0u;
         }
-        if (state->config.role == SESSION_ROLE_HOST) {
-            state->pending_control = SESSION_REQUEST_RESET;
-            state->pending_origin = DIRECT_ORIGIN_LOCAL;
-            if (!direct_send_text(state, "RESET", tx_scratch, tx_capacity,
-                                  actions, &count, state->active_link,
-                                  DIRECT_TX_RESET)) {
-                return 0u;
-            }
-        } else {
-            state->pending_control = 0u;
-            state->pending_origin = DIRECT_ORIGIN_NONE;
-            if (!direct_arm_liveness(state, actions, &count)) {
-                return 0u;
-            }
+        state->pending_control = 0u;
+        state->pending_origin = DIRECT_ORIGIN_NONE;
+        if (!direct_arm_liveness(state, actions, &count)) {
+            return 0u;
         }
         break;
     default:
@@ -736,12 +735,16 @@ static uint8_t direct_tx_ok_rejection_restore(SessionState *state,
     case DIRECT_TX_NACK_DRAW:
     case DIRECT_TX_NACK_TAKEBACK:
     case DIRECT_TX_RN:
-        if (tx_kind != DIRECT_TX_RN) {
+        /* A declined DRAW keeps its latch until the position changes: a
+           retransmission that crossed the NACK is re-NACKed, not re-asked. */
+        if (tx_kind != DIRECT_TX_RN &&
+            (tx_kind != DIRECT_TX_NACK_DRAW ||
+             state->last_rx_kind != SESSION_REQUEST_DRAW)) {
             session_clear_duplicate(state);
         }
-        if ((tx_kind == DIRECT_TX_NACK_RESET ||
-             tx_kind == DIRECT_TX_NACK_DRAW) &&
-            state->pending_value == DIRECT_CANCEL_REMOTE &&
+        if (((tx_kind == DIRECT_TX_NACK_TAKEBACK && state->takeback_cancel_pending) ||
+             ((tx_kind == DIRECT_TX_NACK_RESET || tx_kind == DIRECT_TX_NACK_DRAW) &&
+              state->pending_value == DIRECT_CANCEL_REMOTE)) &&
             !session_emit_game(actions, &count,
                               SESSION_DELIVER_CONTROL_RESULT,
                               SESSION_CONTROL_EXPIRED,
@@ -839,8 +842,7 @@ static uint8_t direct_tx_ok(SessionState *state,
     if (result != DIRECT_TX_UNHANDLED) {
         return result;
     }
-    result = direct_tx_ok_crossed_control(state, tx_kind, tx_scratch,
-                                          tx_capacity, actions, count);
+    result = direct_tx_ok_crossed_control(state, tx_kind, actions, count);
     if (result != DIRECT_TX_UNHANDLED) {
         return result;
     }
@@ -1119,6 +1121,13 @@ static uint8_t direct_handle_move(SessionState *state,
     if (ply == 0u) {
         return 0u;
     }
+    if (ply == (uint16_t)(state->current_ply + 1u) && session_withdrawing(state)) {
+        session_emit_timer_cancel(state, actions, &count, SESSION_TIMER_CONTROL);
+        state->withdrawn_control = state->pending_control;
+        state->pending_control = 0u;
+        state->pending_origin = 0u;
+        state->takeback_cancel_pending = 0u;
+    }
     move_length = session_text_length(move);
     if (state->last_rx_kind == SESSION_REQUEST_MOVE &&
         state->last_value == ply &&
@@ -1246,6 +1255,12 @@ static uint8_t direct_begin_decision(SessionState *state,
 {
     uint8_t count = 0u;
 
+    if (control == SESSION_REQUEST_DRAW &&
+        state->phase == SESSION_PHASE_OVER && state->accepted_draw) {
+        return direct_send_duplicate_reply(state, control, value, 1u,
+                                           tx_scratch, tx_capacity,
+                                           actions, &count) ? count : 0u;
+    }
     if (state->pending_request_id != 0u) {
         return 0u;
     }
@@ -1305,27 +1320,6 @@ static uint8_t direct_begin_decision(SessionState *state,
         return direct_send_value_reply(state, value, 0, 0u, 0u, tx_scratch,
                                        tx_capacity, actions, &count,
                                        DIRECT_TX_NACK_MOVE)
-                   ? count
-                   : 0u;
-    }
-    if (control == SESSION_REQUEST_RESET &&
-        state->phase == SESSION_PHASE_OVER &&
-        state->pending_control == 0u &&
-        state->last_rx_kind == SESSION_REQUEST_RESIGN &&
-        state->last_result != 0u) {
-        state->pending_request_id = session_next_delivery_id(state);
-        state->pending_control = SESSION_REQUEST_RESET;
-        state->pending_origin = DIRECT_ORIGIN_REMOTE;
-        state->pending_value = 0u;
-        state->last_rx_kind = SESSION_REQUEST_RESET;
-        state->last_value = 0u;
-        state->last_result = SESSION_DECISION_ACCEPT;
-        return session_emit_timer_cancel(state, actions, &count,
-                                        SESSION_TIMER_LIVENESS) &&
-                       direct_send_text(state, "ACK RESET", tx_scratch,
-                                        tx_capacity, actions, &count,
-                                        state->active_link,
-                                        DIRECT_TX_ACK_RESET)
                    ? count
                    : 0u;
     }
@@ -1392,6 +1386,7 @@ static uint8_t direct_begin_decision(SessionState *state,
     state->pending_control = control;
     state->pending_origin = DIRECT_ORIGIN_REMOTE;
     state->pending_value = value;
+    state->takeback_cancel_pending = 0u;
     if (!session_emit_decision(actions, &count, state->delivery_id,
                               control, value)) {
         return 0u;
@@ -1526,6 +1521,31 @@ static uint8_t direct_handle_control_request_rx(SessionState *state,
     const char *takeback;
     uint16_t value;
 
+    value = payload[0] == 'C'
+        ? netchess_proto_takeback_ply((const char *)payload) : 0u;
+    if (value != 0u) {
+        uint8_t matched = (uint8_t)(
+            state->pending_control == SESSION_REQUEST_TAKEBACK &&
+            state->pending_origin == DIRECT_ORIGIN_REMOTE &&
+            state->pending_value == value && state->pending_request_id != 0u);
+        uint8_t accepted = (uint8_t)(
+            state->last_rx_kind == SESSION_REQUEST_TAKEBACK &&
+            state->last_value == value && state->last_result == SESSION_GAME_ACCEPTED);
+
+        /* An accepted domain delivery may already be undoing the board. */
+        if (matched && (state->timer_mask & (1u << SESSION_TIMER_CONTROL)) != 0u) {
+            return 0u;
+        }
+        if (matched) {
+            state->pending_request_id = 0u;
+            state->takeback_cancel_pending = 1u;
+        }
+        return direct_send_value_reply(state, value, 0, 0u, accepted,
+                                         tx_scratch, tx_capacity, actions, &count,
+                                         matched ? DIRECT_TX_NACK_TAKEBACK
+                                                 : DIRECT_TX_NACK_RESET_BUSY)
+                   ? count : 0u;
+    }
     if (session_text_equal(payload, length, NETCHESS_PROTO_CANCEL_RESET) ||
         session_text_equal(payload, length, NETCHESS_PROTO_CANCEL_DRAW)) {
         uint8_t control = payload[7] == 'R' ? SESSION_REQUEST_RESET
@@ -1535,6 +1555,12 @@ static uint8_t direct_handle_control_request_rx(SessionState *state,
             state->pending_origin == DIRECT_ORIGIN_REMOTE &&
             state->pending_request_id != 0u);
 
+        if (!matched &&
+            ((control == SESSION_REQUEST_DRAW && state->accepted_draw) ||
+             (state->last_rx_kind == control && state->last_result == SESSION_DECISION_ACCEPT))) {
+            return direct_send_duplicate_reply(state, control, 0u, 1u,
+                                                tx_scratch, tx_capacity, actions, &count) ? count : 0u;
+        }
         if (matched) {
             state->pending_request_id = 0u;
             state->pending_value = DIRECT_CANCEL_REMOTE;
@@ -1741,6 +1767,7 @@ static uint8_t direct_handle_restore_rx(SessionState *state,
         state->pending_origin == DIRECT_ORIGIN_LOCAL &&
         state->pending_request_id == 0u) {
         session_emit_timer_cancel(state, actions, &count, SESSION_TIMER_CONTROL);
+        state->accepted_draw = 0u;
         state->phase =
             (uint8_t)(state->restore_mask >> DIRECT_RESTORE_PHASE_SHIFT);
         state->current_ply = state->pending_value;
@@ -1827,16 +1854,22 @@ static uint8_t direct_handle_restore_rx(SessionState *state,
 static uint8_t direct_handle_control_reply_rx(SessionState *state,
                                               const SessionEvent *event,
                                               SessionWorkspace *workspace,
-                                              uint8_t *tx_scratch,
-                                              uint8_t tx_capacity,
                                               SessionAction *actions)
 {
     const uint8_t *payload = event->data.rx.payload;
     uint8_t length = event->data.rx.length;
     uint8_t count = 0u;
 
+    if ((state->withdrawn_control == SESSION_REQUEST_DRAW ||
+         state->withdrawn_control == SESSION_REQUEST_RESET) &&
+        session_text_equal(payload, length,
+            state->withdrawn_control == SESSION_REQUEST_RESET ? "NACK RESET" : "NACK DRAW")) {
+        state->withdrawn_control = 0u;
+        return 0u;
+    }
     if (session_text_equal(payload, length, "ACK RESET") &&
-        state->pending_control == SESSION_REQUEST_RESET &&
+        (state->pending_control == SESSION_REQUEST_RESET ||
+         state->withdrawn_control == SESSION_REQUEST_RESET) &&
         state->pending_origin == DIRECT_ORIGIN_LOCAL &&
         state->pending_request_id == 0u) {
         session_emit_timer_cancel(state, actions, &count, SESSION_TIMER_CONTROL);
@@ -1844,6 +1877,7 @@ static uint8_t direct_handle_control_reply_rx(SessionState *state,
         state->pending_origin = DIRECT_ORIGIN_NONE;
         state->pending_value = 0u;
         state->phase = SESSION_PHASE_ACTIVE;
+        state->accepted_draw = 0u;
         state->current_ply = 0u;
         session_clear_duplicate(state);
         session_emit_game(actions, &count, SESSION_DELIVER_CONTROL_RESULT,
@@ -1854,7 +1888,8 @@ static uint8_t direct_handle_control_reply_rx(SessionState *state,
         return count;
     }
     if (session_text_equal(payload, length, "ACK DRAW")) {
-        if (state->pending_control != SESSION_REQUEST_DRAW ||
+        if ((state->pending_control != SESSION_REQUEST_DRAW &&
+             state->withdrawn_control != SESSION_REQUEST_DRAW) ||
             state->pending_origin != DIRECT_ORIGIN_LOCAL ||
             state->pending_request_id != 0u) {
             return 0u;
@@ -1864,16 +1899,16 @@ static uint8_t direct_handle_control_reply_rx(SessionState *state,
             return 0u;
         }
         state->phase = SESSION_PHASE_OVER;
-        state->pending_control = SESSION_REQUEST_RESET;
-        state->pending_origin = DIRECT_ORIGIN_LOCAL;
+        state->accepted_draw = 1u;
+        state->withdrawn_control = 0u;
+        state->pending_control = 0u;
+        state->pending_origin = DIRECT_ORIGIN_NONE;
         state->pending_value = 0u;
         state->control_retries = 0u;
         if (!session_emit_game(actions, &count, SESSION_DELIVER_CONTROL_RESULT,
                               SESSION_CONTROL_ACCEPTED,
                               SESSION_REQUEST_DRAW, 0, 0u) ||
-            !direct_send_text(state, "RESET", tx_scratch, tx_capacity,
-                              actions, &count, state->active_link,
-                              DIRECT_TX_RESET)) {
+            !direct_arm_liveness(state, actions, &count)) {
             return 0u;
         }
         return count;
@@ -1884,18 +1919,14 @@ static uint8_t direct_handle_control_reply_rx(SessionState *state,
             state->pending_request_id == 0u) {
             session_emit_timer_cancel(state, actions, &count,
                                       SESSION_TIMER_CONTROL);
-            state->pending_control = SESSION_REQUEST_RESET;
-            state->pending_origin = DIRECT_ORIGIN_LOCAL;
+            state->pending_control = 0u;
+            state->pending_origin = DIRECT_ORIGIN_NONE;
             state->pending_value = 0u;
             state->control_retries = 0u;
             session_emit_game(actions, &count, SESSION_DELIVER_CONTROL_RESULT,
                              SESSION_CONTROL_ACCEPTED,
                              SESSION_REQUEST_RESIGN, 0, 0u);
-            if (!direct_send_text(state, "RESET", tx_scratch, tx_capacity,
-                                  actions, &count, state->active_link,
-                                  DIRECT_TX_RESET)) {
-                return 0u;
-            }
+            direct_arm_liveness(state, actions, &count);
         }
         return count;
     }
@@ -1903,7 +1934,7 @@ static uint8_t direct_handle_control_reply_rx(SessionState *state,
         return direct_handle_numeric_ack(state, payload, length, workspace,
                                          actions);
     }
-    if (session_text_prefix(payload, length, "NACK GAME START") &&
+    if (session_text_token(payload, length, "NACK GAME START") &&
         state->pending_control == SESSION_REQUEST_START &&
         state->pending_origin == DIRECT_ORIGIN_LOCAL &&
         state->pending_request_id == 0u) {
@@ -1917,11 +1948,11 @@ static uint8_t direct_handle_control_reply_rx(SessionState *state,
         direct_arm_liveness(state, actions, &count);
         return count;
     }
-    if ((session_text_prefix(payload, length, "NACK RESET") &&
+    if ((session_text_token(payload, length, "NACK RESET") &&
          state->pending_control == SESSION_REQUEST_RESET &&
          state->pending_origin == DIRECT_ORIGIN_LOCAL &&
          state->pending_request_id == 0u) ||
-        (session_text_prefix(payload, length, "NACK DRAW") &&
+        (session_text_token(payload, length, "NACK DRAW") &&
          state->pending_control == SESSION_REQUEST_DRAW &&
          state->pending_origin == DIRECT_ORIGIN_LOCAL &&
          state->pending_request_id == 0u)) {
@@ -1976,14 +2007,14 @@ static uint8_t direct_handle_rx(SessionState *state,
     if (!session_slice_valid(payload, length)) {
         return 0u;
     }
-    state->liveness_misses = 0u;
-
     if (state->peer_ready && session_text_equal(payload, length, "PING")) {
-        return direct_send_text(state, "ACK PING", tx_scratch, tx_capacity,
-                                actions, &count, state->active_link,
-                                DIRECT_TX_ACK_PING)
-                   ? count
-                   : 0u;
+        return direct_credit_rx(
+            state,
+            direct_send_text(state, "ACK PING", tx_scratch, tx_capacity,
+                             actions, &count, state->active_link,
+                             DIRECT_TX_ACK_PING)
+                ? count
+                : 0u);
     }
     if (!state->peer_ready && session_text_equal(payload, length, "PING")) {
         if (state->pending_tx_kind != DIRECT_TX_NONE ||
@@ -1991,22 +2022,25 @@ static uint8_t direct_handle_rx(SessionState *state,
                                       SESSION_TIMER_CONTROL)) {
             return 0u;
         }
-        return direct_send_text(state, "ACK PING", tx_scratch, tx_capacity,
-                                actions, &count, state->active_link,
-                                DIRECT_TX_ACK_PING)
-                   ? count
-                   : 0u;
+        return direct_credit_rx(
+            state,
+            direct_send_text(state, "ACK PING", tx_scratch, tx_capacity,
+                             actions, &count, state->active_link,
+                             DIRECT_TX_ACK_PING)
+                ? count
+                : 0u);
     }
     if (state->peer_ready &&
         session_text_equal(payload, length, "ACK PING")) {
         if (!direct_rearm_liveness_after_rx(state, actions, &count)) {
             return 0u;
         }
-        return count;
+        return direct_credit_rx(state, count);
     }
     if (session_text_prefix(payload, length, "HELLO DIRECT ")) {
-        return direct_handle_hello(state, event, tx_scratch, tx_capacity,
-                                   actions);
+        return direct_credit_rx(
+            state, direct_handle_hello(state, event, tx_scratch, tx_capacity,
+                                       actions));
     }
     if (!state->peer_ready) {
         if (session_text_equal(payload, length, "BUSY")) {
@@ -2024,7 +2058,7 @@ static uint8_t direct_handle_rx(SessionState *state,
                 return 0u;
             }
             session_reset(state);
-            return count;
+            return direct_credit_rx(state, count);
         }
         return 0u;
     }
@@ -2038,7 +2072,21 @@ static uint8_t direct_handle_rx(SessionState *state,
                 !direct_arm_liveness(state, actions, &count)) {
                 return 0u;
             }
-            return count;
+            return direct_credit_rx(state, count);
+        }
+    }
+    {
+        uint8_t name_length = session_parse_name(payload, length);
+
+        if (name_length != 0u) {
+            if (!session_emit_game(actions, &count,
+                                   SESSION_DELIVER_PEER_NAME, 0u, 0u,
+                                   payload + NETCHESS_PROTO_NAME_PREFIX_LEN,
+                                   name_length) ||
+                !direct_arm_liveness(state, actions, &count)) {
+                return 0u;
+            }
+            return direct_credit_rx(state, count);
         }
     }
     if (session_text_equal(payload, length, "BYE")) {
@@ -2049,17 +2097,20 @@ static uint8_t direct_handle_rx(SessionState *state,
     if (state->pending_tx_kind != DIRECT_TX_NONE) {
         if (session_text_prefix(payload, length, "CHAT ") && length > 5u &&
             length <= (uint8_t)(5u + SESSION_CHAT_TEXT_MAX)) {
-            return session_emit_game(actions, &count, SESSION_DELIVER_CHAT, 0u,
-                                    SESSION_CHAT_REMOTE, payload + 5u,
-                                    (uint8_t)(length - 5u))
-                       ? count
-                       : 0u;
+            return direct_credit_rx(
+                state,
+                session_emit_game(actions, &count, SESSION_DELIVER_CHAT, 0u,
+                                  SESSION_CHAT_REMOTE, payload + 5u,
+                                  (uint8_t)(length - 5u))
+                    ? count
+                    : 0u);
         }
         return 0u;
     }
     if (session_text_prefix(payload, length, "GAME START")) {
-        return direct_handle_start(state, event, tx_scratch, tx_capacity,
-                                   actions);
+        return direct_credit_rx(
+            state, direct_handle_start(state, event, tx_scratch, tx_capacity,
+                                       actions));
     }
     if (session_text_equal(payload, length, "ACK GAME START")) {
         if (state->pending_control != SESSION_REQUEST_START ||
@@ -2074,23 +2125,25 @@ static uint8_t direct_handle_rx(SessionState *state,
         state->pending_control = 0u;
         state->pending_origin = DIRECT_ORIGIN_NONE;
         state->phase = SESSION_PHASE_ACTIVE;
+        state->accepted_draw = 0u;
         state->current_ply = 0u;
         if (!session_emit_session(actions, &count, SESSION_CHANGED_STARTED) ||
             !direct_arm_liveness(state, actions, &count)) {
             return 0u;
         }
-        return count;
+        return direct_credit_rx(state, count);
     }
     if (session_text_prefix(payload, length, "MOVE ")) {
-        return direct_handle_move(state, event, workspace, tx_scratch,
-                                  tx_capacity, actions);
+        return direct_credit_rx(
+            state, direct_handle_move(state, event, workspace, tx_scratch,
+                                      tx_capacity, actions));
     }
     {
         uint8_t result = direct_handle_control_request_rx(
             state, event, tx_scratch, tx_capacity, actions);
 
         if (result != DIRECT_RX_UNHANDLED) {
-            return result;
+            return direct_credit_rx(state, result);
         }
     }
     {
@@ -2098,15 +2151,15 @@ static uint8_t direct_handle_rx(SessionState *state,
             state, event, workspace, tx_scratch, tx_capacity, actions);
 
         if (result != DIRECT_RX_UNHANDLED) {
-            return result;
+            return direct_credit_rx(state, result);
         }
     }
     {
         uint8_t result = direct_handle_control_reply_rx(
-            state, event, workspace, tx_scratch, tx_capacity, actions);
+            state, event, workspace, actions);
 
         if (result != DIRECT_RX_UNHANDLED) {
-            return result;
+            return direct_credit_rx(state, result);
         }
     }
     if (session_text_prefix(payload, length, "CHAT ") && length > 5u &&
@@ -2115,10 +2168,9 @@ static uint8_t direct_handle_rx(SessionState *state,
                          SESSION_CHAT_REMOTE,
                          payload + 5u, (uint8_t)(length - 5u));
         direct_arm_liveness(state, actions, &count);
-        return count;
+        return direct_credit_rx(state, count);
     }
-    direct_arm_liveness(state, actions, &count);
-    return count;
+    return 0u;
 }
 
 static uint8_t direct_handle_local(SessionState *state,
@@ -2179,7 +2231,9 @@ static uint8_t direct_handle_local(SessionState *state,
     }
     if (!state->peer_ready || state->pending_tx_kind != DIRECT_TX_NONE ||
         (state->pending_control != 0u &&
-         event->data.local.request != SESSION_REQUEST_CHAT)) {
+         event->data.local.request != SESSION_REQUEST_CHAT &&
+         !(event->data.local.request == SESSION_REQUEST_MOVE && session_withdrawing(state) &&
+           state->pending_control != SESSION_REQUEST_TAKEBACK))) {
         return 0u;
     }
     switch (event->data.local.request) {
@@ -2214,6 +2268,9 @@ static uint8_t direct_handle_local(SessionState *state,
         }
         if (state->restore_phase != DIRECT_RESTORE_APPLIED) {
             session_drop_restore_cache(state);
+        }
+        if (session_withdrawing(state)) {
+            session_yield_withdrawal(state, actions, &count);
         }
         memcpy(workspace->move, event->data.local.payload,
                event->data.local.length);
@@ -2267,6 +2324,7 @@ static uint8_t direct_handle_local(SessionState *state,
         state->pending_origin = DIRECT_ORIGIN_LOCAL;
         state->pending_value = event->data.local.value;
         state->control_retries = 0u;
+        state->takeback_cancel_pending = 0u;
         return direct_send_local_pending(state, workspace, tx_scratch,
                                          tx_capacity, actions, &count)
                    ? count
@@ -2364,7 +2422,7 @@ static uint8_t direct_apply_user_decision(SessionState *state,
         return 1u;
     }
     state->last_rx_kind = control;
-    state->last_value = state->pending_value;
+    state->last_value = control == SESSION_REQUEST_TAKEBACK ? state->pending_value : 0u;
     state->last_result = accepted ? SESSION_DECISION_ACCEPT
                                   : SESSION_DECISION_REJECT;
     if (!direct_send_control_reply(state, control, accepted, tx_scratch,
@@ -2456,6 +2514,7 @@ static uint8_t direct_handle_game_result(SessionState *state,
     if (state->pending_control == SESSION_REQUEST_MOVE) {
         if (accepted) {
             state->current_ply = state->pending_value;
+            state->withdrawn_control = 0u;
         }
         state->last_rx_kind = SESSION_REQUEST_MOVE;
         state->last_value = state->pending_value;
@@ -2513,6 +2572,7 @@ static uint8_t direct_handle_game_result(SessionState *state,
     if (state->pending_control == SESSION_REQUEST_RESTORE) {
         if (accepted) {
             state->phase = event->data.game.detail[0];
+            state->accepted_draw = 0u;
             state->pending_value = event->data.game.value;
             state->current_ply = event->data.game.value;
         }
@@ -2659,21 +2719,13 @@ static uint8_t direct_handle_control_timeout(SessionState *state,
                    ? count
                    : 0u;
     }
-    if (state->pending_control == SESSION_REQUEST_RESET &&
-        state->pending_origin == DIRECT_ORIGIN_REMOTE &&
-        state->phase == SESSION_PHASE_OVER) {
-        if (state->control_retries >= SESSION_DIRECT_REPLY_RETRIES) {
-            return direct_finish(state, actions, count, state->active_link);
-        }
-        ++state->control_retries;
-        state->pending_origin = DIRECT_ORIGIN_LOCAL;
-        return direct_send_text(state, "RESET", tx_scratch, tx_capacity,
-                                actions, &count, state->active_link,
-                                DIRECT_TX_RESET)
-                   ? count
-                   : 0u;
+    if (session_withdrawing(state)) {
+        state->control_retries = 0u;
     }
     if (state->control_retries >= SESSION_DIRECT_REPLY_RETRIES) {
+        if ((state->timer_mask & (uint8_t)(1u << SESSION_TIMER_DECISION)) != 0u) {
+            return direct_arm_liveness(state, actions, &count) ? count : 0u;
+        }
         if (state->pending_control == SESSION_REQUEST_RESTORE &&
             state->restore_phase == DIRECT_RESTORE_WAIT_RY) {
             state->pending_control = 0u;
@@ -2681,21 +2733,6 @@ static uint8_t direct_handle_control_timeout(SessionState *state,
             direct_send_text(state, "RN", tx_scratch, tx_capacity,
                              actions, &count, state->active_link,
                              DIRECT_TX_RN);
-            return count;
-        }
-        if (state->pending_origin == DIRECT_ORIGIN_LOCAL &&
-            (state->pending_control == SESSION_REQUEST_RESET ||
-             state->pending_control == SESSION_REQUEST_DRAW)) {
-            state->control_retries = 0u;
-            if (state->pending_value == 0u) {
-                state->pending_value = DIRECT_CANCEL_WAIT;
-            }
-            if (!direct_emit_timer_set(state, actions, &count,
-                                       SESSION_TIMER_CONTROL,
-                                       SESSION_CONTROL_CANCEL_TICKS) ||
-                !direct_arm_liveness(state, actions, &count)) {
-                return 0u;
-            }
             return count;
         }
         return direct_finish(state, actions, count, state->active_link);

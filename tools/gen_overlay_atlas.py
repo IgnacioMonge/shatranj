@@ -62,8 +62,9 @@ def replace_if_changed(path: Path, data: bytes) -> bool:
     return True
 
 
-def binding_digest(paths: list[Path], values: list[str]) -> bytes:
+def binding_digest(paths: list[Path], values: list[str], excluded: tuple[Path, ...] | list[Path] = ()) -> bytes:
     digest = hashlib.sha256()
+    excluded = [path.resolve() for path in excluded]
 
     for index, root in enumerate(paths):
         if root.is_file():
@@ -79,6 +80,8 @@ def binding_digest(paths: list[Path], values: list[str]) -> bytes:
         else:
             raise SystemExit(f"atlas binding path not found: {root}")
         for relative, candidate in sorted(files, key=lambda item: item[0].as_posix()):
+            if any(candidate.resolve().is_relative_to(path) for path in excluded):
+                continue
             data = candidate.read_bytes()
             digest.update(struct.pack("<H", index))
             digest.update(relative.as_posix().encode("utf-8"))
@@ -208,6 +211,7 @@ def main() -> int:
     parser.add_argument("--seed-profile")
     parser.add_argument("--extra", action="append", default=[])
     parser.add_argument("--binding-path", action="append", type=Path, default=[])
+    parser.add_argument("--binding-exclude", action="append", type=Path, default=[])
     parser.add_argument("--binding-value", action="append", default=[])
     parser.add_argument("--block-size", type=int, default=BLOCK_SIZE)
     parser.add_argument("--size-limit", type=int)
@@ -225,7 +229,7 @@ def main() -> int:
     if any(not name or not name.replace("_", "").isalnum() for name in args.extra):
         raise SystemExit("atlas extra names must be alphanumeric/underscore")
     order = ORDER + args.extra
-    binding = binding_digest(args.binding_path, args.binding_value)
+    binding = binding_digest(args.binding_path, args.binding_value, args.binding_exclude)
 
     if args.bootstrap_asm:
         if args.asm_out is None:
@@ -270,10 +274,10 @@ def main() -> int:
         for index, (_name, data) in enumerate(entries):
             start = index * args.block_size
             paged[start : start + len(data)] = data
-        atomic_write(args.out, bytes(paged))
+        replace_if_changed(args.out, bytes(paged))
     else:
         header = build_header(asm_entries, binding)
-        atomic_write(args.out, header + bytes(payload))
+        replace_if_changed(args.out, header + bytes(payload))
     if args.asm_out is not None:
         if args.block_size == 8192:
             changed = write_paged_table(

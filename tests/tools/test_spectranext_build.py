@@ -22,6 +22,28 @@ def source(path):
 
 
 class SpectraNextBuildTests(unittest.TestCase):
+    def test_busy_reply_survives_overlay_packet_scratch_reuse(self):
+        app = source("src/spectrum/app/app.c")
+        spxn = app.split(
+            "#if defined(NETCHESSZX_SPECTRANEXT) && !defined(NETCHESSZX_HOST_TEST)",
+            1)[1].split("#else", 1)[0]
+        self.assertIn("netchesszx_session_format_busy(ply)", spxn)
+        self.assertLess(spxn.index("netchesszx_session_format_busy(ply)"),
+                        spxn.index("spectrum_link_payload_scratch()"))
+        self.assertIn("spectrum_append_text(payload,", spxn)
+        self.assertIn("session_tcp_control_reply(payload)", spxn)
+        self.assertIn("session_tcp_reply(payload)", spxn)
+        self.assertLess(spxn.index("spectrum_link_payload_scratch()"),
+                        spxn.index("session_tcp_control_reply(payload)"))
+
+        classic = app.split(
+            "#if defined(NETCHESSZX_SPECTRANEXT) && !defined(NETCHESSZX_HOST_TEST)",
+            1)[1].split("#else", 1)[1].split("#endif", 1)[0]
+        self.assertIn("payload = spectrum_link_payload_scratch();", classic)
+        self.assertIn("spectrum_append_text(out, NETCHESS_PROTO_NACK_PREFIX);", classic)
+        self.assertIn("session_tcp_control_reply(payload)", classic)
+        self.assertIn("session_tcp_reply(payload)", classic)
+
     def test_overlay_block_size_is_target_selectable(self):
         atlas = ROOT / "tools" / "gen_overlay_atlas.py"
         command = [
@@ -79,8 +101,22 @@ class SpectraNextBuildTests(unittest.TestCase):
             self.assertEqual(builder_size(), "2048")
             self.assertNotEqual(run(2049).returncode, 0)
             self.assertEqual(builder_size(4096), "4096")
-            accepted = run(2049, 4096)
-            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            output = root / "atlas.OVL"
+            fixed_time = 1_000_000_000
+
+            for cap in (4096, 8192):
+                accepted = run(2049, cap)
+                self.assertEqual(accepted.returncode, 0, accepted.stderr)
+                original = output.read_bytes()
+                os.utime(output, ns=(fixed_time, fixed_time))
+                unchanged = run(2049, cap)
+                self.assertEqual(unchanged.returncode, 0, unchanged.stderr)
+                self.assertEqual(output.read_bytes(), original)
+                self.assertEqual(output.stat().st_mtime_ns, fixed_time)
+                changed = run(2050, cap)
+                self.assertEqual(changed.returncode, 0, changed.stderr)
+                self.assertNotEqual(output.read_bytes(), original)
+                self.assertNotEqual(output.stat().st_mtime_ns, fixed_time)
             self.assertNotEqual(run(4097, 4096).returncode, 0)
 
     def test_current_backend_composition(self):
@@ -127,7 +163,10 @@ class SpectraNextBuildTests(unittest.TestCase):
             makefile.index("spectranext-size-report:")
         ]
         self.assertNotIn("max-allocs-per-node", tap_recipe)
-        self.assertNotIn("max-allocs-per-node", makefile)
+        # One shared SDCC allocation budget for every target; no per-target
+        # hard-coded value.
+        self.assertEqual(makefile.count("max-allocs-per-node"), 1)
+        self.assertIn("-Cs--max-allocs-per-node$(MAX_ALLOCS_PER_NODE)", makefile)
 
     def test_pageb_overlay_backend_contract(self):
         makefile = source("Makefile")
@@ -153,7 +192,6 @@ class SpectraNextBuildTests(unittest.TestCase):
             "call spxn_pop_page_b",
             "call spxn_free_page",
             "ld bc, ovl_spxn_return",
-            "time_config_probe_key equ 0xff",
         ):
             self.assertIn(token, loader)
         self.assertNotIn("spxn_service", loader)
@@ -174,7 +212,7 @@ class SpectraNextBuildTests(unittest.TestCase):
         self.assertNotIn("ld h, 0", return_block)
         self.assertIn("spectrum_spxn_frame_wait();", platform)
         self.assertLess(
-            loader.index("ld a, (_spxn_rom_held)"),
+            loader.index("ld a, (ovl_call_active)"),
             loader.index("ovl_args_canonical:"),
         )
         self.assertIn(
@@ -267,7 +305,7 @@ class SpectraNextBuildTests(unittest.TestCase):
         self.assertIn("-DNETCHESSZX_TZ=0", spectranext_flags.group(0))
         self.assertEqual(makefile.count("-DNETCHESSZX_TZ=0"), 1)
 
-    def test_connection_setup_restores_board_before_side_panels(self):
+    def test_connection_setup_keeps_the_visible_board(self):
         app = source("src/spectrum/app/app.c")
         main = app[app.index("int main(void)") :]
         setup_match = re.search(
@@ -297,17 +335,12 @@ class SpectraNextBuildTests(unittest.TestCase):
         self.assertIsNotNone(board)
         after_board = after_session[board.end() :]
 
-        restore_board = re.search(
-            r"\bspectrum_gui_restore_board_area\s*\(\s*\)\s*;",
-            after_board,
-        )
         restore_side = re.search(
             r"\bspectrum_gui_restore_side_panels\s*\(\s*\)\s*;",
             after_board,
         )
-        self.assertIsNotNone(restore_board)
         self.assertIsNotNone(restore_side)
-        self.assertLess(restore_board.start(), restore_side.start())
+        self.assertNotIn("spectrum_gui_restore_board_area", after_board[: restore_side.start()])
 
     def test_installer_output_is_replaced_only_after_staging_succeeds(self):
         makefile = source("Makefile")

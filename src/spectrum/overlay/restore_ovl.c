@@ -5,7 +5,9 @@
 static uint8_t restore_wire[NETCHESSZX_SAVE_WIRE_SIZE];
 
 static const char restore_piece_table[] = NETCHESSZX_SAVE_PIECE_TABLE;
+#ifndef NETCHESSZX_RESTORE_BUILD_ONLY
 static const uint8_t restore_timer_max[6] = {99u, 59u, 59u, 99u, 59u, 59u};
+#endif
 
 /* Returns the piece-table nibble for ch, or -1 for '?'/unknown. */
 static int8_t restore_find_piece(char ch)
@@ -20,6 +22,7 @@ static int8_t restore_find_piece(char ch)
     return -1;
 }
 
+#ifndef NETCHESSZX_RESTORE_BUILD_ONLY
 /* Returns the piece char for a nibble, or -1 for '?'/invalid. */
 static int8_t restore_nibble_to_piece(uint8_t nibble) __z88dk_fastcall
 {
@@ -54,6 +57,7 @@ static uint8_t restore_b64_value(char ch, uint8_t *out)
     }
     return 0u;
 }
+#endif
 
 static char restore_b64_char(uint8_t value)
 {
@@ -116,6 +120,7 @@ static uint8_t restore_pack_wire(const spectrum_board_snapshot_t *snap,
     return 1u;
 }
 
+#ifndef NETCHESSZX_RESTORE_BUILD_ONLY
 static uint8_t restore_unpack_wire(spectrum_board_snapshot_t *snap,
                                    netchesszx_save_meta_t *meta)
 {
@@ -153,7 +158,7 @@ static uint8_t restore_unpack_wire(spectrum_board_snapshot_t *snap,
             ++white_kings;
         } else if (piece == 'k') {
             ++black_kings;
-        } else if ((i < 8u || i >= 56u) &&
+        } else if ((uint8_t)(i - 8u) >= 48u &&
                    (piece == 'P' || piece == 'p')) {
             return 0u;
         }
@@ -185,26 +190,32 @@ static uint8_t restore_unpack_wire(spectrum_board_snapshot_t *snap,
     }
     return 1u;
 }
+#endif
 
 static void restore_b64_encode(char *out) __z88dk_fastcall
 {
+    const uint8_t *in = restore_wire;
     uint8_t i;
-    uint8_t j = 0u;
+    uint8_t k;
     uint8_t a;
     uint8_t b;
     uint8_t c;
 
     for (i = 0u; i < NETCHESSZX_SAVE_WIRE_SIZE; i = (uint8_t)(i + 3u)) {
-        a = restore_wire[i];
-        b = restore_wire[(uint8_t)(i + 1u)];
-        c = restore_wire[(uint8_t)(i + 2u)];
-        out[j++] = restore_b64_char((uint8_t)(a >> 2));
-        out[j++] = restore_b64_char((uint8_t)(((a & 0x03u) << 4) | (b >> 4)));
-        out[j++] = restore_b64_char((uint8_t)(((b & 0x0fu) << 2) | (c >> 6)));
-        out[j++] = restore_b64_char((uint8_t)(c & 0x3fu));
+        a = *in++;
+        b = *in++;
+        c = *in++;
+        /* Emit the top sextet, then shift the 24-bit group left by six. */
+        for (k = 0u; k < 4u; ++k) {
+            *out++ = restore_b64_char((uint8_t)(a >> 2));
+            a = (uint8_t)((a << 6) | (b >> 2));
+            b = (uint8_t)((b << 6) | (c >> 2));
+            c = (uint8_t)(c << 6);
+        }
     }
 }
 
+#ifndef NETCHESSZX_RESTORE_BUILD_ONLY
 static uint8_t restore_b64_decode(const char *text)
 {
     uint8_t i;
@@ -227,8 +238,22 @@ static uint8_t restore_b64_decode(const char *text)
     }
     return 1u;
 }
+#endif
+
+uint8_t restore_build_b64_ovl(const spectrum_board_snapshot_t *snap,
+                              const netchesszx_save_meta_t *meta,
+                              char *b64)
+{
+    if (snap == 0 || meta == 0 || b64 == 0 ||
+        !restore_pack_wire(snap, meta)) {
+        return 0u;
+    }
+    restore_b64_encode(b64);
+    return 1u;
+}
 
 #ifndef NETCHESSZX_HOST_TEST
+#ifndef NETCHESSZX_RESTORE_BUILD_ONLY
 uint8_t restore_build_frame_ovl(uint8_t *ctx) __z88dk_fastcall
 {
     const spectrum_board_snapshot_t *snap =
@@ -239,13 +264,11 @@ uint8_t restore_build_frame_ovl(uint8_t *ctx) __z88dk_fastcall
         ((uint16_t)ctx[SPECTRUM_OVL_CTX_RESTORE_META_HI] << 8));
     char *b64 = (char *)((uint16_t)ctx[SPECTRUM_OVL_CTX_RESTORE_TEXT_LO] |
         ((uint16_t)ctx[SPECTRUM_OVL_CTX_RESTORE_TEXT_HI] << 8));
-    if (b64 == 0 || !restore_pack_wire(snap, meta)) {
-        return 0u;
-    }
-    restore_b64_encode(b64);
-    return 1u;
+    return restore_build_b64_ovl(snap, meta, b64);
 }
+#endif
 
+#ifndef NETCHESSZX_RESTORE_BUILD_ONLY
 uint8_t restore_decode_ovl(uint8_t *ctx) __z88dk_fastcall
 {
     const char *text = (const char *)((uint16_t)ctx[SPECTRUM_OVL_CTX_RESTORE_TEXT_LO] |
@@ -262,19 +285,16 @@ uint8_t restore_decode_ovl(uint8_t *ctx) __z88dk_fastcall
     }
     return restore_unpack_wire(snap, meta);
 }
+#endif
 #else
 uint8_t spectrum_restore_build_b64(const spectrum_board_snapshot_t *snap,
                                    const netchesszx_save_meta_t *meta,
                                    char *b64)
 {
-    if (snap == 0 || meta == 0 || b64 == 0 ||
-        !restore_pack_wire(snap, meta)) {
-        return 0u;
-    }
-    restore_b64_encode(b64);
-    return 1u;
+    return restore_build_b64_ovl(snap, meta, b64);
 }
 
+#ifndef NETCHESSZX_RESTORE_BUILD_ONLY
 uint8_t spectrum_restore_decode(const char *b64,
                                 spectrum_board_snapshot_t *snap,
                                 netchesszx_save_meta_t *meta)
@@ -284,4 +304,5 @@ uint8_t spectrum_restore_decode(const char *b64,
     }
     return restore_unpack_wire(snap, meta);
 }
+#endif
 #endif

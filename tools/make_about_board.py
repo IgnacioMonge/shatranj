@@ -23,8 +23,11 @@ SCREEN_H = 192
 # One attribute row above the previous crop so the scene sits tighter
 # under the live banner. Turban tips in source y=16-23 are clipped.
 SOURCE_TOP = 24
-BAND_TOP = 32
-BAND_H = 144
+# The band covers screen rows 3-21: seventeen scene rows, one blank row and
+# the key-hint row.
+BAND_TOP = 24
+SCENE_H = 136
+BAND_H = 152
 ATTR_ROWS = BAND_H // 8
 ABOUT_BYTES = (SCREEN_W_BYTES * BAND_H) + (SCREEN_W_BYTES * ATTR_ROWS)
 ATTR_WHITE = 0x07
@@ -37,11 +40,12 @@ TEXT_W = (TEXT_COL1 - TEXT_COL0 + 1) * 8
 # (text, attr, band_y, scale_x, scale_y)
 TEXT_LINES = [
     ("SHATRANJ", ATTR_WHITE, 16, 2, 2),
-    ("A CHESS GAME FOR ZX", ATTR_WHITE, 32, 1, 1),
-    ("(C) 2026 M.I. MONGE", ATTR_WHITE, 40, 1, 1),
-    ("GH: IGNACIOMONGE/SHATRANJ", ATTR_YELLOW, 48, 1, 1),
-    ("LICENSE: GNU GPL V2.0", ATTR_YELLOW, 56, 1, 1),
+    ("(C) 2026 M.I. MONGE", ATTR_WHITE, 32, 1, 1),
+    ("GH: IGNACIOMONGE/SHATRANJ", ATTR_YELLOW, 40, 1, 1),
+    ("LICENSE: GNU GPL V2.0", ATTR_YELLOW, 48, 1, 1),
 ]
+# Key hint on the band's last attribute row, centred across the full width.
+HINT_LINE = ("PRESS C FOR CHANGELOG, ANY TO CLOSE", ATTR_WHITE, 144)
 
 
 def scr_bitmap_offset(y: int, col: int) -> int:
@@ -55,13 +59,20 @@ def extract_band(scr: bytes) -> tuple[bytearray, bytearray]:
     if len(scr) != 6912:
         raise SystemExit(f"SCREEN$ must be 6912 bytes, got {len(scr)}")
     pixels = bytearray()
-    for y in range(SOURCE_TOP, SOURCE_TOP + BAND_H):
+    for y in range(SOURCE_TOP, SOURCE_TOP + SCENE_H):
         for col in range(SCREEN_W_BYTES):
             pixels.append(scr[scr_bitmap_offset(y, col)])
     attr_top = SOURCE_TOP // 8
+    scene_rows = SCENE_H // 8
     attrs = bytearray(
-        scr[6144 + (attr_top * SCREEN_W_BYTES) : 6144 + ((attr_top + ATTR_ROWS) * SCREEN_W_BYTES)]
+        scr[
+            6144 + (attr_top * SCREEN_W_BYTES) : 6144
+            + ((attr_top + scene_rows) * SCREEN_W_BYTES)
+        ]
     )
+    # Blank rows below the scene, white ink on black.
+    pixels.extend(bytes(SCREEN_W_BYTES * (BAND_H - SCENE_H)))
+    attrs.extend(bytes([ATTR_WHITE]) * (SCREEN_W_BYTES * (ATTR_ROWS - scene_rows)))
     return pixels, attrs
 
 
@@ -150,6 +161,14 @@ def build_board(source: Path, ui_assets: Path) -> bytes:
         clear_text_cells(pixels, y, x, width)
         put_ikkle_text(pixels, font, y, x, line, scale_x, scale_y)
         apply_text_attrs(attrs, y, x, width, color)
+    line, color, y = HINT_LINE
+    x = (SCREEN_W - line_width(line, 1)) // 2
+    row = y // 8
+    for col in range(SCREEN_W_BYTES):
+        for scan in range(8):
+            pixels[(row * 8 + scan) * SCREEN_W_BYTES + col] = 0
+        attrs[row * SCREEN_W_BYTES + col] = color
+    put_ikkle_text(pixels, font, y + 2, x, line)
     out = bytes(pixels + attrs)
     if len(out) != ABOUT_BYTES:
         raise SystemExit(f"bad board payload size: {len(out)}")

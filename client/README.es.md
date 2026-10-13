@@ -2,7 +2,7 @@
 
 [English](README.md) · [Documentación del proyecto](../docs/README.es.md)
 
-Cliente de escritorio Qt para Shatranj 1.2. Windows, macOS y Linux utilizan la
+Cliente de escritorio Qt para Shatranj 1.3. Windows, macOS y Linux utilizan la
 misma implementación y admiten ambos transportes:
 
 - **Direct TCP**: el anfitrión escucha a un invitado; el invitado conecta con
@@ -16,14 +16,28 @@ el uso y la compilación del adaptador Qt; no duplica esa gramática normativa.
 
 ## Uso del cliente Qt
 
+El manual completo, en español e inglés, se distribuye con el cliente:
+pulsa **?** o F1 en el programa, o lee
+[`manual.es.md`](../assets/pc-client/manual/manual.es.md). Incluye las
+Preferencias y el juego con el motor Stockfish. Lo que sigue es un resumen.
+
+El conmutador **Game stats** (el icono de barras entre Load game y **Log**)
+muestra las estadísticas sobre el tablero, durante la partida y tras mate,
+ahogado, abandono o tablas, y las oculta al pulsarlo de nuevo; jugadas y chat
+siguen visibles y la página se actualiza tras cada jugada. El anfitrión puede solicitar **Restart Game**, con aceptación del
+invitado; rechazarlo termina la sesión para ambos. Las estadísticas cuentan turnos completados y capturas; cargar o
+restaurar inicia una muestra parcial. Consulta [las métricas](../docs/game-stats.md).
+
 1. Selecciona `Direct` o `MQTT` e introduce el endpoint o los datos de sala.
+   Opcionalmente pon tu nombre en **Preferencias → Jugador** (hasta diez de `A-Z 0-9 - _`); se recuerda
+   y el rival lo ve en la cabecera de la lista de jugadas.
 2. Elige `Host` o `Guest`; el anfitrión elige color e inicia la partida.
 3. Pulsa una casilla de origen y otra de destino cuando sea tu turno.
 4. Usa el cuadro de chat; Enter envía la línea actual.
 5. Usa estos comandos para acciones de control:
 
    ```text
-   /draw       ofrecer tablas o revancha
+   /draw       ofrecer tablas
    /resign     abandonar la partida actual
    /takeback   solicitar deshacer el último ply aplicado
    /save [name] guardar localmente la posición actual
@@ -91,8 +105,9 @@ compilador y linker bajo hosts de agentes que gestionan procesos.
 `make client` produce el ejecutable Windows, despliega un bundle macOS o
 compila el ejecutable Linux soportado y probado contra el Qt del sistema. El
 workflow de GitHub Actions **Build Linux AppImage** empaqueta e inspecciona un
-AppImage x86_64 autocontenido, lo sube como artefacto del workflow y lo adjunta
-a una release publicada. En macOS también instala el bundle actual en
+AppImage x86_64 autocontenido y lo sube como artefacto del workflow. Adjuntarlo
+a una release publicada es un paso manual separado. En macOS también instala
+el bundle actual en
 `/Applications/Shatranj.app`; define
 `CLIENT_MAC_APPLICATIONS_DIR` para usar otro directorio Applications.
 

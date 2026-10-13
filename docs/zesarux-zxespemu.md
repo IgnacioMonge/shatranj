@@ -8,9 +8,9 @@ The machine-local harness is:
 /Users/ignaciomongegarcia/Developer/Retro/ZXESPEmu
 ```
 
-It is a separate Git repository. As of 2026-07-26 it has no commits yet; its
-launcher, virtual ESP, tests, patches, and setup files are untracked source.
-Runtime logs and the downloaded/built emulator are intentionally ignored.
+It is a separate Git repository and must be synchronized independently. Its
+launcher, virtual ESP, tests, patches, and setup files are versioned there;
+runtime logs and the downloaded/built emulator are intentionally ignored.
 
 The reusable patched executable is:
 
@@ -31,9 +31,15 @@ From the harness:
 ./run.py --headless
 ```
 
-The Spotlight launchers open the latest complete prebuilt snapshot published
-under `ZXESPEmu/artifacts/`; they do not compile during launch. After generating
-TAP/OVL/DAT and NEX in any NetChessZX worktree, publish them together with:
+The registered Shatranj Classic and Next development launchers pass
+`--netchess .`, so they open `release/SHATRANJ.tap` or
+`release/Next/SHATRANJ.nex` directly from this checkout; they do not compile
+during launch. A NEX written only below `build/` is a preview and is not visible
+to those launchers. A generic ZXESPEmu run without `--netchess` instead opens
+the latest complete prebuilt snapshot published under `ZXESPEmu/artifacts/`.
+
+After generating TAP/OVL/DAT and NEX in any NetChessZX worktree, publish them
+together for generic snapshot runs with:
 
 ```sh
 /Users/ignaciomongegarcia/Developer/Retro/ZXESPEmu/stage_netchess.py "$PWD"
@@ -48,6 +54,25 @@ on the same Mac.
 Runtime state and logs are replaced safely under `ZXESPEmu/run/`; inspect
 `launcher.log`, `zesarux.log`, and `zxesp.log` when startup or UART traffic
 fails.
+
+## Launcher lifecycle
+
+Staging artifacts and publishing launchers are separate operations. Whenever
+`zxespemu-launchers.json` changes, use the controller's live workflow from the
+repository root:
+
+```sh
+ZXESPEMU=/Users/ignaciomongegarcia/Developer/Retro/ZXESPEmu
+"$ZXESPEMU/launcherctl.py" contract
+"$ZXESPEMU/launcherctl.py" validate ./zxespemu-launchers.json
+"$ZXESPEMU/launcherctl.py" register ./zxespemu-launchers.json
+"$ZXESPEMU/launcherctl.py" sync netchess
+"$ZXESPEMU/launcherctl.py" status netchess
+```
+
+Completion requires every declared launcher to be `current` with no
+duplicates. `sync` retires older managed versions; do not delete application
+bundles manually.
 
 ## Virtual ESP scope
 
@@ -65,6 +90,14 @@ Run its focused tests with:
 ```sh
 PYTHONPATH=. python3 tests/test_zxesp.py -v
 ```
+
+## Per-ply overlay trace
+
+`tools/emu_ply_trace.py run` boots this checkout's Classic `release/` with a
+writable SD, sets it up as the DIRECT host, plays a scripted game against a
+guest peer and prints the overlay loads and SD operations of every ply
+(`analyze --out DIR` reprints a saved run). It counts loads and I/O, not SD
+latency, and the emulator cannot create the journal file (open mode 0x0F).
 
 ## ZEsarUX patches
 
@@ -84,7 +117,7 @@ This is an emulator correction, not a Shatranj wire or rendering workaround.
 Real Next hardware remains authoritative for timing, MMU/IFF restoration, UART,
 FPGA-core behavior, and final visual acceptance.
 
-## Latest local checkpoint
+## Recorded emulator checkpoint — 2026-07-27
 
 On 2026-07-27:
 

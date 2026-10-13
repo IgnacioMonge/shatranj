@@ -53,6 +53,16 @@ uint8_t session_text_prefix(const uint8_t *payload,
     return 1u;
 }
 
+uint8_t session_text_token(const uint8_t *payload,
+                           uint8_t length,
+                           const char *token)
+{
+    uint8_t token_length = session_text_length(token);
+
+    return (uint8_t)(session_text_prefix(payload, length, token) &&
+                     (length == token_length || payload[token_length] == ' '));
+}
+
 uint8_t session_slice_valid(const uint8_t *payload, uint8_t length)
 {
     uint8_t i;
@@ -81,6 +91,27 @@ uint8_t session_fixed_slice_valid(const uint8_t *payload, uint8_t length)
         }
     }
     return 1u;
+}
+
+uint8_t session_parse_name(const uint8_t *payload, uint8_t length)
+{
+    uint8_t i;
+
+    if (payload == 0 ||
+        !session_text_prefix(payload, length, NETCHESS_PROTO_NAME_PREFIX)) {
+        return 0u;
+    }
+    length = (uint8_t)(length - NETCHESS_PROTO_NAME_PREFIX_LEN);
+    if (length == 0u || length > NETCHESS_PLAYER_NAME_MAX) {
+        return 0u;
+    }
+    payload += NETCHESS_PROTO_NAME_PREFIX_LEN;
+    for (i = 0u; i < length; ++i) {
+        if (!NETCHESS_PLAYER_NAME_CHAR_OK(payload[i])) {
+            return 0u;
+        }
+    }
+    return length;
 }
 
 uint8_t session_parse_mach(const uint8_t *payload,
@@ -296,9 +327,21 @@ uint8_t session_next_delivery_id(SessionState *state)
 
 void session_clear_duplicate(SessionState *state)
 {
+    state->withdrawn_control = 0u;
     state->last_rx_kind = 0u;
     state->last_value = 0u;
     state->last_result = 0u;
+}
+
+void session_yield_withdrawal(SessionState *state, SessionAction *actions,
+                             uint8_t *count)
+{
+    uint8_t control = state->pending_control;
+
+    session_emit_timer_cancel(state, actions, count, SESSION_TIMER_CONTROL);
+    state->withdrawn_control = control;
+    state->pending_control = 0u;
+    state->pending_origin = 0u;
 }
 
 void session_drop_restore_cache(SessionState *state)
@@ -379,10 +422,13 @@ void session_reset(SessionState *state)
     state->pending_tx_kind = 0u;
     state->next_tx_id = 1u;
     state->control_retries = 0u;
+    state->takeback_cancel_pending = 0u;
+    state->withdrawn_control = 0u;
     state->liveness_misses = 0u;
     state->timer_mask = 0u;
     state->last_rx_kind = 0u;
     state->last_result = 0u;
+    state->accepted_draw = 0u;
     state->delivery_id = 0u;
     state->restore_phase = 0u;
     state->restore_mask = 0u;
@@ -449,6 +495,41 @@ uint8_t session_end(SessionState *state,
     return count;
 }
 
+static uint8_t session_waiting_for_decision(const SessionState *state)
+{
+    if (state->pending_origin == 2u && state->pending_request_id != 0u &&
+        (state->timer_mask & (1u << SESSION_TIMER_CONTROL)) == 0u) {
+        return (uint8_t)(state->pending_control == SESSION_REQUEST_DRAW ||
+            state->pending_control == SESSION_REQUEST_RESET ||
+            state->pending_control == SESSION_REQUEST_TAKEBACK ||
+            state->pending_control == SESSION_REQUEST_RESTORE);
+    }
+    /* DIRECT and MQTT use the same local-origin and cancel-sent values. */
+    return (uint8_t)(state->pending_origin == 1u &&
+        (((state->pending_control == SESSION_REQUEST_DRAW ||
+           state->pending_control == SESSION_REQUEST_RESET) &&
+          state->pending_value != 2u) ||
+         (state->pending_control == SESSION_REQUEST_TAKEBACK &&
+          !state->takeback_cancel_pending && state->pending_request_id == 0u) ||
+         (state->pending_control == SESSION_REQUEST_RESTORE &&
+          state->restore_phase == SESSION_RESTORE_PHASE_WAIT_APPROVAL)));
+}
+
+static uint8_t session_set_decision_timer(SessionState *state,
+                                          SessionAction *actions,
+                                          uint8_t count,
+                                          uint16_t ticks)
+{
+    if (count >= SESSION_ACTION_CAPACITY) {
+        return 0u;
+    }
+    actions[count].type = SESSION_ACT_TIMER_SET;
+    actions[count].data.timer_set.timer_id = SESSION_TIMER_DECISION;
+    actions[count].data.timer_set.duration_ticks = ticks;
+    state->timer_mask |= (uint8_t)(1u << SESSION_TIMER_DECISION);
+    return (uint8_t)(count + 1u);
+}
+
 uint8_t session_step(SessionState *state,
                      const SessionEvent *event,
                      SessionWorkspace *workspace,
@@ -457,12 +538,14 @@ uint8_t session_step(SessionState *state,
                      SessionAction *actions,
                      uint8_t action_capacity)
 {
-    (void)workspace;
-    (void)tx_scratch;
-    (void)tx_capacity;
+    SessionEvent expiry;
+    uint8_t count;
+    uint8_t tx_id;
+    uint8_t expired_control = 0u;
 
     if (state == 0 || event == 0 || event->type < SESSION_EV_LINK_UP ||
-        event->type > SESSION_EV_GAME_RESULT) {
+        event->type > SESSION_EV_GAME_RESULT || actions == 0 ||
+        action_capacity < SESSION_ACTION_CAPACITY) {
         return 0u;
     }
     if (event->type == SESSION_EV_LINK_DOWN) {
@@ -476,20 +559,112 @@ uint8_t session_step(SessionState *state,
         }
         return session_end(state, actions, action_capacity, 0u);
     }
+    if (workspace == 0 || tx_scratch == 0 || tx_capacity == 0u) {
+        return 0u;
+    }
+    if (event->type == SESSION_EV_TIMEOUT &&
+        event->data.timeout.timer_id == SESSION_TIMER_DECISION) {
+        if ((state->timer_mask & (uint8_t)(1u << SESSION_TIMER_DECISION)) == 0u) {
+            return 0u;
+        }
+        if (state->pending_tx_kind != 0u) {
+            return session_set_decision_timer(state, actions, 0u,
+                                               1u);
+        }
+        state->timer_mask &= (uint8_t)~(uint8_t)(1u << SESSION_TIMER_DECISION);
+        if (!session_waiting_for_decision(state)) {
+            return 0u;
+        }
+        expiry = *event;
+        if (state->pending_origin == 2u) {
+            expiry.type = SESSION_EV_USER_DECISION;
+            expiry.data.user.request_id = state->pending_request_id;
+            expiry.data.user.decision = SESSION_DECISION_REJECT;
+            if (state->pending_control == SESSION_REQUEST_TAKEBACK) {
+                state->takeback_cancel_pending = 1u;
+            } else if (state->pending_control != SESSION_REQUEST_RESTORE) {
+                state->pending_value = 3u; /* Remote expiry uses the CANCEL reply path. */
+            }
+        } else {
+            if (state->pending_control != SESSION_REQUEST_RESTORE) {
+                expired_control = state->pending_control;
+            }
+            state->control_retries = SESSION_DIRECT_REPLY_RETRIES;
+            if (state->pending_control == SESSION_REQUEST_TAKEBACK) {
+                state->takeback_cancel_pending = 1u;
+                state->control_retries = 0u;
+            } else if (state->pending_control == SESSION_REQUEST_DRAW ||
+                       state->pending_control == SESSION_REQUEST_RESET) {
+                state->pending_value = 1u; /* Existing cancel-wait -> cancel-send. */
+            }
+            expiry.data.timeout.timer_id = SESSION_TIMER_CONTROL;
+            state->timer_mask |= (uint8_t)(1u << SESSION_TIMER_CONTROL);
+        }
+        event = &expiry;
+    }
+    tx_id = state->pending_tx_id;
     if (state->config.transport == SESSION_TRANSPORT_DIRECT) {
-        return direct_session_step(state,
+        count = direct_session_step(state,
                                    event,
                                    workspace,
                                    tx_scratch,
                                    tx_capacity,
                                    actions,
                                    action_capacity);
-    }
-    return mqtt_session_step(state,
+    } else {
+        count = mqtt_session_step(state,
                              event,
                              workspace,
                              tx_scratch,
                              tx_capacity,
                              actions,
                              action_capacity);
+    }
+    if (!session_waiting_for_decision(state)) {
+        if (!session_emit_timer_cancel(state, actions, &count,
+                                         SESSION_TIMER_DECISION)) {
+            return 0u;
+        }
+    } else if (count != 0u &&
+              ((event->type == SESSION_EV_RX && state->pending_origin == 2u) ||
+               (event->type == SESSION_EV_TX_RESULT &&
+               tx_id != 0u &&
+               event->data.tx.result == SESSION_TX_OK &&
+               event->data.tx.tx_id == tx_id)) &&
+               (state->timer_mask & (uint8_t)(1u << SESSION_TIMER_DECISION)) == 0u) {
+        count = session_set_decision_timer(state, actions, count,
+                                            SESSION_DECISION_TICKS);
+    }
+    if (expired_control != 0u && count != 0u) {
+        state->withdrawn_control = (uint8_t)(expired_control | 0x80u);
+    } else if (event->type == SESSION_EV_TX_RESULT && count != 0u &&
+               (state->withdrawn_control & 0x80u) != 0u) {
+        expired_control = (uint8_t)(state->withdrawn_control & 0x7fu);
+        state->withdrawn_control = 0u;
+        if (!session_emit_game(actions, &count, SESSION_DELIVER_CONTROL_RESULT,
+                               SESSION_CONTROL_CANCELLED, expired_control, 0, 0u)) {
+            return 0u;
+        }
+    }
+    if (count != 0u && state->pending_control != SESSION_REQUEST_TAKEBACK) {
+        state->takeback_cancel_pending = 0u;
+    }
+    if (count != 0u && state->pending_control == 0u && state->withdrawn_control != 0u) {
+        state->pending_control = state->withdrawn_control;
+        state->withdrawn_control = 0u;
+        state->pending_origin = 1u;
+        state->pending_value = state->pending_control == SESSION_REQUEST_TAKEBACK
+            ? state->current_ply : 2u;
+        state->takeback_cancel_pending = (uint8_t)(state->pending_control == SESSION_REQUEST_TAKEBACK);
+        state->control_retries = 0u;
+        if (count >= SESSION_ACTION_CAPACITY) {
+            return 0u;
+        }
+        actions[count].type = SESSION_ACT_TIMER_SET;
+        actions[count].data.timer_set.timer_id = SESSION_TIMER_CONTROL;
+        actions[count].data.timer_set.duration_ticks = SESSION_DIRECT_REPLY_TICKS;
+        state->timer_mask |= (uint8_t)(1u << SESSION_TIMER_CONTROL);
+        ++count;
+    }
+    return count;
 }

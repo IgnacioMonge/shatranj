@@ -14,16 +14,20 @@
 #define SPECTRUM_MQTT_PACKET_MAX 160u
 #define SPECTRUM_MQTT_TOPIC_MAX 48u
 #define SPECTRUM_MQTT_PAYLOAD_MAX 96u
-/* Runtime assets (screen.asm EQUs, loaded at 0x6000) end at
-   piece_sprites_16x16 + 384 = 0x64ac. The MQTT stream and packet scratch sit
-   between that end and the overlay slot at 0x6800. check_lowmem_layout.py
-   verifies this against the .map on every tap build. */
+/* Runtime assets (screen.asm EQUs and pieces) precede the MQTT stream and
+   packet scratch below the overlay slot. check_lowmem_layout.py verifies
+   the linked boundaries on every build. */
 #ifdef NETCHESSZX_NEXT_BANKING
-#define SPECTRUM_MQTT_RUNTIME_ASSETS_END 0x39acu
-#define SPECTRUM_MQTT_SCRATCH_BASE 0x3a8bu
+#define SPECTRUM_MQTT_RUNTIME_ASSETS_END 0x39f9u
+#define SPECTRUM_MQTT_SCRATCH_BASE 0x3ad8u
 #else
-#define SPECTRUM_MQTT_RUNTIME_ASSETS_END 0x64acu
-#define SPECTRUM_MQTT_SCRATCH_BASE 0x658bu
+#ifdef NETCHESSZX_SPECTRANEXT
+#define SPECTRUM_MQTT_RUNTIME_ASSETS_END 0x64fau
+#define SPECTRUM_MQTT_SCRATCH_BASE 0x662bu
+#else
+#define SPECTRUM_MQTT_RUNTIME_ASSETS_END 0x64fau
+#define SPECTRUM_MQTT_SCRATCH_BASE 0x6616u
+#endif
 #endif
 #define SPECTRUM_MQTT_PACKET_SCRATCH ((uint8_t *)SPECTRUM_MQTT_SCRATCH_BASE)
 

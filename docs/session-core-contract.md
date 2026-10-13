@@ -84,7 +84,308 @@ state, liveness counters, armed timer identifiers, and pending local
 transmission state. No session decision may depend on hidden application
 globals.
 
-## Input Events
+## Spectrum ownership migration — phase 3
+
+The immutable configuration above describes the reference reducer API. Spectrum
+keeps its existing lifetime contract: Setup choices are temporary, START/SAVE
+hand them to the session identity, and reopening/reconstructing Setup reads the
+current identity. A negotiated colour may therefore appear in the next Setup.
+There is no new permanent copy of the original user choice and no wire, NCZS,
+SHCF, or UI behaviour change.
+
+| State | Owner and writers | Lifetime / placement |
+|---|---|---|
+| Chosen Setup fields and focus | Existing Setup workspace and overlays | Shared app workspace, reused by CONFIG/RESTORE |
+| Role, transport, local/host colour, confirmation, SID | `session/identity.*`, session negotiation, session-owned ASM bootstrap operation | Existing resident symbols; overlay ABI retained |
+| Peer readiness | `session/event.*` | Resident byte; external readers use its view |
+| Ply, pending move/text, controls, resignation, duplicate ACK guards, restore mask, seat probe | `session/state.*` write operations | 23 bytes on target, replacing former app globals |
+| Retry countdowns and presence reannounce | Session schedule operations | Six mutable target bytes on the loop stack; two immutable local periods use the other three bytes |
+| Peer watchdog | `session/ping.*` | Existing caller-owned loop state |
+| Undo, undo metadata, check display, local input and navigation | Board/application/UI | Existing locations and lifetimes |
+| Restore encoded chunks/snapshot | Existing application/restore bridge | Borrowed shared workspace, never copied into session state |
+
+Product C must not reference the private session storage directly. ASM outside
+the session owner may load identity values, but not store to them or take a
+writable address. Guards enforce these boundaries; typed const views reject
+accidental C writes. Inline operations preserve the Z80 cost model rather than
+adding a generic runtime or action queue.
+
+Phase 3 alone did not extract policy. The phase-4 extraction replaces
+application decisions about transitions, effect order, acceptance and retries with
+synchronous session orders while leaving board, UI and navigation effects in
+the application. Phase 5 was verified separately by the closing full gate;
+the phase-3 checks alone did not establish transition isolation.
+
+## Spectrum transition extraction acceptance
+
+The external-audit repair block passed its host/firmware gate on 2026-09-10.
+The previous green gate did not cover
+the Next MQTT busy-START route, strict publication-route observation or the
+production RESET replay window. Repairs preserve wire formats and committed
+ABI/size limits. Two additionally authorized time fixes preserve loaded active
+timers and prevent stopwatch operations from resetting the civil-clock fraction.
+
+| Audit repair option | Cost / risk | Decision / acceptance |
+|---|---|---|
+| Honor the existing busy-reply route argument; reuse its formatter on Classic | Delete the duplicate Classic string; resident cost must be linked | Apply; same busy-START transcript on Classic/Next at 50/60 Hz |
+| Observe explicit MQTT publication routes and cover included overlay action units | Host/tooling only | Apply; negative routing and capability tests |
+| Exercise the production RESET replay branch | Host-only coverage, preserve runtime timing | Apply; empty-poll expiry, duplicate RESET and intervening-event checks |
+| Preserve restored timers and separate civil-clock fractional progress | Reuse existing start/restore flow; any added RAM/code stays within committed limits | Apply; nonzero ACTIVE snapshots and 50/60 Hz fractional-boundary checks |
+| Keep fixed RESTORE frame grammar in common save code and commit ply via the semantic operation | Identical macro expansion; no new runtime dispatcher | Apply; both exact chunks and destination canary, outgoing flag ABI assertion |
+| Broader UX framework, blanket macro bans, extra firmware platforms | Outside this repair | Reject |
+
+Phase 4 transfers the remaining compact FSM policy to `session/`, with the
+application retaining board operations, snapshot codecs, presentation and
+navigation. Same-translation-unit compilation is permitted; hidden access to
+application globals or GUI/board implementations is not. Effects are concrete,
+synchronous operations, not callbacks, an action queue or a second reducer.
+Every TX/domain result preserves its existing ordering with later effects;
+local handoff success never substitutes for peer acceptance.
+
+One explicitly authorized behavior correction releases retained MQTT presence
+before disconnecting after a failed second RESTORE chunk or explicit RESET
+request (including the request made after an agreed draw).
+The shared MQTT corpus now has 77 transcripts. The independent compact-owner
+test compiles the production coordinator without app.c or GUI/board stubs and
+checks intermediate-send ordering, state and cleanup-before-disconnect.
+It also compiles the production RESET replay field and operations without
+`NETCHESSZX_HOST_SESSION_TEST`: duplicates re-ACK without restarting, 16 empty
+polls exhaust the window, intervening events clear it, and failed ACK disconnects.
+
+Spectrum MQTT observations retain the actual published route, including PING
+and BYE; the matcher cannot reinterpret a mistaken CONTROL route by payload.
+The reference reducer uses CONTROL for some lateral game requests. The judge
+maps only that CONTROL/GAME equivalence and the contract-legal START difference;
+it no longer repairs ACK/NACK routes. Desktop adapter tests compose actual
+START, MOVE, PING and ACK RESET actions with the production topic mapper.
+RESET/DRAW/RESIGN replies now use the peer ACK topic. The Next host variant retains both
+Next defines throughout application and MQTT overlay compilation; only native
+RTC/UART/sprite hardware calls are stubbed.
+
+Operation ownership is logical, not linker-enforced private storage. Macro
+operations execute in their consumer TU, and application semantic ports must
+be reviewed for policy leakage. The boundary guard checks each port's private
+application references against an explicit per-port allowance; a new macro
+cannot silently import private application functions. Request macros take caller-owned exit labels;
+they contain no hidden returns and introduce no action dispatcher.
+Time mutation and scheduling now belong to application runtime. UI includes
+only the read-only snapshot header; presentation alone cannot advance time.
+Headless application-wait tests exercise civil and game clocks at 50/60 Hz.
+The old `spectrum_gui_tick` overlay symbol is an ABI alias of the application
+tick implementation, not a GUI-owned scheduler or a second ticking path.
+
+The follow-up audit repair aligns unsolicited ACK RESET handling: compact
+DIRECT and MQTT polling credit liveness only when a local RESET is pending,
+matching their canonical reducers. Focused poll tests check actual watchdog
+state; the shared MQTT transcript checks no session/action changes. The DIRECT
+hostile-ACK transcript continues to check non-acceptance, not timer parity.
+
+| Option | Cost / risk | Decision and proof |
+|---|---|---|
+| Reuse the compact FSM and its existing storage | No additional persistent state; preserve ordering at TX/domain boundaries | Apply; shared DIRECT/MQTT transcripts and new intermediate-failure cases |
+| Compile session coordination in the application unit behind semantic effect/fact operations | Keeps compiler visibility; source inclusion alone is not isolation | Apply only with guards rejecting private application dependencies |
+| Reuse pending/undo cleanup and one MQTT failure helper; expose caller-owned exits in synchronous request macros | No dispatcher or new BSS | Apply; controlled app-object comparison and final linked gate |
+| Generic action list, dispatcher or common reducer | Additional RAM, calls and code; re-entry complicates shared scratch lifetime | Reject |
+| Change protocol, formats, Setup reconstruction or platform packaging | Outside this migration | Reject |
+
+Reference for this cut is the completed phase-3 gate: Classic resident 35265,
+BSS 419, SP gap 1012 and overlay file 28118 bytes; Next resident 32039,
+BSS 520 and SP gap 4137 bytes. These measurements do not replace the committed
+size/ABI baselines. Recovery preserves the complete dirty phase-3 tree outside
+the repository; no pre-existing edits may be reverted.
+
+The original phase-4/5 gate passed on 2026-09-10 with
+`make full-check PYTHON=C:/PROGRA~1/Python311/python.exe` (exit 0), recorded in
+`build/phase4-final-verified.log`. DIRECT/MQTT checks at 50/60 Hz, the 76-case
+MQTT corpus, standalone transition ordering, ownership guards and both ABI
+manifests passed. This historical gate missed the Next busy-START regression;
+it does not close the audit repairs. No baseline update was added.
+
+| Linked measurement (bytes) | Phase 3 | Pre-audit | Delta |
+|---|---:|---:|---:|
+| Classic resident | 35265 | 35282 | +17 |
+| Classic BSS | 419 | 419 | 0 |
+| Classic SP gap | 1012 | 995 | -17 |
+| Classic overlay file | 28118 | 28118 | 0 |
+| Next resident | 32039 | 32056 | +17 |
+| Next BSS | 520 | 520 | 0 |
+| Next SP gap | 4137 | 4120 | -17 |
+
+This is not zero-cost against phase 3: the final cut uses 17 more resident bytes.
+It passes the unchanged committed Classic baseline: resident -2, BSS -2,
+SP gap +4 and overlay file -48 bytes. Classic CODE_FULL is 35701, TAP 35781,
+DATA 43 and stack-guard gap 651 bytes. Next CODE_FULL is 32576, TAP 32656,
+overlay file 139264, stack-guard gap 3776 and extension bank 4833/5376 bytes.
+Physical DIRECT/MQTT validation remains pending; no SpectraNext firmware or
+desktop build is claimed by this close-out.
+
+Audit adjudication: `spectrum_append_text(dst, src)` copies at `dst` and returns
+the end pointer; it is not strcat. Reusing the ten-byte activation buffer
+therefore neither appends setup to presence nor overflows it for a five-digit
+SID. No extra stack buffer was added. A direct production-coordinator test now
+covers SUBSCRIBE, online-presence and setup failure for both roles, checking
+exact five-digit-SID payloads and cleanup order. SpectraNext BUSY formatting
+did alias MQTT packet scratch: the reply is now copied to the inactive backend
+payload buffer before publishing. Its source regression check does not replace
+a SpectraNext firmware or hardware run. Host PING failure cleanup now matches
+the canonical reducer, attempting offline presence just like the guest.
+
+### Audit repair close-out
+
+`make full-check PYTHON=C:/PROGRA~1/Python311/python.exe` completed with exit 0;
+evidence: `build/audit-fixes-full-check.log`, `build/size_report.json` and
+`build/nex/size_report.json`. All four MQTT variants passed 77/77 for canonical
+and Spectrum, DIRECT parity passed, time/GUI integration passed at 50/60 Hz,
+production replay/cleanup ordering passed, and both ABI manifests matched.
+The new busy-START transcript failed on Next before the route fix; nonzero
+snapshot and fractional-clock tests also reproduced the two time defects before
+their fixes. No baseline changed, no commit was made, and pre-existing Setup
+render edits were preserved.
+
+| Linked measurement (bytes) | Pre-audit | Repaired | Delta |
+|---|---:|---:|---:|
+| Classic resident | 35282 | 35274 | -8 |
+| Classic BSS | 419 | 420 | +1 |
+| Classic SP gap | 995 | 1002 | +7 |
+| Classic overlay file | 28118 | 28118 | 0 |
+| Next resident | 32056 | 32083 | +27 |
+| Next BSS | 520 | 521 | +1 |
+| Next SP gap | 4120 | 4092 | -28 |
+| Next overlay file | 139264 | 139264 | 0 |
+
+Classic remains below the unchanged committed baseline: resident -10, BSS -1,
+SP gap +11, full CODE/TAP -11, overlay file -48 bytes. Its full CODE is 35694,
+TAP 35774, DATA 43, stack-guard gap 658 and DAT 7148 bytes. Next full CODE is
+32604, TAP 32684, stack-guard gap 3748 and DAT 1964 bytes; its SP gap exceeds
+the 3072-byte target minimum. Its extension bank remains 4833/5376 bytes.
+The one extra BSS byte is the independent civil-clock fraction. Classic reuses
+the existing busy formatter to remove a duplicate string; Next costs +27
+resident bytes, so this repair is not presented as a saving on every target.
+SP gaps are static map distances, not measured stack high-water marks.
+These are historical measurements for the first audit repair block, not proof
+of the follow-up edits below. SP gaps never certify dynamic stack use.
+
+### Audit follow-up completion ledger
+
+| Option | Cost / risk | Decision / smallest proof |
+|---|---|---|
+| Move tick and time commands to application runtime; expose only snapshot to UI | Same storage; preserve old overlay symbol; linked cost required | Apply; headless and presentation-only tests at 50/60 Hz |
+| Share timer formatting/delta rendering instead of duplicate branches | Same pixels/cache/force behavior, no new storage | Apply; GUI timer checks, object comparison, final linked gate |
+| Explicit macro exits, pending LOAD admission and one RESTORE disconnect | Reuse current state and effects, no runtime queue | Apply; compact-owner and actual application tests |
+| Correlate ACK RESET liveness and clean host PING failures | Authorized convergence with canonical behavior | Apply; role/transport poll tests and shared MQTT corpus |
+| Preserve SpectraNext BUSY payload outside packet scratch | Reuse inactive backend buffer, no BSS | Apply; source regression; platform execution unverified |
+| Observe PC actions through the real topic mapper | Host/desktop checks, no payload-based judge forgiveness | Apply; adapter tests and canonical emission repair |
+| Replace compact FSM with separately linked generic framework | Resident/RAM and scratch-lifetime cost | Reject; reviewed semantic ports remain the chosen boundary |
+
+Desktop verification passed (12/12 tests). The first follow-up `full-check`
+passed host tests and both ABI manifests but failed Classic size by 2 resident
+bytes and 1 SP-gap byte (`build/audit-finish-full-check.log`). The correction
+replaces duplicate timer-format helpers with one complete line template and
+one borrowed time view; focused GUI tests preserve active/inactive text and both
+turn-time units. The GUI object drops 54 code+constant bytes with unchanged BSS;
+only the closing linked report certifies the actual saving.
+Final `make full-check PYTHON=C:/PROGRA~1/Python311/python.exe` completed with
+exit 0 (`build/audit-finish-final-verified.log`). It covers all four 77/77 MQTT
+variants, DIRECT parity, GUI/headless time at 50/60 Hz, activation failures,
+productive RESET replay, ownership/capability guards and both ABI manifests.
+`make client-test` passed 12/12 (`build/audit-finish-client.log`). The final
+source diff check is clean. No baseline or unrelated Setup change was altered;
+no commit, push or SpectraNext firmware build was performed at that checkpoint.
+
+| Final linked measurement (bytes) | First audit repair | Follow-up final | Delta |
+|---|---:|---:|---:|
+| Classic resident | 35274 | 35232 | -42 |
+| Classic BSS | 420 | 420 | 0 |
+| Classic SP gap | 1002 | 1044 | +42 |
+| Classic overlay file | 28118 | 28118 | 0 |
+| Next resident | 32083 | 32042 | -41 |
+| Next BSS | 521 | 521 | 0 |
+| Next SP gap | 4092 | 4133 | +41 |
+| Next overlay file | 139264 | 139264 | 0 |
+
+Classic has 52 resident bytes and 1 BSS byte below the unchanged baseline,
+with SP gap 53 bytes above it. Full CODE/TAP are 35652/35732; stack-guard gap is
+700 and DAT is 7148. Next full CODE/TAP are 32563/32643, stack-guard gap 3789,
+DAT 1964 and extension bank 4833/5376. Against phase 3, Classic resident is -33
+bytes and Next +3; BSS is +1 on each for the previously separated clock fraction.
+This is not a zero-cost claim on every target. Physical DIRECT/MQTT failure
+injection and dynamic stack measurements remain unperformed; the manual
+follow-up below is separate from the completed software/Classic/Next gates.
+
+### External findings disposition
+
+| Finding family | Disposition |
+|---|---|
+| Next busy-START routing; forgiving route judge; PC physical topic composition | Fixed and covered by target variants, strict ACK comparison and desktop adapter tests |
+| GUI tick/writers; loaded timer loss; shared clock fraction | Fixed; separate application scheduling/read-only UI and direct/integration timer tests |
+| Macro hidden returns and private-port smuggling | Explicit exits and reviewed per-port reference guards; same-TU compilation deliberately retained |
+| Wire formatting in application ports; primitive ply writes; route flag copies | Common frame builder, semantic domain commit, host ABI assertions |
+| Overlay capability coverage; ASM identity privilege | Included action units covered; exact bootstrap file/include exception |
+| RESET replay production branch | Standalone production-field test, expiry/intervening-event/failure checks |
+| Unsolicited ACK RESET liveness | Canonical correlation applied to compact DIRECT/MQTT, actual watchdog tests |
+| Host PING TX cleanup; duplicate RESTORE disconnect; LOAD during pending operation | Fixed at session admission/failure boundaries with focused and application-level checks |
+| SpectraNext BUSY scratch alias | Source fix and regression check; target execution remains unverified |
+| Activation overflow claim and ten-byte buffer concern | Overflow claim disproved by copy-at-destination semantics; exact maximum-SID activation failure test, no speculative buffer expansion |
+| SUBSCRIBE/online activation failure behavior | Explicit coordinator tests pin abort before seat acquisition and offline attempt after setup failure |
+| Route comment and raw identity-ready access | Comment distinguishes logical IDs/physical topics; accessor used |
+| `app-no-overlay` transitive-include observation | This is a direct-import rule, not a ban on application effect dispatch through public facades; no claim of transitive isolation is made |
+| Resident cost and physical stack/network evidence | Final linked table below is authoritative; static gaps are not dynamic stack proof |
+
+The explicit port allowance and lexical guards are review aids, not a claim
+that arbitrary preprocessor metaprogramming is mechanically proven safe.
+Replacing the compact unit with linker-enforced encapsulation is a different
+architecture with a resident cost, not an outstanding behavioral repair.
+
+### Manual hardware follow-up
+
+#### SpectraNext functional results — 2026-09-10
+
+The user confirmed on the real cartridge: TNFS installation and startup; local
+startup and saved configuration after power cycling; MQTT and DIRECT play as
+both host and guest against PC; MQTT RESTORE with position and nonzero timers
+preserved; TAKEBACK in both directions; DRAW followed by a new game; and MQTT
+reconnection without a persistent occupied seat. These are user-observed
+functional results, not instrumented packet captures or stack measurements.
+The user confirmed firmware newer than the required `0.9-6fc153a3`; the exact
+firmware identifier and display frame rate were not recorded.
+
+The candidate was built from the uncommitted `main` tree with the user's
+explicit exception to the port branch/commit workflow; no canonical `port run`
+or clean-commit hardware handoff is claimed. `SHATRANJ.PKG` is 44610 bytes,
+SHA-256 `2c25c5bb183aaab7acb87b269e9177d57300ce35bb3c131c2fd9643c01945e5b`.
+SpectraNext conformance, configuration, storage, clock and size gates passed
+(`build/spectranext-hardware-build.log`): resident 35422, BSS 272, SP gap 1250,
+overlay file 32553 bytes. The generic installer/adapter gates passed
+(`build/spectranext-installer-check.log`); the additional full-candidate harness
+could not preload this package into its mock heap and did not execute it
+(`build/spectranext-hardware-harness.log`). Installer output and served hashes
+were checked before the physical installation.
+
+Exact intermediate TX failures, busy-START topic capture and dynamic stack
+high-water remain unmeasured. Ordinary gameplay does not prove those branches.
+
+The user will validate on real hardware when available; ZXESPEmu is also useful
+for functional scenarios but does not itself certify a real machine's stack
+high-water mark. Record the target, frame rate, roles, firmware/artifact hashes
+and outcome as described in `maintenance.md`.
+
+1. With Classic and Next NEX, exercise both host/guest roles over DIRECT and MQTT:
+   START, several moves, chat, TAKEBACK, DRAW, RESIGN, post-game statistics,
+   consented RESET and RESTORE.
+   Check that both boards agree and each accepted operation applies once.
+2. Save an active game with nonzero game/turn timers, load it and verify both
+   timers resume from the saved values. Exercise menu, animation and network
+   waits; clock progress and timer formatting must remain correct at 50/60 Hz.
+3. Disconnect and reconnect each peer. Check peer-loss handling and subsequent
+   MQTT seat acquisition; inspect retained presence/meta if a seat remains busy.
+4. Exact TX failure between RS00/RS01, failed post-draw RESET, forced SUBSCRIBE
+   failure, busy-START topic capture and unsolicited ACK RESET injection require
+   controllable packet/TX injection or tracing. A manual cable pull does not prove
+   that exact branch ran; deterministic host coverage remains separate evidence.
+5. Dynamic stack high-water measurement needs instrumentation or an emulator
+   debugger. A successful ordinary game and a static SP gap are not that measure.
+
+## Input Events (reference API)
 
 ```text
 EV_LINK_UP
@@ -203,19 +504,35 @@ Action data:
 - `ACT_SESSION_CHANGED`: READY, BUSY, STARTED, or ENDED. ENDED also carries
   `NONE`, `LOCAL_BYE`, `REMOTE_BYE`, or `TRANSPORT_LOST`; adapters use this
   target-neutral cause for presentation and never reparse BYE. Non-ENDED
-  actions carry `NONE`.
+  actions carry `NONE`. Shared transcript observations may require the ENDED
+  reason; parity normalization must not discard it.
 - `ACT_SIDE_CHANGED`: local color and session id.
 
-There may be multiple actions per step, but at most one `ACT_SEND`. A
+There may be up to six actions per step, but at most one `ACT_SEND`. A
 transition requiring another transmission emits it after the corresponding
 `EV_TX_RESULT`. This keeps output-buffer ownership unambiguous and requires no
 dynamic action queue.
+
+Adapters execute actions in emission order. Each synchronous effect returns a
+result before the reducer or compact session FSM selects the next dependent
+effect; failure stops later effects that assume its success. An action payload
+remains valid until that effect has consumed it, and transient Spectrum overlay
+payloads are consumed before the overlay call returns. `EV_TX_RESULT(OK)` means
+only that the local transport accepted the send. Peer acceptance still requires
+the corresponding application ACK or NACK.
 
 An accepted local MOVE emits the workspace-backed move delivery followed by a
 typed result delivery carrying the already-parsed peer notation. TAKEBACK is
 not ACKed until its correlated domain delivery has returned
 `EV_GAME_RESULT`. These ordered actions keep board application and wire policy
 inside the same reducer transcript without extending the action ABI.
+
+The delivery of an accepted remote MOVE is its board commit. The compact
+Spectrum implementation sends `ACK <ply>` right after that commit and then
+paints the move log, flashes the destination and writes the journal and
+recovery checkpoint, so the peer's wait for ACK does not include them. A
+failed ACK send still finishes those steps before the link is dropped. Its
+parity runners observe the delivery at the commit, not at the repaint.
 
 For an accepted remote TAKEBACK, the decision is followed by the correlated
 domain apply and only an accepted apply result permits `ACK <ply>`. A rejected
@@ -259,12 +576,22 @@ known MACH status update to this same typed observation. This reuses the
 existing game action fields and adds no `SessionAction` or `SessionState`
 storage.
 
+`MNAME <name>` follows the same acceptance rules as MACH: active link and
+peer-ready for DIRECT (with the normal valid-payload liveness rearm), live
+non-retained game route for MQTT (no liveness credit). A valid name (1 to 10
+characters from `A`-`Z`, `0`-`9`, `-`, `_`) emits `ACT_DELIVER_GAME` with kind
+`SESSION_DELIVER_PEER_NAME`, `value` 0, no delivery id, and the name slice as
+payload. Invalid, retained, wrong-route and pre-ready names are ignored. The
+adapter owns the copy; the reducer keeps no name state. The compact Spectrum
+FSM copies an accepted name into its resident peer-name buffer and its parity
+runner normalizes that update to the same typed observation.
+
 ## DIRECT Normalization Decisions
 
 The pre-refactor PC and Spectrum paths disagree on several crossed controls.
 The common reducer freezes one explicit behavior for every disagreement. A busy
 GAME START is NACKed without disturbing the operation already pending; crossed
-DRAW is ACKed and advances to RESET; crossed RESET during an active game is
+DRAW is ACKed and ends the game in OVER; crossed RESET during an active game is
 NACKed BUSY; and either DIRECT role may initiate RQ. An idle receiver asks the
 user for a decision, while a busy receiver answers RN. Duplicate RQ handling
 is idempotent: an already-open prompt is not duplicated, an accepted/in-flight
@@ -274,17 +601,19 @@ always ACKed once the peer is ready, including while another control is pending.
 RESIGN is unilateral and idempotent: every received RESIGN is ACKed, it is
 applied at most once, and a crossed RESIGN ACK handoff clears the local RESIGN
 retry because both peers are already in the game-over state. After a normal
-`ACK RESIGN`, the resigning peer changes the same pending control to RESET and
-sends `RESET`; the peer that applied the RESIGN accepts that RESET
-automatically, replies `ACK RESET` without emitting `ACT_REQUEST_DECISION`, and
-both sides start a fresh game after their respective RESET handoffs. A crossed
-RESIGN uses the immutable role as a tie-break: only HOST sends the automatic
-RESET and GUEST waits to accept it, preventing two simultaneous rematch
-requests. The automatic RESET remains correlated and retried as the one pending
-control operation; it does not suspend or replace the independent liveness
-timer. If that RESET cannot complete, the session remains connected in OVER
-with chat available and reports a failed automatic restart rather than closing
-the link. A local RESIGN is
+`ACK RESIGN`, the resigning peer clears the pending control and remains in
+OVER. Normal and crossed RESIGN never send RESET or arm an automatic RESET
+acceptance latch. An accepted or crossed DRAW likewise ends in OVER, with no
+RESET request or timer waiting for one. Accepted DRAW retransmissions still
+receive ACK DRAW while the finished game remains current, without repeating
+the result or prompting again. Chat and independent liveness remain active.
+The reducer accepts a new-game request from either role through the existing
+consented RESET flow, so a 1.2 peer's post-game RESET is still answered; a
+fresh incoming RESET emits ACT_REQUEST_DECISION even after DRAW or RESIGN.
+Current Spectrum and Qt clients offer that request only to the host (commit
+`86b597b8`); a declined request (NACK RESET) ends the session on both sides.
+START, an accepted RESET, or RESTORE clears the finished-game duplicate state.
+A local RESIGN is
 the only local control that may preempt a locally originated MOVE after its TX
 handoff while that MOVE awaits its numeric ACK. The MOVE control timer is
 cancelled, the MOVE is not applied locally, and no later numeric ACK/NACK can
@@ -309,7 +638,8 @@ ticks, waits 450 ticks for ACK PING, retransmits PING once after the first
 missed window, and ends the session after the second missed 450-tick window.
 A ready host does not send PING; it ends the session after two consecutive
 450-tick windows without peer data. Any valid peer payload resets the miss
-count and rearms the role's initial liveness deadline. Thus an entirely silent
+count and rearms the role's initial liveness deadline. Unknown or malformed
+payloads, including malformed MOVE, do neither. Thus an entirely silent
 peer ends at 1050 ticks (21 seconds) for a guest and 900 ticks (18 seconds) for
 a host. The guest actively probes while the listening host waits for peer
 activity; 21 seconds is therefore the worst-case dirty-disconnect deadline,
@@ -362,11 +692,15 @@ An active guest accepts GAME START with either side, publishes a side change if
 needed, and ACKs without restarting the running game. An idle game-over guest
 accepts GAME START as a fresh game and emits STARTED after the ACK handoff.
 
-RESET and rejected DRAW do not retain a duplicate latch after their reply has
-been handed off: a later request prompts again. An accepted TAKEBACK retains its
+RESET does not retain a duplicate latch after its reply has been handed off: a
+later request prompts again. A rejected DRAW keeps its latch until the position
+changes (the next applied MOVE, TAKEBACK, RESET, START or RESTORE). DRAW carries
+no correlation, so a retransmission that crossed the NACK cannot be told apart
+from a repeated offer: both are answered `NACK DRAW` without a second prompt.
+An accepted TAKEBACK retains its
 ply latch until a move or reset so a lost ACK can be replayed without applying
-the takeback twice. An accepted DRAW retains its latch only during the rematch
-RESET exchange.
+the takeback twice. An accepted DRAW retains its latch while the finished game
+remains current, including after a declined manual RESET.
 
 While the accepted TAKEBACK latch is live, the same ply is a duplicate and is
 re-ACKed without decision or apply. A different ply is a new operation, not a
@@ -375,6 +709,51 @@ it is therefore rejected as bare `NACK <ply>` without replacing the accepted
 latch. An applied MOVE or RESET clears that latch and creates the normal fresh
 context; the same numeric ply may then be requested and applied as a new
 operation.
+
+A peer's TAKEBACK awaiting this side's decision belongs to the peer: only the
+requester retransmits it, and the receiver neither resends it nor counts it
+among its own retries, however long the user takes to answer. Only the
+requester takes an `ACK <ply>` or `NACK <ply>` as the answer to a TAKEBACK; a
+NACK of that ply arriving at the receiver while its decision is open (for
+example the peer's reply to a crossed request) is ignored and the decision
+stays open. The compact FSM keeps both directions in one pending-ply field and
+tells them apart by the owner of its one-ply undo snapshot, since each side
+only asks to take back its own last move (scenario
+`takeback-remote-slow-answer`; a Spectrum before 2026-10-11 resent the
+peer's request after one reply period and then took the peer's NACK as the
+answer, leaving a hidden Y/N prompt that blocked the game).
+
+All local Y/N requests share a separate 60-second decision timer, armed on
+their first successful transmission and independent of reply retries. Remote
+TAKEBACK, DRAW, RESET and LOAD prompts arm the same deadline when first opened;
+a duplicate request never rearms it. Remote expiry rejects the question and
+invalidates a late modal answer even if no CANCEL arrived. Its
+expiry withdraws DRAW/RESET with their existing CANCEL messages, RESTORE
+approval with RN, and TAKEBACK with `CANCEL TAKEBACK <ply>`. A matching
+TAKEBACK cancellation invalidates the pending remote decision and returns
+`NACK <ply>` without undoing; a previously accepted ply replays its ACK.
+An ACK crossing cancellation still completes the correlated undo on the
+requester. Cancellation releases the requesting UI after its first TX handoff
+and retries in the background; retry exhaustion never ends a live session.
+A following peer MOVE retires the withdrawal when it commits. An expired local
+DRAW/RESET also permits a local MOVE: its candidate remains uncommitted until
+ACK, and a crossed control acceptance can still discard it and complete the
+original control. A committed next MOVE clears the correlation, making older
+ACKs inert. A rejected candidate resumes the background withdrawal. Accepted
+RESET/DRAW replay their ACK to CANCEL until another MOVE invalidates that result,
+as TAKEBACK already does. The normal liveness and committed-transfer failure
+policies remain active; this preserves both ACTIVE and OVER.
+The decision timer is disarmed on completion, refusal or entry into RESTORE
+chunk transfer, so an old deadline cannot consume a later request.
+Its SET/CANCEL bookkeeping is private scheduling in the shared judge, as
+for the reply timer; its expiry inputs and all resulting wire, prompt and
+board effects remain observable. Focused tests check the actual 60-second
+duration and the compact frame counter, including busy loops and wrap.
+
+The compact coordinator measures decision intervals using the
+hardware frame counter, with unsigned wrap-safe subtraction and the active
+50/60 Hz mode. Received traffic and slow polls cannot stop the approval deadline.
+Transport retries retain their existing scheduling and do not define that deadline.
 
 After duplicate handling, every fresh TAKEBACK must name the current committed
 ply. A different value is bare-NACKed without a decision. This makes RESET at
@@ -412,9 +791,9 @@ actions out of both traces. The timeout event remains a corpus input, and the
 resulting host publish, TX guard and all liveness actions remain observable.
 
 The application-reply timer is likewise private scheduling rather than an
-observable interoperability action. The compact Spectrum FSM retries after 120
-poll iterations; the canonical reducer and PC v1.0 use 125 ticks (2500 ms).
-Both cadences conform to the required 2-3 second reply-retry band. MQTT parity
+observable interoperability action. The compact Spectrum FSM keeps its
+empty-poll reply cadence; the canonical reducer uses 125 protocol ticks
+(2500 ms). Both nominal cadences conform to the 2-3 second reply-retry band. MQTT parity
 normalizes only the timer SET/CANCEL bookkeeping; the timeout input, resulting
 wire retransmission, TX guard and liveness effects remain observable. Any
 hardware-visible cadence effect reopens this decision.
@@ -485,6 +864,19 @@ simultaneous owner of the single DIRECT TX scratch.
 its move history. A later `EV_LINK_UP` begins a new handshake, session, and game
 from initial state. No state, action, or transition may suspend, resume, restore,
 or replay a previous game after link loss.
+
+Game recovery does not contradict this rule: it is a new, separately
+consented LOAD inside a **new** session, never a resumption of the ended one.
+After peer ready and before GAME START, the Spectrum host application may
+offer its newest local checkpoint. Accepting performs the ordinary RESTORE
+exchange, so the existing RESTORE guarantees apply unchanged: bounded retries,
+idempotent duplicate chunks, `RN` on refusal or expiry, guest apply before
+`RA`, host apply after `RA`, and no GAME START to complete it. The offer is an
+application confirmation: while it is pending the host has no game and no
+running clock, and the existing confirmation gates answer RESTORE and MOVE
+with `RN`/BUSY. The reducers are unchanged. Format, journal link and failure
+semantics: `docs/game-recovery-experiment.md`. The milestone-1 barrier
+(`GC1`/`GA1`/`GO1` to `NE1`) was withdrawn unimplemented.
 
 MQTT retained/live flags are broker metadata for presence and control payloads
 only. They never authorize retaining a game position or move history.
@@ -660,17 +1052,18 @@ The public header must carry this implementation contract:
 
 ## Spectrum Budget
 
-Every phase that changes code destined for ZX or Next records linked CODE,
-DATA, BSS, overlay sizes, and SP/BSS gap against tag
-`baseline-pre-refactor` during that same phase.
+Every closed block that changes code destined for ZX or Next records linked
+CODE, DATA, BSS, overlay sizes, and SP/BSS gap against the committed
+`docs/size_report.baseline.json`. The closing `full-check` uses
+`--fail-on-growth`; the baseline is not updated to absorb the migration.
 
-- Final resident CODE: no more than baseline plus 128 bytes.
-- Final BSS: no larger than baseline.
-- No overlay may exceed its baseline size or executable target limit: 2048
+- Resident CODE, full CODE, TAP, OVL file, BSS, and RAM end may not grow.
+- The SP/BSS gap may not shrink.
+- No individual overlay may exceed its baseline size or executable target
+  limit: 2048
   bytes for Classic and 4096 bytes for Spectranext and the Next NEX. Next uses
   physical 8192-byte pages; their upper 4096 bytes mirror immutable resident
   code and are not overlay capacity.
-- The SP/BSS gap may not shrink.
 - New state replaces old globals; it must not remain additive after migration.
 - `src/common/session/` and its generic action executor are not linked into the
   Spectrum targets.

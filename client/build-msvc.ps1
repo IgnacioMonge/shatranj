@@ -139,7 +139,7 @@ function Remove-UnlistedDeploymentFiles {
         "vcruntime140_threads.dll"
     )
     $keepRootFiles += @("LICENSE", "THIRD_PARTY_NOTICES.md")
-    $keepDirs = @("assets", "imageformats", "licenses", "platforms")
+    $keepDirs = @("assets", "imageformats", "licenses", "platforms", "tls")
     foreach ($item in Get-ChildItem -LiteralPath $Path -Force) {
         if ($item.PSIsContainer) {
             if ($keepDirs -notcontains $item.Name) {
@@ -150,7 +150,10 @@ function Remove-UnlistedDeploymentFiles {
         }
     }
 
-    $pluginKeep = @{ imageformats = @("qjpeg.dll"); platforms = @("qwindows.dll") }
+    $pluginKeep = @{
+        imageformats = @("qjpeg.dll"); platforms = @("qwindows.dll")
+        tls = @("qschannelbackend.dll")
+    }
     foreach ($dirName in $pluginKeep.Keys) {
         $dir = Join-Path $Path $dirName
         if (-not (Test-Path -LiteralPath $dir)) { continue }
@@ -205,6 +208,11 @@ Invoke-ProcessChecked `
     -FilePath $WinDeployQtExe `
     -Arguments @($deployMode, "--compiler-runtime", "--no-translations", "--no-system-d3d-compiler", "--no-opengl-sw", $PackagedExe) `
     -Name "windeployqt"
+# windeployqt only offers the OpenSSL TLS backend, which ships without its DLLs;
+# the Stockfish download needs HTTPS through the native Schannel backend.
+$tlsDir = Join-Path $DistDir "tls"
+New-Item -ItemType Directory -Force -Path $tlsDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $QtDir "plugins\tls\qschannelbackend.dll") -Destination $tlsDir -Force
 
 $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
 if (-not (Test-Path -LiteralPath $vswhere)) { throw "vswhere not found: $vswhere" }
@@ -231,6 +239,9 @@ Copy-SelectedChildren `
 Copy-Contents `
     -Source (Join-Path $ProjectRoot "assets\pc-client\about") `
     -Destination (Join-Path $DistDir "assets\pc-client\about")
+Copy-Contents `
+    -Source (Join-Path $ProjectRoot "assets\pc-client\manual") `
+    -Destination (Join-Path $DistDir "assets\pc-client\manual")
 Copy-Contents `
     -Source (Join-Path $ProjectRoot "licenses") `
     -Destination (Join-Path $DistDir "licenses")

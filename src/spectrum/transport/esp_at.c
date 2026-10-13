@@ -9,7 +9,7 @@
 #endif
 
 #include <string.h>
-#include "common/protocol/game_protocol.h"
+#include "common/text.h"
 
 
 #ifndef NETCHESSZX_TZ
@@ -20,6 +20,7 @@
 #define WAIT_SHORT 150
 #define WAIT_MED 500
 #define WAIT_INIT_CMD 30
+#define UART_DRAIN_BUDGET 255u
 #define LAST_IP_SIZE NETCHESSZX_LOWRAM_LAST_IP_SIZE
 #define LAST_IP_TEXT_SIZE (LAST_IP_SIZE - 2u)
 #define LAST_IP_RECOVERY_STATE (LAST_IP_SIZE - 1u)
@@ -64,7 +65,9 @@ const char *spectrum_net_last_ip(void)
 uint8_t read_line(uint16_t frames) NETCHESSZX_FASTCALL
 {
     for (;;) {
-        while (spectrum_uart_ready()) {
+        uint8_t budget = UART_DRAIN_BUDGET;
+
+        while (budget-- != 0u && spectrum_uart_ready()) {
             uint8_t c = spectrum_uart_read();
 
             if (c == '\r') {
@@ -78,7 +81,11 @@ uint8_t read_line(uint16_t frames) NETCHESSZX_FASTCALL
                 if (line_pos != 0u) {
                     line_buf[line_pos] = '\0';
                     line_pos = 0u;
+#ifdef NETCHESSZX_NEXT
+                    return (uint8_t)(spectrum_uart_error() == 0u);
+#else
                     return 1u;
+#endif
                 }
                 continue;
             }
@@ -88,6 +95,12 @@ uint8_t read_line(uint16_t frames) NETCHESSZX_FASTCALL
                 line_pos = LINE_MAX;
             }
         }
+#ifdef NETCHESSZX_NEXT
+        if (spectrum_uart_error()) {
+            reset_line_buf();
+            return 0u;
+        }
+#endif
         if (frames == 0u) {
             return 0u;
         }
@@ -159,7 +172,7 @@ void netchesszx_esp_at_test_recovery_begin(void)
 uint8_t netchesszx_esp_at_test_capture_msdos_time(uint16_t date,
                                                   uint16_t time)
 {
-    return capture_msdos_time(date, time);
+    return msdos_time_valid(date, time, 1u);
 }
 
 uint8_t netchesszx_esp_at_test_validate_msdos_time(uint16_t date,
@@ -193,13 +206,24 @@ static uint8_t wait_for_ok(uint16_t frames) NETCHESSZX_FASTCALL
 uint8_t wait_for_prompt(uint16_t frames) NETCHESSZX_FASTCALL
 {
     while (frames-- != 0u) {
-        while (spectrum_uart_ready()) {
+        uint8_t budget = UART_DRAIN_BUDGET;
+
+        while (budget-- != 0u && spectrum_uart_ready()) {
             uint8_t c = spectrum_uart_read();
 
             if (c == '>') {
+#ifdef NETCHESSZX_NEXT
+                return (uint8_t)(spectrum_uart_error() == 0u);
+#else
                 return 1u;
+#endif
             }
         }
+#ifdef NETCHESSZX_NEXT
+        if (spectrum_uart_error()) {
+            return 0u;
+        }
+#endif
         net_wait_frame();
     }
     return 0u;

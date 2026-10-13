@@ -1,0 +1,25 @@
+{
+  "schema": 2,
+  "owner": "netchess-roller-clock",
+  "version": "1.2.1-dev.roller.clockfix.3+ge50a8cf.dirty",
+  "launchers": [
+    {
+      "name": "NetChessZX Roller lineal Classic PRUEBA",
+      "bundle_id": "com.ignaciomongegarcia.netchesszx.roller-clock.classic",
+      "arguments": [
+        "--program", "netchess", "--target", "classic",
+        "--netchess", "../.."
+      ],
+      "icon": "../../client/shatranj.icns"
+    },
+    {
+      "name": "NetChessZX Roller lineal Next PRUEBA",
+      "bundle_id": "com.ignaciomongegarcia.netchesszx.roller-clock.next",
+      "arguments": [
+        "--program", "netchess", "--target", "next",
+        "--netchess", "../.."
+      ],
+      "icon": "../../client/shatranj.icns"
+    }
+  ]
+}

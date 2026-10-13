@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2-blue" alt="Version 1.2">
+  <img src="https://img.shields.io/badge/version-1.3-blue" alt="Version 1.3">
   <img src="https://img.shields.io/badge/protocols-Direct%20TCP%20%7C%20MQTT-2ea44f" alt="Protocols: Direct TCP and MQTT">
   <img src="https://img.shields.io/badge/desktop-Windows%20%7C%20macOS%20%7C%20Linux-41cd52" alt="Desktop: Windows, macOS, and Linux">
   <img src="https://img.shields.io/badge/Spectrum-Classic%20%7C%20Next%20%7C%20Spectranext-d52b1e" alt="Spectrum: Classic, Next, and Spectranext">
@@ -21,7 +21,7 @@
 
 <p align="center">
   <a href="README.es.md">Español</a> ·
-  <a href="https://github.com/IgnacioMonge/Shatranj/releases/latest">Download</a> ·
+  <a href="https://github.com/IgnacioMonge/shatranj/releases/latest">Download</a> ·
   <a href="docs/README.md">Developer documentation</a> ·
   <a href="client/README.md">Qt client guide</a>
 </p>
@@ -45,30 +45,37 @@ required.
 | **Play** | Spectrum ↔ Spectrum, Spectrum ↔ desktop, or desktop ↔ desktop |
 | **Connect** | Direct TCP without a broker, or MQTT through a shared broker and room |
 | **Platforms** | ZX Spectrum Classic, Spectrum Next, Spectranext, Windows, macOS, and Linux |
-| **In game** | Legal-move hints, clocks, history, chat, draw, resign, takeback, and save/restore |
-| **Consistent play** | The same rules, protocol, saved games, and session behavior on every client |
+| **In game** | Legal-move hints, clocks, history, chat, draw, resign, takeback, save/restore, and end-of-game statistics |
+| **Stockfish** | The desktop client can let Stockfish play your side against any opponent |
+| **Resilient** | Spectrum clients resume a game interrupted by a crash, reset, or power cut |
+| **Consistent play** | The same rules, protocol, and session behavior on every client |
 | **Native retro builds** | TAP + OVL + DAT for Classic and Spectranext; one self-contained NEX for Next |
 
-## What's new in 1.2
+## What's new in 1.3
 
-- **Spectranext joins the board:** a native cartridge edition with Direct TCP,
-  MQTT, RTC, persistent storage, and a guided installer.
-- **Spectrum setup remembers you:** connection, clock, color, notation, board,
-  pieces, and hints can all be saved, with live board and piece previews.
-- **Faster retro interaction:** smoother setup navigation and typing, instant
-  theme changes, faster board redraws, and clearer clock/startup feedback.
-- **A sharper desktop client:** refreshed Qt presentation, faster board and
-  network updates, and clearer connection and game-result messages.
-- **Know who you are playing:** active games now identify the opponent's
-  platform, from ZX Spectrum clients to the Qt desktop application.
-- **Safer play:** more reliable saved games, reconnections, restored games,
-  takebacks, rematches, and mixed-platform play.
+- **Stockfish joins the game:** the desktop client installs the official
+  Stockfish engine and can let it play your side, from level 0 to 20, against
+  any Spectrum or desktop opponent.
+- **Interrupted games come back:** Classic, Next, and Spectranext resume a
+  game after a crash, reset, or power cut, with the board, clocks, and move
+  list.
+- **Know who you are playing:** each player can set a name of up to ten
+  characters, shown in both players' move lists.
+- **End-of-game statistics:** time per move, longest and fastest moves, and
+  every captured piece, on Spectrum and desktop.
+- **Spectranext straight from the web:** start Shatranj from its web address
+  without installing it, or keep using the guided installer.
+- **A friendlier desktop client:** a Preferences dialog, an English and Spanish
+  manual, and clearer status messages.
+- **Faster, steadier play:** quicker move replies, fewer disk loads on Classic,
+  clocks that keep time during disk access, and requests that expire cleanly
+  after 60 seconds.
 
-See the [release notes](CHANGELOG.md) for the complete 1.2 overview.
+See the [release notes](CHANGELOG.md) for the complete 1.3 overview.
 
 ## Contents
 
-- [What's new in 1.2](#whats-new-in-12)
+- [What's new in 1.3](#whats-new-in-13)
 - [Platforms and protocols](#platforms-and-protocols)
 - [Download](#download)
 - [Installation](#installation)
@@ -87,7 +94,7 @@ See the [release notes](CHANGELOG.md) for the complete 1.2 overview.
 | Qt desktop | Windows, macOS, Linux | Direct TCP, MQTT | Platform package or executable |
 | ZX Spectrum Classic | 48K ZX Spectrum | Direct TCP, MQTT | `SHATRANJ.tap` + `SHATRANJ.OVL` + `SHATRANJ.DAT` |
 | Spectrum Next | ZX Spectrum Next | Direct TCP, MQTT | `SHATRANJ.nex` |
-| Spectranext | ZX Spectrum with Spectranext cartridge | Direct TCP, MQTT | Spectranext installer package |
+| Spectranext | ZX Spectrum with Spectranext cartridge | Direct TCP, MQTT | Direct launch or guided installer from the web |
 
 Direct TCP is a peer connection: the guest must be able to reach the host's
 address and port. MQTT avoids requiring a direct inbound connection; both
@@ -101,15 +108,16 @@ DAT companions. A ZX-Uno-compatible UART requires ESP transmit flow control
 via CTS; [NetManZX](https://github.com/IgnacioMonge/NetManZX) configures the
 required setting. The Next release is self-contained, so only its NEX file
 needs to be copied. The Spectranext edition uses the cartridge's own
-networking, requires the latest stable cartridge firmware, and is installed as
-a resource.
+networking, requires cartridge firmware 1.0 or later, and starts from its web
+address, either directly or through a guided installer.
 
 ## Download
 
 Download ready-to-run builds from the
-[latest public release](https://github.com/IgnacioMonge/Shatranj/releases/latest).
+[latest public release](https://github.com/IgnacioMonge/shatranj/releases/latest).
 Choose the desktop package for your operating system, the three-file Classic
-set, the self-contained Next NEX, or the Spectranext cartridge installer.
+set, or the self-contained Next NEX. The Spectranext edition starts from its
+web address instead; see [Spectranext cartridge](#spectranext-cartridge).
 
 ## Installation
 
@@ -130,24 +138,29 @@ Copy `SHATRANJ.nex` to the Next SD card and launch it from the NextZXOS browser.
 
 ### Spectranext cartridge
 
-1. Update the cartridge to the **latest stable Spectranext firmware**, then
-   configure the cartridge and Wi-Fi using the
+1. Update the cartridge to **Spectranext firmware 1.0 or later** (older
+   firmware stops at `FIRMWARE OUTDATED: SEE README`), then configure the
+   cartridge and Wi-Fi using the
    [official Spectranext instructions](https://docs.spectranext.net/tutorials/setting-up-mounts).
-2. In the Spectranext menu, select **Load Resource URL** and enter:
-   <code>https://ignaciomonge.github.io/Shatranj/</code>
-3. The guided installer installs Shatranj in the cartridge's local storage and
-   launches it.
-4. Afterwards, start `SHATRANJ.ZX` from local XFS. To update Shatranj, use
-   **Load Resource URL** again; your configuration and saved games are
-   preserved.
+2. In the Spectranext menu, select **Load Resource URL** and enter one of these
+   addresses:
+   - <code>https://ignaciomonge.github.io/shatranj/</code> to play straight
+     away without installing anything. Shatranj is downloaded from the web at
+     every start, so you always run the latest release.
+   - <code>https://ignaciomonge.github.io/shatranj/install/</code> to run the
+     guided installer, which installs Shatranj in the cartridge's local storage and
+     launches it. Afterwards, start `SHATRANJ.ZX` from local XFS; to update,
+     load the address again.
+3. Either way, your configuration and saved games stay in the cartridge's
+   local storage. Both ways of starting share them, and updates preserve them.
 
 <p align="center">
   <img src="docs/screenshots/shatranj-1.2-spectranext-installer.png" alt="Shatranj 1.2 guided installer on Spectranext" width="400"><br>
   <sub>The guided Spectranext resource installer.</sub>
 </p>
 
-A GitHub Release ZIP is not a mountable Spectranext resource; enter the HTTPS
-resource URL above instead.
+A GitHub Release ZIP is not a mountable Spectranext resource; enter one of the
+HTTPS addresses above instead.
 
 ## Quick start
 
@@ -172,6 +185,26 @@ Both clients connect to the same broker and room. MQTT is useful when a direct
 peer connection is inconvenient, provided both clients can reach that broker.
 
 ## Gallery
+
+### New in 1.3
+
+<table>
+  <tr>
+    <td align="center" width="50%"><strong>Stockfish playing your side (macOS)</strong><br><img src="docs/screenshots/shatranj-1.3-qt-stockfish.jpg" alt="Shatranj 1.3 Qt client on macOS with Stockfish playing and the game statistics shown" width="400"></td>
+    <td align="center" width="50%"><strong>Preferences: Stockfish engine</strong><br><img src="docs/screenshots/shatranj-1.3-qt-preferences.png" alt="Shatranj 1.3 Preferences dialog with the Stockfish engine settings" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><strong>End-of-game statistics</strong><br><img src="docs/screenshots/shatranj-1.3-classic-stats.png" alt="Shatranj 1.3 end-of-game statistics on ZX Spectrum Classic" width="400"></td>
+    <td align="center" width="50%"><strong>Playing Stockfish from a Spectrum</strong><br><img src="docs/screenshots/shatranj-1.3-classic-stockfish.png" alt="Shatranj 1.3 on ZX Spectrum Classic playing Stockfish through the macOS client" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><strong>Player names and the rolling menu</strong><br><img src="docs/screenshots/shatranj-1.3-next-names-menu.png" alt="Shatranj 1.3 player names and the OFFER menu group on Spectrum Next" width="400"></td>
+    <td align="center" width="50%"><strong>Resuming after a power cut</strong><br><img src="docs/screenshots/shatranj-1.3-next-resume.png" alt="Shatranj 1.3 asking to resume the last game on Spectrum Next" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><strong>What's new, from the About screen</strong><br><img src="docs/screenshots/shatranj-1.3-classic-whats-new.png" alt="Shatranj 1.3 what's new page on ZX Spectrum Classic" width="400"></td>
+  </tr>
+</table>
 
 ### Desktop
 
@@ -264,9 +297,17 @@ sets — **California**, **MPChess**, and **TotoY** — and five RGB333 board th
 
 ## Using Shatranj
 
-The host starts the game; either player can request a draw, takeback, restart,
-or restoration of a compatible saved game. Moves are accepted only from the
+The host starts the game; either player can request a draw, takeback or
+restoration of a compatible saved game. Moves are accepted only from the
 side whose turn is shown.
+
+Games finish without an automatic rematch. Only the host asks for a new
+game. Spectrum shows the result, then on the next key the host sees
+`S:STATS  RESTART? Y/N` and the guest `S:STATS  WAITING OPPONENT`: S opens
+statistics, any key returns, and the host's Y requests a restart. Declining a
+new game, or BREAK, ends the session for both players. Qt offers
+**Game stats** to both players and **Restart Game** to the host. [Statistics](docs/game-stats.md) include completed-turn times
+and captured pieces; loaded games start a partial sample.
 
 ### Desktop controls
 
@@ -277,7 +318,10 @@ side whose turn is shown.
 | Send text or a coordinate move | Type in the chat/input line and press Enter |
 | Save or restore | Use the save/load buttons or `/save [name]` and `/load [name]` |
 | Inspect traffic | Open **Log** to view readable RX/TX protocol messages |
-| Change appearance | Open **Settings** for board, pieces, notation, and hints |
+| Change appearance or your name | Open **Preferences** (gear button, Ctrl+, or Cmd+,) for board, pieces, hints, player name, and Stockfish |
+| Let Stockfish play your side | Install it in **Preferences > Engine** (optionally with a pause before each move), then press the **♞** button next to the gear; it turns violet while Stockfish plays |
+| See statistics | Press **Game stats** (bar-chart button) during or after the game |
+| Read the manual | Press **?** or F1 |
 
 The client remembers connection settings and recent valid Direct guest
 addresses. It also shows game, turn, and move clocks.
@@ -294,9 +338,13 @@ addresses. It also shows game, turn, and move clocks.
 | Open and submit text input | Enter |
 | Open the in-game menu | **EDIT** (`Caps Shift` + `1` on a classic keyboard) |
 | FILE menu | `Q`/`A` selects a slot; Enter/Space loads or saves; `E` erases |
+| After a game | `S` opens the statistics; the host answers `RESTART? Y/N` |
+| About screen | `C` shows what is new (Classic and Spectranext) |
 
-The in-game menu provides **FILE**, **DISCONNECT**, **RESET**, **FLIP**,
-**THEME**, and **ABOUT**. In the menu, use Left/Right or `O`/`P`, then
+The in-game menu has the **FILE**, **FLIP**, and **ABOUT** tabs and three
+rolling groups: **NTWRK** (disconnect, reset), **OFFER** (takeback, draw,
+resign), and **THEME** (board, piece set, hints). Use Left/Right or `O`/`P` to
+choose a tab or group, Up/Down or `Q`/`A` to cycle a group's actions, then
 Space/Enter.
 
 ### Text commands
@@ -351,6 +399,6 @@ Shatranj is free software released under the
 **M. Ignacio Monge Garcia — 2026**
 
 Issues and contributions are welcome in the
-[official repository](https://github.com/IgnacioMonge/Shatranj).
+[official repository](https://github.com/IgnacioMonge/shatranj).
 
 <p align="center"><sub>Connecting the ZX Spectrum to online chess since 2026.</sub></p>

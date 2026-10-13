@@ -2,6 +2,7 @@
 #define NETCHESSZX_SAVEGAME_FORMAT_H
 
 #include <stdint.h>
+#include <string.h>
 
 
 #define NETCHESSZX_SAVE_HOST_WHITE 0u
@@ -33,6 +34,21 @@
 #define NETCHESSZX_SAVE_WIRE_B64_SIZE 60u
 #define NETCHESSZX_SAVE_WIRE_CHUNK_SIZE 30u
 #define NETCHESSZX_SAVE_RESTORE_FRAME_MAX 35u
+
+/* Internal fixed-size encoder: chunk is 0 or 1, wire has 60 bytes and out
+   has 36 bytes. Arguments are side-effect-free storage expressions. */
+#define NETCHESSZX_SAVE_BUILD_RESTORE_FRAME(out, wire, chunk) do { \
+    uint8_t save_frame_off = \
+        (uint8_t)((chunk) * NETCHESSZX_SAVE_WIRE_CHUNK_SIZE); \
+    (out)[0] = 'R'; \
+    (out)[1] = 'S'; \
+    (out)[2] = '0'; \
+    (out)[3] = (char)('0' + (chunk)); \
+    (out)[4] = ' '; \
+    memcpy((out) + 5u, (wire) + save_frame_off, \
+           NETCHESSZX_SAVE_WIRE_CHUNK_SIZE); \
+    (out)[NETCHESSZX_SAVE_RESTORE_FRAME_MAX] = '\0'; \
+} while (0)
 
 typedef struct {
     char cells[64];

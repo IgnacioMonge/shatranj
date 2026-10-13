@@ -20,6 +20,24 @@
       "reason": "BOARD apply overlay mutates the resident board singleton."
     },
     {
+      "path": "src/spectrum/overlay/recovery_ovl.c",
+      "symbol": "side_to_move",
+      "owner": "board",
+      "reason": "RECOVERY RETIRE reads the live position; the BOARD snapshot helper would be a nested overlay call."
+    },
+    {
+      "path": "src/spectrum/overlay/recovery_ovl.c",
+      "symbol": "castle_rights",
+      "owner": "board",
+      "reason": "RECOVERY RETIRE reads the live position; the BOARD snapshot helper would be a nested overlay call."
+    },
+    {
+      "path": "src/spectrum/overlay/recovery_ovl.c",
+      "symbol": "ep_square",
+      "owner": "board",
+      "reason": "RECOVERY RETIRE reads the live position; the BOARD snapshot helper would be a nested overlay call."
+    },
+    {
       "path": "src/spectrum/overlay/direct_ovl.c",
       "symbol": "line_buf",
       "owner": "transport/direct",
@@ -87,6 +105,24 @@
     },
     {
       "path": "src/spectrum/overlay/direct_ovl.c",
+      "symbol": "spxn_direct_pending_cursor",
+      "owner": "transport/direct-test",
+      "reason": "DIRECT host tests share the staged Spectranext receive cursor with the resident transport."
+    },
+    {
+      "path": "src/spectrum/overlay/direct_ovl.c",
+      "symbol": "spxn_direct_pending_length",
+      "owner": "transport/direct-test",
+      "reason": "DIRECT host tests share the staged Spectranext receive length with the resident transport."
+    },
+    {
+      "path": "src/spectrum/overlay/direct_ovl.c",
+      "symbol": "spxn_direct_pending_scratch",
+      "owner": "transport/direct-test",
+      "reason": "DIRECT host tests share the staged Spectranext receive bytes with the resident transport."
+    },
+    {
+      "path": "src/spectrum/overlay/direct_ovl.c",
       "symbol": "direct_ipd_remaining",
       "owner": "transport/direct",
       "reason": "DIRECT overlay tracks resident IPD parser state."
@@ -150,12 +186,6 @@
       "symbol": "move_line_count",
       "owner": "ui/gui-log",
       "reason": "GUI_LOG overlay owns cold mutation of move log counters."
-    },
-    {
-      "path": "src/spectrum/overlay/gui_log_ovl.c",
-      "symbol": "chat_line_count",
-      "owner": "ui/gui-log",
-      "reason": "GUI_LOG overlay owns cold mutation of chat log counters."
     },
     {
       "path": "src/spectrum/overlay/gui_log_ovl.c",
@@ -231,6 +261,24 @@
     },
     {
       "path": "src/spectrum/overlay/mqtt_connect_ovl.c",
+      "symbol": "mqtt_stream_active",
+      "owner": "transport/mqtt",
+      "reason": "MQTT_CONNECT packet wait stops when a PUBACK failure aborts the resident stream."
+    },
+    {
+      "path": "src/spectrum/overlay/mqtt_connect_ovl.c",
+      "symbol": "mqtt_payload_count",
+      "owner": "transport/mqtt",
+      "reason": "MQTT_CONNECT packet wait queues PUBLISH payloads seen before CONNACK/SUBACK."
+    },
+    {
+      "path": "src/spectrum/overlay/mqtt_connect_ovl.c",
+      "symbol": "mqtt_payload_head",
+      "owner": "transport/mqtt",
+      "reason": "MQTT_CONNECT packet wait queues PUBLISH payloads seen before CONNACK/SUBACK."
+    },
+    {
+      "path": "src/spectrum/overlay/mqtt_connect_ovl.c",
       "symbol": "mqtt_will_topic_prefix",
       "owner": "transport/mqtt",
       "reason": "MQTT_CONNECT overlay reads resident MQTT topic prefix."
@@ -300,6 +348,12 @@
       "symbol": "input_history_pos",
       "owner": "app/input-edit",
       "reason": "INPUT_EDIT overlay owns cold input history navigation."
+    },
+    {
+      "path": "src/spectrum/overlay/input_edit_ovl.c",
+      "symbol": "spectrum_gui_about_visible_state",
+      "owner": "ui/gui",
+      "reason": "INPUT_EDIT paints the input row itself and must not draw over the About pages."
     },
     {
       "path": "src/spectrum/overlay/saveload_ovl.c",

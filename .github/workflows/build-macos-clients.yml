@@ -6,6 +6,9 @@ on:
 permissions:
   contents: read
 
+env:
+  QT_VERSION: 6.10.3
+
 jobs:
   build:
     name: macOS ${{ matrix.arch }}
@@ -24,9 +27,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Qt
-        run: |
-          brew install qt
-          echo "$(brew --prefix qt)/bin" >> "$GITHUB_PATH"
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
 
       - name: Build and test
         run: |
@@ -46,6 +49,12 @@ jobs:
             CLIENT_MAC_APPLICATIONS_DIR="$app_dir"
 
           test "$(lipo -archs "$app_dir/Shatranj.app/Contents/MacOS/shatranj-client")" = "${{ matrix.arch }}"
+          test -f "$app_dir/Shatranj.app/Contents/Resources/LICENSE"
+          test -f "$app_dir/Shatranj.app/Contents/Resources/THIRD_PARTY_NOTICES.md"
+          test -f "$app_dir/Shatranj.app/Contents/Resources/licenses/LICENSE.lichess-AGPL-3.0.txt"
+          test -f "$app_dir/Shatranj.app/Contents/Resources/assets/pc-client/manual/manual.en.md"
+          test -f "$app_dir/Shatranj.app/Contents/Resources/assets/pc-client/manual/manual.es.md"
+          test -f "$app_dir/Shatranj.app/Contents/PlugIns/tls/libqsecuretransportbackend.dylib"
           mkdir -p release/Qt
           ditto -c -k --sequesterRsrc --keepParent "$app_dir/Shatranj.app" "$archive"
 

@@ -15,6 +15,8 @@ void spectrum_uart_init(void);
 #ifdef NETCHESSZX_NEXT
 void spectrum_uart_set_baud_230400(void);
 void spectrum_uart_hard_reset(void);
+/* Sticky RX discontinuity; cleared by init/positive-frame flush/baud recovery. */
+uint8_t spectrum_uart_error(void);
 #endif
 void spectrum_uart_flush(uint16_t frames) NETCHESSZX_FASTCALL;
 uint8_t spectrum_uart_send_string(const char *s) NETCHESSZX_FASTCALL;

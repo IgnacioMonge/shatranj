@@ -28,3 +28,24 @@ uint8_t netchess_proto_parse_mach(const char *rx, uint8_t *plat)
     *plat = value;
     return 1u;
 }
+
+/* Spectrum builds link the CONTROL overlay's ASM copy of this validator. */
+#ifndef NETCHESSZX_SDCC_IY
+const char *netchess_proto_name_tail(const char *rx) NETCHESSZX_FASTCALL
+{
+    const char *name = netchess_after_prefix(rx, NETCHESS_PROTO_NAME_PREFIX);
+    const char *p = name;
+
+    if (name == 0 || *name == '\0') {
+        return 0;
+    }
+    while (*p != '\0') {
+        if (!NETCHESS_PLAYER_NAME_CHAR_OK(*p) ||
+            p == name + NETCHESS_PLAYER_NAME_MAX) {
+            return 0;
+        }
+        ++p;
+    }
+    return name;
+}
+#endif

@@ -55,6 +55,14 @@ jobs:
           if (-not (Test-Path "$app/assets/pc-client/about/about-shatranj.png")) {
               throw "Packaged About asset is missing"
           }
+          foreach ($language in @("en", "es")) {
+              if (-not (Test-Path "$app/assets/pc-client/manual/manual.$language.md")) {
+                  throw "Packaged $language manual is missing"
+              }
+          }
+          if (-not (Test-Path "$app/tls/qschannelbackend.dll")) {
+              throw "Packaged TLS backend is missing"
+          }
           if ((Get-ChildItem "$app/assets/pc-client/piece_sets" -Directory).Count -ne 5) {
               throw "Unexpected packaged piece-set count"
           }

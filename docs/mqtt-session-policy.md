@@ -20,6 +20,11 @@ Both are judged against the same target-neutral transcript expectations.
 - Move, ACK, presence, client id, and peer detection topics are selected from
   the runtime local color after the role/color handshake.
 
+The configured role and host color exist from Setup. A guest's local color and
+session id become valid only after a live host announcement; reconnect clears
+that negotiated identity before another handshake. Storage may be reused after
+the prior lifetime ends, but transport never chooses which identity is valid.
+
 ## Subscriptions
 
 Each MQTT client subscribes to:
@@ -120,10 +125,11 @@ returning to command mode and re-preparing the single-link settings.
 - Only the host starts the game.
 - Either host or guest may send `RESET`. The receiver prompts the user and
   answers `ACK RESET` to accept or `NACK RESET` to decline.
-- A joiner pressing SPACE before `GAME START` sees `Waiting host start`.
-- A host pressing SPACE before peer detection sees `Waiting peer`.
-- A host with peer ready sees `Peer ready - START` on Spectrum.
-- A guest with live host ready sees `Host ready - wait START` on Spectrum.
+- A joiner pressing SPACE before `GAME START` sees `Opponent starts` on
+  Spectrum.
+- A host pressing SPACE before peer detection sees `Waiting opponent`.
+- A host with peer ready sees `READY - PRESS START` on Spectrum.
+- A guest with live host ready sees `Opponent ready - wait` on Spectrum.
 - The PC MQTT client enables Start Game only when it is the host and the peer is
   ready.
 - A guest accepts `GAME START` only after a live `H <color> <sid>` has selected

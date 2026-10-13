@@ -3,6 +3,7 @@
 
 static const char netchess_direct_hello_guest[] = "HELLO DIRECT GUEST";
 
+/* A null owner (missing prefix) is rejected. */
 #ifdef NETCHESSZX_SDCC_IY
 uint8_t netchesszx_asm_direct_parse_role_owner(const char *owner,
                                                uint8_t *white_owner);
@@ -10,6 +11,9 @@ uint8_t netchesszx_asm_direct_parse_role_owner(const char *owner,
 #else
 static uint8_t direct_parse_role_owner(const char *owner, uint8_t *white_owner)
 {
+    if (owner == 0) {
+        return 0u;
+    }
     if (owner[0] == 'H' && owner[1] == 'O' && owner[2] == 'S' &&
         owner[3] == 'T' && owner[4] == '\0') {
         *white_owner = NETCHESS_DIRECT_WHITE_OWNER_HOST;
@@ -31,32 +35,22 @@ uint8_t netchess_direct_is_hello(const char *payload) NETCHESSZX_FASTCALL
 
 uint8_t netchess_direct_parse_guest_hello(const char *payload) NETCHESSZX_FASTCALL
 {
-    const char *p = netchess_after_prefix(payload, netchess_direct_hello_guest);
-
-    return (uint8_t)(p != 0 && *p == '\0');
+    return netchess_text_is(payload, netchess_direct_hello_guest);
 }
 
 uint8_t netchess_direct_parse_host_hello(const char *payload,
                                          uint8_t *white_owner)
 {
-    const char *owner = netchess_after_prefix(payload,
-                                            "HELLO DIRECT HOST WHITE=");
-
-    if (owner == 0) {
-        return 0u;
-    }
-    return direct_parse_role_owner(owner, white_owner);
+    return direct_parse_role_owner(
+        netchess_after_prefix(payload, "HELLO DIRECT HOST WHITE="),
+        white_owner);
 }
 
 uint8_t netchess_direct_parse_start_white_owner(const char *payload,
                                                 uint8_t *white_owner)
 {
-    const char *owner = netchess_after_prefix(payload, "GAME START WHITE=");
-
-    if (owner == 0) {
-        return 0u;
-    }
-    return direct_parse_role_owner(owner, white_owner);
+    return direct_parse_role_owner(
+        netchess_after_prefix(payload, "GAME START WHITE="), white_owner);
 }
 
 const char *netchess_direct_hello(uint8_t is_host, uint8_t host_is_white)

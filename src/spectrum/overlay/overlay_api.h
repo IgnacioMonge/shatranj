@@ -28,8 +28,8 @@
 extern uint8_t overlay_code_slot[];
 extern uint8_t spectrum_overlay_loaded_id;
 /* Public exec status is L/uint8_t; 16-bit HL passthrough is wrapper-local. */
-uint8_t spectrum_overlay_exec(uint8_t ovl_id, uint8_t entry_id);
-uint8_t spectrum_overlay_exec_cached(uint8_t ovl_id, uint8_t entry_id);
+uint8_t spectrum_overlay_exec(uint8_t ovl_id, uint8_t entry_id) NETCHESSZX_CALLEE;
+uint8_t spectrum_overlay_exec_cached(uint8_t ovl_id, uint8_t entry_id) NETCHESSZX_CALLEE;
 void spectrum_frame_wait(void);
 void spectrum_gui_tick(void);
 uint8_t spectrum_key_poll(void);
@@ -55,8 +55,6 @@ void spectrum_gui_add_chat(char who, const char *text);
 void spectrum_gui_prepare_move(const char *move) __z88dk_fastcall;
 void spectrum_gui_apply_move(const char *move) __z88dk_fastcall;
 void spectrum_gui_set_input(const char *text) __z88dk_fastcall;
-void spectrum_gui_set_input_edit(const char *text, uint8_t len, uint8_t cursor);
-void spectrum_gui_input_cell(uint8_t pos, char c, uint8_t cursor);
 void spectrum_gui_redraw_board_squares(void);
 void spectrum_gui_redraw_square(uint8_t row, uint8_t col);
 void spectrum_board_view_redraw_square(uint8_t row, uint8_t col);
@@ -74,6 +72,10 @@ void spectrum_render_chat_scroll(void);
 void spectrum_render_square(const char *spec) __z88dk_fastcall;
 void spectrum_render_square_attr(const char *spec) __z88dk_fastcall;
 void spectrum_render_square_mark(const char *spec) __z88dk_fastcall;
+void spectrum_render_ikkle_at(const char *spec) __z88dk_fastcall;
+void spectrum_render_input(const char *text) __z88dk_fastcall;
+void spectrum_render_input_cell(const char *spec) __z88dk_fastcall;
+uint8_t spectrum_gui_side_panels_visible(void);
 
 void spectrum_board_reset(void);
 void spectrum_net_start_uart(void);
@@ -89,5 +91,6 @@ void spectrum_net_runtime_set_clock(uint8_t hour,
 void spectrum_net_runtime_set_fat_stamp(uint16_t date, uint16_t time);
 uint16_t spectrum_net_runtime_fat_date(void);
 uint16_t spectrum_net_runtime_fat_time(void);
+int16_t spectrum_net_runtime_fat_day_delta(void);
 
 #endif

@@ -1,0 +1,3 @@
+EXTERN key_last
+EXTERN key_repeat_timer
+EXTERN key_suppress

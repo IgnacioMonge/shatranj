@@ -4,11 +4,16 @@ PUBLIC test_start
 PUBLIC test_done
 PUBLIC test_result
 PUBLIC _gui_log_add_move_ovl
-PUBLIC _gui_log_add_chat_ovl
 PUBLIC _gui_log_remove_last_move_ovl
 PUBLIC _spectrum_gui_notify
 PUBLIC _spectrum_gui_notify_persistent
 PUBLIC _spectrum_gui_notify_success
+PUBLIC _spectrum_render_chat_at
+PUBLIC _chat_line_count
+PUBLIC compute_pixel_base
+PUBLIC pixel_down_hl
+PUBLIC tmp_scan
+PUBLIC piece_scan
 
 EXTERN _gui_log_notify_msg_ovl_entry
 
@@ -24,7 +29,7 @@ test_start:
 
 test_message_loop:
     ld a, (test_id)
-    cp 46
+    cp 51                       ; SPECTRUM_GUI_MSG_COUNT
     jr z, test_kinds
     ld (test_context), a
     xor a
@@ -81,7 +86,7 @@ test_kind_loop:
     cp 4
     jr c, test_kind_loop
 
-    ld a, 46
+    ld a, 51                    ; first invalid id
     ld (test_context), a
     xor a
     ld (test_context + 1), a
@@ -144,9 +149,16 @@ notify_record:
     ret
 
 _gui_log_add_move_ovl:
-_gui_log_add_chat_ovl:
 _gui_log_remove_last_move_ovl:
+_spectrum_render_chat_at:
+; Resident helpers of the ULA log scroll; this vector never scrolls.
+compute_pixel_base:
+pixel_down_hl:
     ret
+
+tmp_scan: DEFB 0
+piece_scan: DEFB 0
+_chat_line_count: DEFB 0
 
 test_context: DEFB 0, 0
 test_id: DEFB 0
@@ -169,7 +181,7 @@ expected_messages:
     DEFB "Disconnect? Y/N", 0
     DEFB "REQUEST RESET? y/n", 0
     DEFB "Opponent: Reset? Y/N", 0
-    DEFB "Opponent restart? Y/N", 0
+    DEFB "S:STATS ACCEPT RESTART? Y/N", 0
     DEFB "RESET rejected", 0
     DEFB "Waiting ACK", 0
     DEFB "GAME STARTED", 0
@@ -204,3 +216,8 @@ expected_messages:
     DEFB "Invalid MQTT room", 0
     DEFB "CONFIG INVALID", 0
     DEFB "Erase? Y/N", 0
+    DEFB "CONFIG I/O ERROR", 0
+    DEFB "Resume last game? Y/N", 0
+    DEFB "HINTS OFF", 0
+    DEFB "HINTS ON", 0
+    DEFB "S:STATS  WAITING OPPONENT", 0

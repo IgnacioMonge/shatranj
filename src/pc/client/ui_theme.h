@@ -78,6 +78,11 @@
 #define SHZ_SQ_HINT_L    "#d5ebd5"
 #define SHZ_SQ_HINT_D    "#486648"
 #define SHZ_SQ_HINT_EDGE "#6fa86f"
+// Engine autopilot: the board frame, its moves and its turn use violet.
+#define SHZ_BOT          "#b07cff"
+#define SHZ_BOT_FILL     "#4a2f7a"
+#define SHZ_BOT_HIT      "#d8c2ff"
+#define SHZ_BOT_HIT_EDGE "#6a35c9"
 
 namespace UiTheme {
 

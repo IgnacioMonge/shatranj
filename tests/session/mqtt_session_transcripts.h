@@ -25,7 +25,7 @@
 #define MQTT_OBSERVE_DETAIL_INTERNAL 1u
 #define MQTT_OBSERVE_DETAIL_NACK_COMPAT 2u
 
-#define MQTT_TRANSCRIPT_OBSERVATIONS_MAX 4u
+#define MQTT_TRANSCRIPT_OBSERVATIONS_MAX 5u
 
 typedef struct MqttTranscriptEvent {
     const char *payload;
@@ -47,6 +47,7 @@ typedef struct MqttTranscriptObservation {
     uint8_t route;
     uint8_t retained;
     uint8_t link_id;
+    uint8_t end_reason;
 } MqttTranscriptObservation;
 
 typedef struct MqttTranscriptStep {

@@ -29,6 +29,10 @@ bool isMoveSyntaxOk(const QString &move);
 bool isMqttRoomSyntaxOk(const QString &room);
 bool isDirectIpSyntaxOk(const QString &host);
 
+// UCI bridge: FEN for the engine and its "bestmove" reply.
+QString fenFromCompact(const CompactRulesState &state, int fullmove);
+QString uciBestMove(const QByteArray &line);
+
 } // namespace ChessHelpers
 
 #endif // CHESS_HELPERS_H

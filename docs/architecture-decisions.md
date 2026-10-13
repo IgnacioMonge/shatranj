@@ -68,14 +68,16 @@ core. They are build/package variants, not independent applications.
 Dependency direction is enforced with separate CMake targets:
 
 ```text
-shatranj-common -> shatranj-desktop-core -> shatranj-client
+shatranj-common -> shatranj-desktop-core -> shatranj-client-ui -> shatranj-client
 ```
 
 - `shatranj-common` is portable C and has no Qt dependency.
 - `shatranj-desktop-core` contains chess helpers, session adapters and
   controller, transport framing, and save-game persistence. It uses Qt Core
   and Network but not Widgets.
-- `shatranj-client` contains the Widgets UI and platform packaging resources.
+- `shatranj-client-ui` compiles the Widgets implementation once for the app and
+  integration tests; it consumes the core.
+- `shatranj-client` contains the entrypoint and platform packaging resources.
 
 Reason: a single implementation prevents behavior drift between desktop
 platforms while target boundaries catch accidental UI/platform dependencies in

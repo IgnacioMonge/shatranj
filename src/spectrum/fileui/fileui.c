@@ -29,8 +29,8 @@ static uint8_t fileui_exec(uint8_t entry, uint8_t mode)
 
     ctx[SPECTRUM_OVL_CTX_FILEUI_KEY] = mode;
     ctx[SPECTRUM_OVL_CTX_FILEUI_SEL] = fileui_sel;
-    ctx[SPECTRUM_OVL_CTX_FILEUI_NAME_LO] = (uint8_t)name_ptr;
-    ctx[SPECTRUM_OVL_CTX_FILEUI_NAME_HI] = (uint8_t)(name_ptr >> 8);
+    SPECTRUM_OVL_CTX_SET16(SPECTRUM_OVL_CTX_FILEUI_NAME_LO,
+                           SPECTRUM_OVL_CTX_FILEUI_NAME_HI, name_ptr);
     if (!spectrum_overlay_exec_cached(SPECTRUM_OVL_FILEUI, entry)) {
         return SPECTRUM_FILEUI_ACT_FAIL;
     }

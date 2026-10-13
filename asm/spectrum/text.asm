@@ -50,54 +50,16 @@ _spectrum_append_u16:
     pop de
     pop hl
     push af
-
+    ld a, 0xc8
+    ld (append_lead_skip), a
     ld bc, 10000
-    call append_count_digit
-    or a
-    jr z, append_no_10000
-    call append_emit_digit
-    jr append_emit_1000
-
-append_no_10000:
+    call append_place
     ld bc, 1000
-    call append_count_digit
-    or a
-    jr z, append_no_1000
-    call append_emit_digit
-    jr append_emit_100
-
-append_no_1000:
+    call append_place
     ld bc, 100
-    call append_count_digit
-    or a
-    jr z, append_no_100
-    call append_emit_digit
-    jr append_emit_10
-
-append_no_100:
+    call append_place
     ld bc, 10
-    call append_count_digit
-    or a
-    jr z, append_emit_1
-    call append_emit_digit
-    jr append_emit_1
-
-append_emit_1000:
-    ld bc, 1000
-    call append_count_digit
-    call append_emit_digit
-
-append_emit_100:
-    ld bc, 100
-    call append_count_digit
-    call append_emit_digit
-
-append_emit_10:
-    ld bc, 10
-    call append_count_digit
-    call append_emit_digit
-
-append_emit_1:
+    call append_place
     ld a, l
     call append_emit_digit
     xor a
@@ -105,16 +67,21 @@ append_emit_1:
     ex de, hl
     ret
 
-append_count_digit:
+append_place:
     xor a
 append_count_loop:
-    or a
     sbc hl, bc
     jr c, append_count_done
     inc a
     jr append_count_loop
 append_count_done:
     add hl, bc
+    or a
+append_lead_skip:
+    ret z
+    call append_emit_digit
+    xor a
+    ld (append_lead_skip), a
     ret
 
 append_emit_digit:

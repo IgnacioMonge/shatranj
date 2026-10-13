@@ -22,6 +22,7 @@ extern uint8_t local_input_cursor;
 extern uint8_t local_input_mode;
 extern uint8_t input_history_count;
 extern uint8_t input_history_pos;
+extern uint8_t spectrum_gui_about_visible_state;
 
 static uint8_t input_has_text_ovl(const char *text)
 {
@@ -39,9 +40,22 @@ static char edit_char_at(uint8_t pos)
     return pos < local_input_len ? local_input[pos] : ' ';
 }
 
+static void edit_cell(uint8_t pos, char c, uint8_t cursor)
+{
+    char spec[3];
+
+    if (spectrum_gui_about_visible_state) {
+        return;
+    }
+    spec[0] = (char)pos;
+    spec[1] = c;
+    spec[2] = (char)cursor;
+    spectrum_render_input_cell(spec);
+}
+
 static void edit_draw_cell(uint8_t pos, uint8_t cursor)
 {
-    spectrum_gui_input_cell(pos, edit_char_at(pos), cursor);
+    edit_cell(pos, edit_char_at(pos), cursor);
 }
 
 static void edit_cursor_show(void)
@@ -51,7 +65,16 @@ static void edit_cursor_show(void)
 
 static void edit_render_impl(void)
 {
-    spectrum_gui_set_input_edit(local_input, local_input_len, local_input_cursor);
+    uint8_t cursor = local_input_cursor;
+
+    if (spectrum_gui_about_visible_state) {
+        return;
+    }
+    if (cursor > local_input_len) {
+        cursor = local_input_len;
+    }
+    spectrum_render_input(local_input);
+    edit_draw_cell(cursor, 1u);
 }
 
 static void edit_redraw_from(uint8_t start, uint8_t old_len)
@@ -62,7 +85,7 @@ static void edit_redraw_from(uint8_t start, uint8_t old_len)
         edit_draw_cell(i, 0u);
     }
     while (i <= old_len && i <= LOCAL_INPUT_MAX) {
-        spectrum_gui_input_cell(i, ' ', 0u);
+        edit_cell(i, ' ', 0u);
         ++i;
     }
     edit_cursor_show();
@@ -109,7 +132,7 @@ static void edit_insert_char(uint8_t key)
     ++local_input_cursor;
     edit_history_nav_reset();
     if (old_cursor == old_len) {
-        spectrum_gui_input_cell(old_cursor, c, 0u);
+        edit_cell(old_cursor, c, 0u);
         edit_cursor_show();
     } else {
         edit_redraw_from(old_cursor, old_len);
@@ -144,7 +167,7 @@ static void edit_cursor_to(uint8_t cursor)
 
     if (old_cursor != cursor) {
         local_input_cursor = cursor;
-        spectrum_gui_input_cell(old_cursor, edit_char_at(old_cursor), 0u);
+        edit_cell(old_cursor, edit_char_at(old_cursor), 0u);
         edit_cursor_show();
     }
 }

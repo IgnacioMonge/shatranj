@@ -50,9 +50,4 @@ static uint8_t msdos_time_valid(uint16_t date, uint16_t time,
     return 1u;
 }
 
-static uint8_t capture_msdos_time(uint16_t date, uint16_t time)
-{
-    return msdos_time_valid(date, time, 1u);
-}
-
 #endif

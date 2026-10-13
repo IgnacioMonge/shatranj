@@ -4,6 +4,14 @@
 #include <stdint.h>
 #include "spectrum/overlay/overlay_context.h"
 
+#ifndef NETCHESSZX_CALLEE
+#ifdef NETCHESSZX_SDCC_IY
+#define NETCHESSZX_CALLEE __z88dk_callee
+#else
+#define NETCHESSZX_CALLEE
+#endif
+#endif
+
 #define SPECTRUM_OVL_RULES 0u
 #define SPECTRUM_OVL_RULES_PLAY 0u
 #define SPECTRUM_OVL_RULES_CHECK 1u
@@ -44,6 +52,8 @@
 #define SPECTRUM_OVL_MENU_CONFIG_RENDER 4u
 #define SPECTRUM_OVL_STATUS 7u
 #define SPECTRUM_OVL_STATUS_PHASE 0u
+#define SPECTRUM_OVL_STATUS_MOVES_HEADER 1u
+#define SPECTRUM_OVL_STATUS_CHLOG 2u
 #define SPECTRUM_OVL_HINTS SPECTRUM_OVL_RULES
 #define SPECTRUM_OVL_HINTS_SHOW 2u
 #define SPECTRUM_OVL_HINTS_CLEAR 3u
@@ -59,16 +69,19 @@
 #define SPECTRUM_OVL_SAVELOAD_LOAD_NCZS 0u
 #define SPECTRUM_OVL_SAVELOAD_SAVE_NCZS 1u
 #define SPECTRUM_OVL_SAVELOAD_ERASE_NCZS 2u
+#define SPECTRUM_OVL_SAVELOAD_JOURNAL_APPEND 3u
 #define SPECTRUM_OVL_RESTORE 11u
 #define SPECTRUM_OVL_RESTORE_BUILD_FRAME 0u
 #define SPECTRUM_OVL_RESTORE_DECODE 1u
 #define SPECTRUM_OVL_ABOUT 12u
 #define SPECTRUM_OVL_ABOUT_RENDER 0u
+#define SPECTRUM_OVL_ABOUT_STATS 1u
 #define SPECTRUM_OVL_FILEUI 13u
 #define SPECTRUM_OVL_FILEUI_RENDER 0u
 #define SPECTRUM_OVL_FILEUI_PICK 1u
 #define SPECTRUM_OVL_CONTROL 14u
 #define SPECTRUM_OVL_CONTROL_CLASSIFY 0u
+#define SPECTRUM_OVL_CONTROL_RECOVERY_RESUME 2u
 #define SPECTRUM_OVL_CONFIG 15u
 #define SPECTRUM_OVL_CONFIG_LOAD 0u
 #define SPECTRUM_OVL_CONFIG_SAVE 1u
@@ -78,6 +91,18 @@
 #define SPECTRUM_OVL_TIME_CONFIG_STEP 1u
 #define SPECTRUM_OVL_TIME_CONFIG_INIT 2u
 #define SPECTRUM_OVL_TIME_CONFIG_COMMIT 3u
+#define SPECTRUM_OVL_JOURNAL 17u
+#define SPECTRUM_OVL_JOURNAL_LOAD 0u
+#define SPECTRUM_OVL_JOURNAL_SAVE 1u
+#ifdef NETCHESSZX_NEXT
+#define SPECTRUM_OVL_RECOVERY 17u
+#else
+#define SPECTRUM_OVL_RECOVERY 18u
+#endif
+#define SPECTRUM_OVL_RECOVERY_WRITE 0u
+#define SPECTRUM_OVL_RECOVERY_CAPTURE 1u
+#define SPECTRUM_OVL_RECOVERY_REPLAY 2u
+#define SPECTRUM_OVL_RECOVERY_RETIRE 3u
 #define SPECTRUM_OVL_INVALID 0xffu
 #ifdef NETCHESSZX_NEXT_BANKING
 #define SPECTRUM_OVL_BLOCK_SIZE 8192u
@@ -85,14 +110,15 @@
 #define SPECTRUM_OVL_BLOCK_SIZE 2048u
 #endif
 
-/* Overlay exec enters under DI and returns through an unconditional EI.
+/* Nested dispatch returns 0 without changing the active overlay or IFF.
+   Accepted overlay exec enters under DI and returns through an unconditional EI.
    Callees may re-enable interrupts internally; call only from normal app flow,
    not from a caller-owned DI section. The public return value is L/uint8_t;
    any 16-bit HL passthrough is an ASM-wrapper-local contract. Banking-Next
    overlay pages are persistent RAM: entries must initialize mutable local
    state before reading it. */
-uint8_t spectrum_overlay_exec(uint8_t ovl_id, uint8_t entry_id);
-uint8_t spectrum_overlay_exec_cached(uint8_t ovl_id, uint8_t entry_id);
+uint8_t spectrum_overlay_exec(uint8_t ovl_id, uint8_t entry_id) NETCHESSZX_CALLEE;
+uint8_t spectrum_overlay_exec_cached(uint8_t ovl_id, uint8_t entry_id) NETCHESSZX_CALLEE;
 uint8_t spectrum_assets_load(void);
 void spectrum_assets_fatal(void);
 extern uint8_t overlay_code_slot[];

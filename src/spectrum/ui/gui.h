@@ -18,6 +18,11 @@
 #define SPECTRUM_GUI_KEY_MENU_DISCC 0x8du
 #define SPECTRUM_GUI_KEY_MENU_REST 0x8eu
 #define SPECTRUM_GUI_KEY_MENU_THEME 0x8fu
+#define SPECTRUM_GUI_KEY_MENU_TAKEBACK 0x92u
+#define SPECTRUM_GUI_KEY_MENU_DRAW 0x93u
+#define SPECTRUM_GUI_KEY_MENU_RESIGN 0x94u
+#define SPECTRUM_GUI_KEY_MENU_ASSET 0x95u
+#define SPECTRUM_GUI_KEY_MENU_HINTS 0x96u
 #define SPECTRUM_GUI_TURN_WHITE 0u
 #define SPECTRUM_GUI_TURN_BLACK 1u
 #define SPECTRUM_GUI_TURN_WHITE_CHECK 2u
@@ -31,22 +36,21 @@
 #define SPECTRUM_GUI_MSG_KIND(packed) ((uint8_t)((packed) >> 8))
 
 void spectrum_gui_set_status(const char *text) NETCHESSZX_FASTCALL;
-void spectrum_gui_status_phase(uint8_t phase) NETCHESSZX_FASTCALL;
+/* Returns zero when the status overlay could not be loaded. */
+uint8_t spectrum_gui_status_phase(uint8_t phase) NETCHESSZX_FASTCALL;
 void spectrum_gui_set_status_error(const char *text) NETCHESSZX_FASTCALL;
-void spectrum_gui_set_clock(uint8_t hour, uint8_t minute, uint8_t second);
-void spectrum_gui_shift_clock(int8_t hour_delta) NETCHESSZX_FASTCALL;
-void spectrum_gui_game_timer_start(void);
-void spectrum_gui_game_timer_stop(void);
-void spectrum_gui_move_timer_reset(void);
-void spectrum_gui_game_timer_save(uint8_t *timers) NETCHESSZX_FASTCALL;
-void spectrum_gui_game_timer_restore(const uint8_t *timers) NETCHESSZX_FASTCALL;
+#define SPECTRUM_GUI_TIME_CLOCK 0x01u
+#define SPECTRUM_GUI_TIME_GAME 0x02u
+#define SPECTRUM_GUI_TIME_FORCE 0x04u
+#define SPECTRUM_GUI_TIME_CLEAR_TURN 0x08u
+void spectrum_gui_time_changed(uint8_t dirty) NETCHESSZX_FASTCALL;
 void spectrum_gui_set_turn_label(uint8_t mode) NETCHESSZX_FASTCALL;
 void spectrum_gui_set_connected(uint8_t connected) NETCHESSZX_FASTCALL;
 void spectrum_gui_notify(const char *text, uint8_t is_error);
 void spectrum_gui_notify_persistent(const char *text) NETCHESSZX_FASTCALL;
 void spectrum_gui_notify_success(const char *text) NETCHESSZX_FASTCALL;
 void spectrum_gui_notify_msg(uint16_t packed) NETCHESSZX_FASTCALL;
-void spectrum_gui_tick(void);
+void spectrum_gui_present_tick(uint8_t dirty) NETCHESSZX_FASTCALL;
 void spectrum_gui_set_board_view(uint8_t local_black) NETCHESSZX_FASTCALL;
 uint8_t spectrum_gui_is_board_flipped(void);
 void spectrum_gui_toggle_board_view(void);
@@ -57,7 +61,7 @@ void spectrum_gui_set_board_snapshot(const char *cells) NETCHESSZX_FASTCALL;
 #define spectrum_gui_set_board_snapshot(cells) ((void)0)
 #endif
 void spectrum_gui_set_board_pieces_visible(uint8_t visible) NETCHESSZX_FASTCALL;
-extern uint8_t spectrum_gui_board_pieces_visible;
+uint8_t spectrum_gui_are_board_pieces_visible(void);
 void spectrum_gui_hide_board_pieces(void);
 void spectrum_gui_draw_board(void);
 void spectrum_gui_redraw_board_view(void);
@@ -72,6 +76,9 @@ void spectrum_gui_sync_board_coords(void);
 #endif
 void spectrum_gui_draw_status(void);
 void spectrum_gui_restore_side_panels(void);
+/* Repaint the MOVES column header (colour discs and player names) when the
+   side panels are on screen; a no-op otherwise. */
+void spectrum_gui_moves_header(void);
 uint8_t spectrum_gui_side_panels_visible(void);
 void spectrum_gui_redraw_board_squares(void);
 void spectrum_gui_reset_moves(void);
@@ -83,16 +90,14 @@ void spectrum_gui_add_chat(char who, const char *text);
 void spectrum_gui_prepare_move(const char *move) NETCHESSZX_FASTCALL;
 void spectrum_gui_apply_move(const char *move) NETCHESSZX_FASTCALL;
 void spectrum_gui_set_input(const char *text) NETCHESSZX_FASTCALL;
-void spectrum_gui_set_input_edit(const char *text, uint8_t len, uint8_t cursor);
-void spectrum_gui_input_cell(uint8_t pos, char c, uint8_t cursor);
 void spectrum_gui_redraw_square(uint8_t row, uint8_t col);
 void spectrum_gui_mark_cursor(uint8_t row, uint8_t col, uint8_t selected);
 void spectrum_gui_clear_cursor_coords(void);
 uint8_t spectrum_gui_show_about(void);
 uint8_t spectrum_gui_about_visible(void);
-uint8_t spectrum_gui_show_fileui(void);
+uint8_t spectrum_gui_show_board_page(uint8_t page) NETCHESSZX_FASTCALL;
+#define spectrum_gui_show_fileui() spectrum_gui_show_board_page(2u)
 uint8_t spectrum_gui_fileui_visible(void);
-uint8_t spectrum_gui_poll_key(void);
 uint8_t spectrum_gui_handle_menu_key(uint8_t key) NETCHESSZX_FASTCALL;
 void spectrum_gui_hide_menu(void);
 

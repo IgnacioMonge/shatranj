@@ -23,13 +23,19 @@ QByteArray encodedPacket(size_t length, QByteArray packet)
 
 DesktopTransportCodec::DirectFeedResult DesktopTransportCodec::feedDirect(
     uint8_t linkId,
-    const QByteArray &data,
+    const QByteArray &received,
     const std::function<void(const QByteArray &)> &deliver)
 {
     DirectFeedResult result;
     QByteArray &buffer = directBuffers_[linkId];
     constexpr qsizetype kMaxLineBytes =
         static_cast<qsizetype>(SESSION_PAYLOAD_MAX);
+
+    // DIRECT lines end at LF and CR is ignored wherever it appears, exactly as
+    // the Spectrum receivers do: CRLF equals LF, a CR never reaches a payload,
+    // and line limits count the bytes that remain.
+    QByteArray data = received;
+    data.replace("\r", "");
 
     const bool hadPending = !buffer.isEmpty();
     if (hadPending) {
@@ -43,9 +49,7 @@ DesktopTransportCodec::DirectFeedResult DesktopTransportCodec::feedDirect(
         if (eol < 0) {
             break;
         }
-        const bool hasCr = eol > consumed && src.at(eol - 1) == '\r';
-        const qsizetype payloadLength =
-            eol - consumed - (hasCr ? 1 : 0);
+        const qsizetype payloadLength = eol - consumed;
         if (payloadLength > kMaxLineBytes) {
             buffer.clear();
             result.overflow = true;
@@ -61,9 +65,7 @@ DesktopTransportCodec::DirectFeedResult DesktopTransportCodec::feedDirect(
     }
 
     const qsizetype leftover = src.size() - consumed;
-    const bool pendingCr = leftover == kMaxLineBytes + 1 && leftover > 0 &&
-                           src.endsWith('\r');
-    if (leftover > kMaxLineBytes && !pendingCr) {
+    if (leftover > kMaxLineBytes) {
         buffer.clear();
         result.overflow = true;
         return result;

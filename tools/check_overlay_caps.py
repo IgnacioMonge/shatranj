@@ -13,16 +13,19 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gen_overlay_defs import (  # noqa: E402
+    LINK_ONLY_SYMBOLS,
     OPTIONAL_SYMBOLS,
     PORT_OPTIONAL_SYMBOLS,
     REQUIRED_SYMBOLS,
 )
+from build_overlays import overlay_specs  # noqa: E402
 
 
 DEFAULT_POLICY = Path("docs/overlay_capabilities.json")
 
 ASM_KNOWN = (
-    set(REQUIRED_SYMBOLS) | set(OPTIONAL_SYMBOLS) | set(PORT_OPTIONAL_SYMBOLS)
+    set(REQUIRED_SYMBOLS) | set(LINK_ONLY_SYMBOLS)
+    | set(OPTIONAL_SYMBOLS) | set(PORT_OPTIONAL_SYMBOLS)
 )
 C_KNOWN = {name[1:] if name.startswith("_") else name for name in ASM_KNOWN}
 
@@ -38,11 +41,18 @@ LOCAL_OVERLAY_NAMES = {
     "menu_logic_ovl": "menu_logic",
     "mqtt_connect_ovl": "mqtt_connect",
     "mqtt_tx_ovl": "mqtt_tx",
+    "recovery_ovl": "recovery",
     "restore_ovl": "restore",
     "saveload_ovl": "saveload",
     "setup_ovl": "setup",
     "status_ovl": "status",
     "time_ovl": "time",
+}
+INCLUDED_OVERLAY_SOURCES = {
+    Path(source).as_posix(): spec.name.lower()
+    for spec in overlay_specs({})
+    for source in spec.extra_inputs
+    if source.endswith(("_ovl.c", ".inc"))
 }
 
 ASM_EXTERN_RE = re.compile(r"^\s*EXTERN\s+([A-Za-z_][A-Za-z0-9_@.]*)")
@@ -58,6 +68,7 @@ BANNED_SYMBOLS = {
     "spectrum_board_apply_trusted_move": "overlay dispatcher must not be imported by overlays",
     "spectrum_gui_add_chat": "overlay dispatcher must not be imported by overlays",
     "spectrum_gui_add_move": "overlay dispatcher must not be imported by overlays",
+    "netchesszx_session_format_busy": "overlay dispatcher must not be imported by overlays",
 }
 
 
@@ -111,7 +122,7 @@ def classify(symbol: str) -> str:
         return "overlay_exec"
     if name.startswith("spectrum_overlay_") or name == "overlay_code_slot":
         return "overlay"
-    if name.startswith("spectrum_append_"):
+    if name.startswith("spectrum_append_") or name == "spectrum_streq":
         return "text"
     if name == "spectrum_frame_wait":
         return "time"
@@ -119,6 +130,8 @@ def classify(symbol: str) -> str:
         "compute_square_bc",
         "compute_attr_base",
         "compute_screen_base",
+        "font_packed",
+        "font_lut",
         "set_square_attr_2x2",
         "board_row",
         "board_col",
@@ -148,6 +161,7 @@ def classify(symbol: str) -> str:
         return "direct_state"
     if name in {
         "last_ply_seen",
+        "spectrum_moves_header_shown",
         "move_line_count",
         "chat_line_count",
         "setup_choice",
@@ -178,6 +192,8 @@ def classify(symbol: str) -> str:
 
 def overlay_for_path(path: Path) -> str | None:
     rel = path.as_posix()
+    if rel in INCLUDED_OVERLAY_SOURCES:
+        return INCLUDED_OVERLAY_SOURCES[rel]
     if rel.startswith("src/spectrum/overlay/") and path.suffix == ".c":
         return LOCAL_OVERLAY_NAMES.get(path.stem)
     parts = path.parts
@@ -190,6 +206,7 @@ def overlay_for_path(path: Path) -> str | None:
             "control",
             "direct",
             "fileui",
+            "journal",
             "gui_log",
             "hints",
             "input_edit",
@@ -210,31 +227,38 @@ def overlay_for_path(path: Path) -> str | None:
 
 
 def iter_sources(root: Path) -> list[Path]:
-    paths: list[Path] = []
+    paths: set[Path] = set()
     for base in (root / "src" / "spectrum" / "overlay", root / "asm" / "overlay"):
         if not base.exists():
             continue
-        paths.extend(
+        paths.update(
             path
             for path in base.rglob("*")
             if path.suffix in {".c", ".asm"} and path.name not in {"overlay.c"}
         )
+    session = root / "src" / "spectrum" / "session"
+    if session.exists():
+        paths.update(session.glob("*_ovl.c"))
+    paths.update(root / rel for rel in INCLUDED_OVERLAY_SOURCES if (root / rel).exists())
     return sorted(paths)
 
 
 def scan_symbols(path: Path) -> set[str]:
     text = path.read_text(encoding="utf-8", errors="replace")
-    if path.suffix == ".asm":
+    if path.suffix in {".asm", ".inc"}:
         symbols = set()
         for raw_line in text.splitlines():
             line = raw_line.split(";", 1)[0]
             match = ASM_EXTERN_RE.match(line)
-            if match and match.group(1) in ASM_KNOWN:
+            if match and (match.group(1) in ASM_KNOWN or
+                          canonical_symbol(match.group(1)) in BANNED_SYMBOLS):
                 symbols.add(match.group(1))
         return symbols
 
     text = strip_c_comments(text)
-    return {token for token in C_TOKEN_RE.findall(text) if token in C_KNOWN}
+    # Explicit bans also cover dispatchers deliberately absent from exports.
+    return {token for token in C_TOKEN_RE.findall(text)
+            if token in C_KNOWN or token in BANNED_SYMBOLS}
 
 
 def load_policy(path: Path) -> dict[str, object]:
@@ -268,6 +292,7 @@ def main(argv: list[str]) -> int:
     expected_board_view_aliases = dict(policy.get("board_view_aliases", {}))
     actual_board_view_aliases = scan_board_view_aliases(root)
     unexpected = []
+    unassigned = []
     debt = []
     seen = 0
 
@@ -297,6 +322,8 @@ def main(argv: list[str]) -> int:
         rel = path.relative_to(root)
         overlay = overlay_for_path(rel)
         if overlay is None:
+            if rel.as_posix().startswith("src/spectrum/session/"):
+                unassigned.append(rel.as_posix())
             continue
         overlay_policy = overlays.get(overlay, {})
         allowed_caps = set(overlay_policy.get("allowed_caps", []))
@@ -325,7 +352,9 @@ def main(argv: list[str]) -> int:
                 continue
             unexpected.append((overlay, rel.as_posix(), symbol, cap))
 
-    if unexpected or (args.fail_debt and debt):
+    if unexpected or unassigned or (args.fail_debt and debt):
+        for rel in unassigned:
+            print(f"[ERR] unassigned overlay source: {rel}", file=sys.stderr)
         for overlay, rel, symbol, cap in unexpected:
             print(
                 f"[ERR] overlay {overlay}: {rel} imports {symbol} ({cap})",

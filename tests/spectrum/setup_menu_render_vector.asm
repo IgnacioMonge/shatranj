@@ -33,6 +33,9 @@ EXTERN _menu_config_nav_ovl_entry
 EXTERN _input_edit_setup_line_ovl
 EXTERN _spectrum_gui_edit_show
 
+INCLUDE "ui_layout.inc"
+INCLUDE "asm/app/player_name_layout.inc"
+
 test_start:
     jp test_current_contract
 
@@ -59,17 +62,63 @@ test_current_contract:
     jp nz, test_bad_current_full
     xor a
     ld (render_context + 2), a
+    ld (render_context), a
+    ld (render_context + 1), a
+    ld (_spectrum_overlay_context), a
+    ld (_spectrum_overlay_context + 1), a
     ld a, 0xff
     ld (render_context + 3), a
+    xor a
     ld (line_calls), a
     ld de, render_context
-    call test_render_setup
+    call _menu_config_render_ovl_entry
     ld a, (setup_calls)
     cp 1
     jp nz, test_bad_current_incremental
     ld a, (line_calls)
     or a
-    jp z, test_bad_current_incremental
+    jp nz, test_bad_current_incremental
+
+    ; Requesting BOARD alone must not repaint LINK or the GAME SETUP header.
+    ld hl, 0x0080
+    ld (_spectrum_overlay_context), hl
+    xor a
+    ld (line_calls), a
+    ld (game_setup_calls), a
+    ld de, render_context
+    call _menu_config_render_ovl_entry
+    ld a, (line_calls)
+    cp 1
+    jp nz, test_bad_current_incremental
+    ld a, (game_setup_calls)
+    or a
+    jp nz, test_bad_current_incremental
+
+    ; Changing seat before completion clears endpoints, not the LINK label.
+    ld hl, 3
+    ld (_setup_visible_mask), hl
+    ld hl, 0xfffc
+    ld (_spectrum_overlay_context), hl
+    ld a, 2
+    ld (render_context + 3), a
+    ld a, 0xa5
+    ld (0x40f3), a
+    xor a
+    ld (line_calls), a
+    ld de, render_context
+    call test_render_setup
+    ld a, (line_calls)
+    or a
+    jp nz, test_bad_current_incremental
+    ld a, (0x40f3)
+    cp 0xa5
+    jp nz, test_bad_current_incremental
+
+    ld hl, 0x03ff
+    ld (_setup_visible_mask), hl
+    ld (_spectrum_overlay_context), hl
+    ld a, 0xff
+    ld (render_context + 3), a
 
     ; JOIN+MQTT renders NC#### while the editor cursor starts after NC.
     ld hl, test_room
@@ -103,7 +152,7 @@ test_current_room_text:
 
     ; A masked attribute repaint touches BOARD but leaves GAME unchanged.
     ld a, 0xa5
-    ld (0x58f5), a
+    ld (0x58d5), a
     ld (0x5a15), a
     ld a, 0x80
     ld (0x5fe1), a
@@ -112,7 +161,7 @@ test_current_room_text:
     ld a, 7
     ld (_setup_cursor), a
     call _menu_config_paint_attrs_ovl_entry
-    ld a, (0x58f5)
+    ld a, (0x58d5)
     cp 0xa5
     jp nz, test_bad_current_mask
     ld a, (0x5a15)
@@ -127,17 +176,17 @@ test_current_room_text:
     ld a, 1
     ld (0x5fe1), a
     call _menu_config_paint_attrs_ovl_entry
-    ld hl, 0x41f5
+    ld hl, 0x41d5
     call test_marker_left_on
-    ld hl, 0x41fa
+    ld hl, 0x41da
     call test_marker_left_off
 
     ld a, 1
     ld (_setup_focus_choice), a
     call _menu_config_paint_attrs_ovl_entry
-    ld hl, 0x41f5
+    ld hl, 0x41d5
     call test_marker_left_off
-    ld hl, 0x41fa
+    ld hl, 0x41da
     call test_marker_left_on
 
     ld a, 1
@@ -146,13 +195,13 @@ test_current_room_text:
     ld a, 3
     ld (0x5fe1), a
     call _menu_config_paint_attrs_ovl_entry
+    ld hl, 0x41d5
+    call test_marker_left_off
+    ld hl, 0x41da
+    call test_marker_left_off
     ld hl, 0x41f5
-    call test_marker_left_off
-    ld hl, 0x41fa
-    call test_marker_left_off
-    ld hl, 0x4915
     call test_marker_left_on
-    ld hl, 0x491a
+    ld hl, 0x41fa
     call test_marker_left_off
 
     ; GAME SETUP options start on an even half-column. Their marker occupies
@@ -172,7 +221,7 @@ test_current_room_text:
 
     ; BOARD keeps each chip's theme colour. Focus is BRIGHT plus the shared
     ; chevron marker and the 4-pixel bar on scanline 7.
-    ld hl, 0x6312
+    ld hl, 0x6313
 IFDEF NETCHESSZX_NEXT
     ld (hl), 0x78
     inc hl
@@ -348,10 +397,10 @@ ENDIF
     ld (_setup_room_editing), a
     ld a, 2
     ld (_setup_cursor), a
-    ld hl, 0x493d
+    ld hl, 0x491d
     ld de, test_colon_plain_pixels
     call test_copy_six_scanlines
-    ld hl, 0x5935
+    ld hl, 0x5915
     ld b, 11
     ld a, 0xa5
 test_poison_direct_attrs:
@@ -359,7 +408,7 @@ test_poison_direct_attrs:
     inc hl
     djnz test_poison_direct_attrs
     call _menu_config_paint_attrs_ovl_entry
-    ld hl, 0x5935
+    ld hl, 0x5915
     ld b, 8
 test_direct_ip_focus_attrs:
     ld a, (hl)
@@ -367,18 +416,18 @@ test_direct_ip_focus_attrs:
     jp nz, test_bad_direct_ip_focus_attr
     inc hl
     djnz test_direct_ip_focus_attrs
-    ld a, (0x593d)
+    ld a, (0x591d)
     cp 0x05
     jp nz, test_bad_direct_colon_attr
-    ld hl, 0x493d
+    ld hl, 0x491d
     call test_colon_plain
     ld a, 3
     ld (_setup_cursor), a
     call _menu_config_paint_attrs_ovl_entry
-    ld a, (0x593c)
+    ld a, (0x591c)
     cp 0x05
     jp nz, test_bad_direct_ip_idle_attr
-    ld hl, 0x593d
+    ld hl, 0x591d
     ld b, 3
 test_direct_port_focus_attrs:
     ld a, (hl)
@@ -386,12 +435,12 @@ test_direct_port_focus_attrs:
     jp nz, test_bad_direct_port_focus_attr
     inc hl
     djnz test_direct_port_focus_attrs
-    ld hl, 0x493d
+    ld hl, 0x491d
     call test_colon_marked
     ld a, 2
     ld (_setup_cursor), a
     call _menu_config_paint_attrs_ovl_entry
-    ld hl, 0x493d
+    ld hl, 0x491d
     call test_colon_plain
 
     ld a, 1
@@ -423,10 +472,11 @@ test_direct_port_focus_attrs:
     xor a
     ld (line_calls), a
     ld (game_setup_calls), a
-    ld a, 0xa5
+    xor a
     ld (0x48d2), a
     ld (0x48d3), a
     ld (0x48d4), a
+    ld a, 0xa5
     ld (0x48f2), a
     ld (0x5a15), a
     ld hl, 0x03ff
@@ -443,10 +493,10 @@ test_direct_port_focus_attrs:
     or a
     jp nz, test_bad_endpoint_idle
     ld a, (line_calls)
-    cp 4
+    cp 2
     jp nz, test_bad_endpoint_idle
     ld a, (0x48d2)
-    cp 0xa5
+    or a
     jp nz, test_bad_endpoint_idle
     ld a, (0x48f2)
     cp 0xa5
@@ -482,13 +532,15 @@ test_direct_port_focus_attrs:
     ld (game_setup_calls), a
     ld hl, 0x03ff
     ld (_setup_visible_mask), hl
+    ld hl, 0x0024
+    ld (_spectrum_overlay_context), hl
     ld de, render_context
     call test_render_setup
     ld a, (game_setup_calls)
     or a
     jp nz, test_bad_endpoint_color
     ld a, (line_calls)
-    cp 5
+    cp 3
     jp nz, test_bad_endpoint_color
     ld a, (0x48f2)
     cp 0xa5
@@ -497,7 +549,161 @@ test_direct_port_focus_attrs:
     cp 0xa5
     jp nz, test_bad_endpoint_color
 
+    ; NAME: "NAME  <name>" on its own screen row, cursor after the label.
+    ld hl, test_player_name
+    ld de, PLAYER_NAME
+    ld bc, 8
+    ldir
     xor a
+    ld (line_calls), a
+    ld (_setup_room_editing), a
+    ld a, 5
+    ld (_setup_cursor), a
+    ld a, 11
+    ld (edit_line_row), a
+    ld de, edit_line_row
+    call _input_edit_setup_line_ovl
+    ld a, (line_calls)
+    cp 1
+    jp nz, test_bad_name_line
+    ld a, (last_line_row)
+    cp NETCHESSZX_SETUP_SCREEN_ROW_NAME
+    jp nz, test_bad_name_line
+    ld hl, (last_line_ptr)
+    inc hl
+    ld de, test_name_line
+    ld b, 14
+test_name_line_cmp:
+    ld a, (de)
+    cp (hl)
+    jp nz, test_bad_name_line
+    inc hl
+    inc de
+    djnz test_name_line_cmp
+    ; Focus on NAME puts the marker glyph in the line itself, so a redraw
+    ; cannot erase it; editing NAME replaces it with the blinking cursor.
+    ld a, 11
+    ld (_setup_cursor), a
+    ld de, edit_line_row
+    call _input_edit_setup_line_ovl
+    ld hl, (last_line_ptr)
+    ld de, 6
+    add hl, de
+    ld a, (hl)
+    cp NETCHESSZX_SETUP_CURSOR_GLYPH
+    jp nz, test_bad_name_line
+    inc hl
+    ld a, (hl)
+    cp 'I'
+    jp nz, test_bad_name_line
+    ld a, 1
+    ld (_setup_room_editing), a
+    ld a, 11
+    ld (_setup_edit_row), a
+    xor a
+    ld (last_edit_col), a
+    ld de, edit_line_row
+    call _input_edit_setup_line_ovl
+    ld a, (last_edit_col)
+    cp NETCHESSZX_SETUP_NAME_VALUE_COL
+    jp nz, test_bad_name_line
+    ld hl, (last_line_ptr)
+    ld de, 6
+    add hl, de
+    ld a, (hl)
+    cp ' '
+    jp nz, test_bad_name_line
+    xor a
+    ld (_setup_room_editing), a
+    ; A full redraw only draws NAME once it is visible.
+    ld (line_calls), a
+    dec a
+    ld (edit_line_row), a
+    ld hl, 0x0003
+    ld (_setup_visible_mask), hl
+    ld de, edit_line_row
+    call _input_edit_setup_line_ovl
+    ld a, (line_calls)
+    or a
+    jp nz, test_bad_name_line
+    ld hl, 0x0803
+    ld (_setup_visible_mask), hl
+    ld de, edit_line_row
+    call _input_edit_setup_line_ovl
+    ld a, (line_calls)
+    cp 1
+    jp nz, test_bad_name_line
+
+    ; NAME attrs: header on the label, value span sized to the name.
+    ld hl, 0x0bff
+    ld (_setup_visible_mask), hl
+    ld (_setup_defined_mask), hl
+    ld a, 11
+    ld (_setup_cursor), a
+    call test_poison_name_attrs
+    call _menu_config_paint_attrs_ovl_entry
+    ld hl, NETCHESSZX_SETUP_NAME_LABEL_ATTR
+    ld b, 3
+    ld c, NETCHESSZX_ATTR_SETUP_HEADER
+    call test_attr_run
+    jp nz, test_bad_name_attrs
+    ld b, 4
+    ld c, NETCHESSZX_ATTR_SETUP_FOCUS_SELECTED
+    call test_attr_run
+    jp nz, test_bad_name_attrs
+    ld a, (hl)
+    cp 0xa5
+    jp nz, test_bad_name_attrs
+    ld a, 5
+    ld (_setup_cursor), a
+    call _menu_config_paint_attrs_ovl_entry
+    ld hl, NETCHESSZX_SETUP_NAME_VALUE_ATTR
+    ld b, 4
+    ld c, NETCHESSZX_ATTR_SETUP_SELECTED
+    call test_attr_run
+    jp nz, test_bad_name_attrs
+    ; Hidden NAME row keeps its cells untouched.
+    ld hl, 0x03ff
+    ld (_setup_visible_mask), hl
+    call test_poison_name_attrs
+    call _menu_config_paint_attrs_ovl_entry
+    ld hl, NETCHESSZX_SETUP_NAME_LABEL_ATTR
+    ld b, 9
+    ld c, 0xa5
+    call test_attr_run
+    jp nz, test_bad_name_attrs
+
+    ; Leave the worst-case DIRECT line in the shared buffer for the runner.
+    ld a, 2
+    ld (edit_line_row), a
+    ld de, edit_line_row
+    call _input_edit_setup_line_ovl
+
+    xor a
+    jp test_store_result
+
+test_poison_name_attrs:
+    ld hl, NETCHESSZX_SETUP_NAME_LABEL_ATTR
+    ld b, 9
+    ld a, 0xa5
+test_poison_name_loop:
+    ld (hl), a
+    inc hl
+    djnz test_poison_name_loop
+    ret
+
+; HL = first cell, B = count, C = expected. Z on match; HL after the run.
+test_attr_run:
+    ld a, (hl)
+    cp c
+    ret nz
+    inc hl
+    djnz test_attr_run
+    ret
+
+test_bad_name_line:          ld a, 39
+    jp test_store_result
+test_bad_name_attrs:         ld a, 40
     jp test_store_result
 
 test_bad_current_full:       ld a, 23
@@ -532,14 +738,13 @@ test_bad_focus_marker:       ld a, 37
     jp test_store_result
 test_bad_port_colon_pixels:  ld a, 38
     jp test_store_result
-
     ld sp, 0xff00
     ld a, 0xff
     ld (test_result), a
     ld (0x5fe3), a
 
     ; Production DAT board-light attribute table.
-    ld hl, 0x6312
+    ld hl, 0x6313
 IFDEF NETCHESSZX_NEXT
     ld (hl), 0x78
     inc hl
@@ -581,22 +786,22 @@ ENDIF
     xor a
     ld (render_context + 2), a
 
-    ld a, (0x58f2)
+    ld a, (0x58d2)
     cp 0x03
     jp nz, test_bad_label
-    ld a, (0x58f5)
+    ld a, (0x58d5)
     cp 0x39
     jp nz, test_bad_game
-    ld a, (0x58f9)
+    ld a, (0x58d9)
     cp 0x06
     jp nz, test_bad_game
     ld a, (0x5a35)
-    cp 0x06
+    cp 0x05
     jp nz, test_bad_set
     ld a, (0x5a99)
     cp 0x45
     jp nz, test_bad_action
-    ld a, (0x5915)
+    ld a, (0x58f5)
     cp 0x38
     jp nz, test_bad_input_box
 
@@ -611,7 +816,7 @@ ENDIF
     call test_render_setup
     xor a
     ld (render_context), a
-    ld hl, 0x5915
+    ld hl, 0x58f5
     ld b, 8
 test_ip_input_span:
     ld a, (hl)
@@ -653,7 +858,7 @@ ENDIF
     ld a, 0xa5
     ld (0x511e), a
     ld a, 0xa5
-    ld (0x58f2), a
+    ld (0x58d2), a
     call _menu_config_paint_attrs_ovl_entry
 IFDEF NETCHESSZX_NEXT
     ld a, (0x5a1e)
@@ -681,7 +886,7 @@ ENDIF
     ld a, (0x551f)
     or a
     jp nz, test_bad_swatch_marker
-    ld a, (0x58f2)
+    ld a, (0x58d2)
     cp 0xa5
     jp nz, test_bad_masked_paint
 
@@ -715,7 +920,7 @@ ENDIF
     xor a
     ld (_setup_focus_choice + 1), a
     call _menu_config_paint_attrs_ovl_entry
-    ld hl, 0x58f9
+    ld hl, 0x58d9
     ld b, 4
 test_direct_span:
     ld a, (hl)
@@ -729,7 +934,7 @@ test_direct_span:
     ld a, 1
     ld (_setup_focus_choice + 1), a
     call _menu_config_paint_attrs_ovl_entry
-    ld hl, 0x58f9
+    ld hl, 0x58d9
     ld b, 3
 test_mqtt_span:
     ld a, (hl)
@@ -747,7 +952,7 @@ test_mqtt_span:
     xor a
     ld (_setup_focus_choice + 1), a
     call _menu_config_paint_attrs_ovl_entry
-    ld hl, 0x5935
+    ld hl, 0x5915
     ld b, 3
 test_port_span:
     ld a, (hl)
@@ -854,7 +1059,7 @@ test_port_span:
     ld a, (line_calls)
     cp 6
     jp nz, test_bad_hidden_setup
-    ld a, (0x5955)
+    ld a, (0x5935)
     cp 0x06
     jp nz, test_bad_reveal_focus
     ld a, 0xff
@@ -1006,6 +1211,8 @@ test_done:
     jp test_done
 
 test_render_setup:
+    ld a, (render_context + 3)
+    ld (_spectrum_overlay_context + 3), a
     call _menu_config_render_ovl_entry
     ld de, render_edit_all
     jp _input_edit_setup_line_ovl
@@ -1114,6 +1321,8 @@ game_setup_calls: DEFB 0
 last_line_row: DEFB 0
 last_line_ptr: DEFW 0
 last_edit_col: DEFB 0
+test_player_name: DEFB "IGNACIO",0
+test_name_line: DEFB "NAME  IGNACIO",0
 test_room: DEFB "NC1234",0
 edit_line_row: DEFB 0
 test_long_ip: DEFB "192.168.100.20055", 0
@@ -1135,7 +1344,7 @@ _netchesszx_mqtt_code: DEFS 17, 0
 _netchesszx_direct_host: DEFS 16, 0
 _netchesszx_board_theme_index: DEFB 0
 _last_ip: DEFS 18, 0
-_spectrum_overlay_context: DEFW 0
+_spectrum_overlay_context: DEFS 4, 0
 _setup_choice: DEFS 7, 0
 _setup_defined_mask: DEFW 0
 _edit_max: DEFB 0

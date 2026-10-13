@@ -15,7 +15,6 @@ EXTERN asset_load_size
 EXTERN asset_set_index
 EXTERN next_copy_bundle
 EXTERN nextreg_read
-EXTERN nextreg_write
 
 INCLUDE "asm/next/extension_bank_layout.asm"
 
@@ -72,42 +71,18 @@ ngb_about:
     ld de, next_palette_stage
     ld bc, 512
     call next_copy_bundle
-    ld a, nextreg_palette_control
-    ld e, 0x10
-    call nextreg_write
-    ld a, nextreg_palette_index
-    ld e, 0
-    call nextreg_write
+    DEFB 0xed, 0x91, nextreg_palette_control, 0x10
+    DEFB 0xed, 0x91, nextreg_palette_index, 0
     ld hl, next_palette_stage
     ld d, 0
-    ld bc, nextreg_select
-    ld a, nextreg_palette_value_9
-    out (c), a
-    ld bc, nextreg_data
-ngb_about_palette_loop:
-    ld a, (hl)
-    out (c), a
-    inc hl
-    ld a, (hl)
-    out (c), a
-    inc hl
-    dec d
-    jr nz, ngb_about_palette_loop
-    ld a, nextreg_layer2_bank
-    ld e, next_about_bank
-    call nextreg_write
+    call ngb_palette_upload_pairs
+    DEFB 0xed, 0x91, nextreg_layer2_bank, next_about_bank
     jp ngb_success
 
 ngb_sprite_system_init:
-    ld a, nextreg_sprite_transparency_index
-    ld e, next_sprite_transparency
-    call nextreg_write
-    ld a, nextreg_palette_control
-    ld e, 0x20
-    call nextreg_write
-    ld a, nextreg_palette_index
-    ld e, 0
-    call nextreg_write
+    DEFB 0xed, 0x91, nextreg_sprite_transparency_index, next_sprite_transparency
+    DEFB 0xed, 0x91, nextreg_palette_control, 0x20
+    DEFB 0xed, 0x91, nextreg_palette_index, 0
     ld hl, next_sprite_pal_offset
     ld de, next_palette_stage
     ld bc, next_sprite_palette_size * 2 + next_ula_standard_palette_size
@@ -115,12 +90,8 @@ ngb_sprite_system_init:
     ld hl, next_palette_stage
     ld d, next_sprite_palette_size
     call ngb_palette_upload_pairs
-    ld a, nextreg_palette_control
-    ld e, 0
-    call nextreg_write
-    ld a, nextreg_palette_index
-    ld e, 192
-    call nextreg_write
+    DEFB 0xed, 0x91, nextreg_palette_control, 0
+    DEFB 0xed, 0x91, nextreg_palette_index, 192
     ld d, next_ula_standard_palette_size / 2
     call ngb_palette_upload_pairs
     ; Groups 0/1 mirror classic ULA colours; groups 2/3 are private board/menu
@@ -129,15 +100,11 @@ ngb_sprite_system_init:
     ld a, nextreg_ula_control
     call nextreg_read
     or 0x08
-    ld e, a
-    ld a, nextreg_ula_control
-    call nextreg_write
+    DEFB 0xed, 0x92, nextreg_ula_control
     ld a, nextreg_sprite_layer_system
     call nextreg_read
     or 0x01
-    ld e, a
-    ld a, nextreg_sprite_layer_system
-    call nextreg_write
+    DEFB 0xed, 0x92, nextreg_sprite_layer_system
     jp _spectrum_next_sprites_hide_all
 
 ngb_palette_upload_pairs:

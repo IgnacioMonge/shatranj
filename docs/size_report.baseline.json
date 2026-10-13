@@ -1,70 +1,77 @@
 {
   "artifacts": {
-    "code_bin": 35966,
-    "dat": 7148,
-    "ovl": 27389,
-    "tap": 36046
+    "code_bin": 34382,
+    "dat": 4899,
+    "ovl": 35293,
+    "tap": 34640
   },
   "code": {
-    "bss_trim_saved_bytes": 423,
-    "full_bytes": 35966,
-    "resident_bytes": 35543,
-    "trimmed_bytes": 35543
+    "bss_trim_saved_bytes": 317,
+    "full_bytes": 34382,
+    "resident_bytes": 34065,
+    "trimmed_bytes": 34065
   },
   "markers": {
     "TAR__register_sp": "0xFF58",
-    "__BSS_END_tail": "0xFC7E",
-    "__BSS_head": "0xFAD7",
+    "__BSS_END_tail": "0xF64E",
+    "__BSS_head": "0xF511",
     "__CODE_head": "0x7000",
     "__CODE_tail": "0x700B",
-    "__DATA_END_tail": "0xFAD7",
-    "__DATA_head": "0xFAAC",
-    "__bss_compiler_tail": "0xFC3C",
-    "__bss_user_head": "0xFC3C",
-    "__bss_user_tail": "0xFC7C",
-    "__data_compiler_tail": "0xFAD7",
-    "__register_sp": "0xFF58",
+    "__DATA_END_tail": "0xF511",
+    "__DATA_head": "0xF4DA",
+    "__bss_compiler_tail": "0xF60D",
+    "__bss_user_head": "0xF60D",
+    "__bss_user_tail": "0xF64C",
+    "__data_compiler_tail": "0xF507",
+    "__register_sp": "0x0000",
     "_overlay_code_slot": "0x6800"
   },
   "memory": {
-    "bss_bytes": 423,
-    "bss_end": "0xFC7E",
-    "bss_head": "0xFAD7",
+    "bss_bytes": 417,
+    "bss_end": "0xFD63",
+    "bss_head": "0xF511",
     "bss_regions": [
       {
-        "bytes": 423,
-        "head": "0xFAD7",
-        "tail": "0xFC7E"
+        "bytes": 317,
+        "head": "0xF511",
+        "tail": "0xF64E"
+      },
+      {
+        "bytes": 100,
+        "head": "0xFCFF",
+        "tail": "0xFD63"
       }
     ],
-    "ram_end": "0xFC7E",
-    "register_sp": "0xFF58",
-    "register_sp_gap_bytes": 730,
+    "ram_end": "0xFD63",
+    "register_sp": "0x10000",
+    "register_sp_gap_bytes": 669,
     "stack_guard": "0xFE00",
-    "stack_guard_gap_bytes": 386
+    "stack_guard_gap_bytes": 157
   },
   "origin": 28672,
   "overlays": {
-    "ABOUT": 338,
-    "BOARD": 1733,
-    "CONFIG": 2010,
-    "CONTROL": 1020,
-    "DIRECT": 1988,
-    "FILEUI": 1598,
-    "GUI_LOG": 1849,
+    "ABOUT": 1867,
+    "BOARD": 1703,
+    "CONFIG": 1928,
+    "CONTROL": 1936,
+    "DIRECT": 1990,
+    "FILEUI": 1903,
+    "GUI_LOG": 1545,
     "HINTS": 0,
-    "INPUT_EDIT": 1468,
-    "MENU_CONFIG": 1869,
-    "MENU_LOGIC": 923,
-    "MQTT_CONNECT": 1691,
-    "MQTT_TX": 1917,
-    "RESTORE": 1844,
+    "INPUT_EDIT": 1601,
+    "JOURNAL": 1923,
+    "MENU_CONFIG": 1954,
+    "MENU_LOGIC": 1949,
+    "MQTT_CONNECT": 1982,
+    "MQTT_TX": 1776,
+    "RECOVERY": 1824,
+    "RESTORE": 1809,
     "RULES": 1796,
-    "SAVELOAD": 1316,
-    "SETUP": 2017,
+    "SAVELOAD": 1915,
+    "SETUP": 1899,
     "STATUS": 0,
-    "TIME_CONFIG": 1912,
-    "total": 27389
+    "TIME_CONFIG": 1893,
+    "total": 35293
   },
   "version": 1
 }

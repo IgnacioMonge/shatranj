@@ -41,12 +41,15 @@ typedef enum netchesszx_session_event {
     NETCHESSZX_SESSION_EVENT_MQTT_LOCAL_OFFLINE,
     NETCHESSZX_SESSION_EVENT_MQTT_SEAT_TAKEN,
     NETCHESSZX_SESSION_EVENT_MQTT_TEXT,
+    NETCHESSZX_SESSION_EVENT_CANCEL_TAKEBACK,
     NETCHESSZX_SESSION_EVENT_MACH_ZX = 0x41,
     NETCHESSZX_SESSION_EVENT_MACH_NXT,
     NETCHESSZX_SESSION_EVENT_MACH_MAC,
     NETCHESSZX_SESSION_EVENT_MACH_LNX,
     NETCHESSZX_SESSION_EVENT_MACH_PC,
-    NETCHESSZX_SESSION_EVENT_MACH_SPCX
+    NETCHESSZX_SESSION_EVENT_MACH_SPCX,
+    /* Peer identity shares the MACH block: slot 7 is a valid MNAME. */
+    NETCHESSZX_SESSION_EVENT_PEER_NAME
 } netchesszx_session_event_t;
 
 #define NETCHESSZX_SESSION_EVENT_MACH_BASE 0x40u
@@ -56,6 +59,7 @@ typedef enum netchesszx_session_event {
                NETCHESSZX_SESSION_EVENT_MACH_BASE))
 #define NETCHESSZX_SESSION_EVENT_MACH_PLATFORM(event) \
     ((uint8_t)(event) & 0x07u)
+#define NETCHESSZX_SESSION_EVENT_IDENTITY_NAME 0x07u
 
 #define NETCHESSZX_SESSION_MQTT_HOST_COLOR_CHANGED 0x01u
 #define NETCHESSZX_SESSION_MQTT_HOST_ACTIVATE_SIDE 0x02u
@@ -80,7 +84,13 @@ netchesszx_session_event_t netchesszx_session_classify_event(
 netchesszx_session_event_t netchesszx_session_classify_game_payload(
     const char *payload);
 
+/* SpectraNext: format BUSY in scratch, invalidated by the next overlay call. */
+#ifdef NETCHESSZX_SPECTRANEXT
+uint8_t netchesszx_session_format_busy(const char *ply);
+#endif
+
 extern uint8_t netchesszx_session_peer_ready_state;
+#define netchesszx_session_peer_view() ((uint8_t)netchesszx_session_peer_ready_state)
 void netchesszx_session_peer_reset(void);
 #define netchesszx_session_peer_clear netchesszx_session_peer_reset
 void netchesszx_session_peer_mark_ready(void);

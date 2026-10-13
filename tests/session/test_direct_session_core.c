@@ -379,6 +379,7 @@ static void test_start(void)
     Fixture host;
     Fixture guest;
     SessionAction *action;
+    SessionState before;
 
     fixture_init(&host, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
     host.state.link_up = 1u;
@@ -390,6 +391,10 @@ static void test_start(void)
     tx_result(&host, SESSION_TX_OK);
     expect_timer(&host, SESSION_TIMER_CONTROL, SESSION_DIRECT_REPLY_TICKS,
                  "start reply timer");
+    before = host.state;
+    rx(&host, 1u, "NACK GAME STARTX");
+    check(host.count == 0u && memcmp(&host.state, &before, sizeof(before)) == 0,
+          "start nack suffix preserves pending start");
     rx(&host, 1u, "ACK GAME START");
     action = find_action(&host, SESSION_ACT_SESSION_CHANGED);
     check(action != 0 && action->data.session.status == SESSION_CHANGED_STARTED,
@@ -503,6 +508,46 @@ static void test_controls_and_liveness(void)
     rx(&f, 1u, "ACK PING");
     expect_timer(&f, SESSION_TIMER_LIVENESS, SESSION_DIRECT_IDLE_TICKS,
                  "ack ping rearms idle");
+
+    make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
+    timeout(&f, SESSION_TIMER_LIVENESS);
+    check(f.state.liveness_misses == 1u, "host records first liveness miss");
+    rx(&f, 1u, "GARBAGE");
+    check(f.count == 0u && f.state.liveness_misses == 1u,
+          "unknown direct payload does not credit liveness");
+    rx(&f, 1u, "MOVE nope");
+    check(f.count == 0u && f.state.liveness_misses == 1u,
+          "malformed direct move does not credit liveness");
+    timeout(&f, SESSION_TIMER_LIVENESS);
+    check(find_action(&f, SESSION_ACT_SESSION_CHANGED) != 0,
+          "invalid direct payloads do not defer peer loss");
+
+    make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
+    timeout(&f, SESSION_TIMER_LIVENESS);
+    rx(&f, 1u, "MACH PC");
+    check(f.state.liveness_misses == 0u,
+          "valid direct machine announcement credits liveness");
+
+    make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
+    timeout(&f, SESSION_TIMER_LIVENESS);
+    rx(&f, 1u, "MNAME IGNACIO");
+    {
+        SessionAction *action = find_action(&f, SESSION_ACT_DELIVER_GAME);
+
+        check(action != 0 &&
+                  action->data.game.kind == SESSION_DELIVER_PEER_NAME &&
+                  action->data.game.length == 7u &&
+                  memcmp(action->data.game.payload, "IGNACIO", 7u) == 0,
+              "valid direct peer name is delivered as a slice");
+    }
+    check(f.state.liveness_misses == 0u,
+          "valid direct peer name credits liveness");
+
+    make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
+    timeout(&f, SESSION_TIMER_LIVENESS);
+    rx(&f, 1u, "MNAME nacho");
+    check(f.count == 0u && f.state.liveness_misses == 1u,
+          "invalid direct peer name is inert");
 }
 
 static void test_control_replies_and_duplicates(void)
@@ -564,6 +609,194 @@ static void test_control_replies_and_duplicates(void)
           "duplicate resign not redelivered");
 }
 
+static void test_takeback_cancellation_races(void)
+{
+    Fixture f;
+
+    make_active(&f, SESSION_ROLE_GUEST, SESSION_COLOR_BLACK);
+    f.state.current_ply = 3u;
+    rx(&f, 1u, "TAKEBACK 3");
+    rx(&f, 1u, "CANCEL TAKEBACK 2");
+    expect_send(&f, "NACK 2", 1u, "wrong cancellation ply is rejected");
+    tx_result(&f, SESSION_TX_OK);
+    check(f.state.pending_request_id != 0u && f.state.pending_value == 3u,
+          "wrong cancellation leaves the actual prompt open");
+    rx(&f, 1u, "CANCEL TAKEBACK 3");
+    expect_send(&f, "NACK 3", 1u, "matching cancellation rejects without undo");
+    check(user_decision(&f, SESSION_DECISION_ACCEPT) == 0u,
+          "withdrawn prompt cannot accept a stale Y");
+    tx_result(&f, SESSION_TX_OK);
+    expect_control_result(&f, SESSION_REQUEST_TAKEBACK, SESSION_CONTROL_EXPIRED,
+                          "receiver closes withdrawn takeback prompt");
+    check(f.state.current_ply == 3u && f.state.phase == SESSION_PHASE_ACTIVE,
+          "withdrawal preserves board and game");
+
+    make_active(&f, SESSION_ROLE_GUEST, SESSION_COLOR_BLACK);
+    f.state.current_ply = 3u;
+    rx(&f, 1u, "TAKEBACK 3");
+    user_decision(&f, SESSION_DECISION_ACCEPT);
+    rx(&f, 1u, "CANCEL TAKEBACK 3");
+    check(f.count == 0u && f.state.pending_request_id != 0u,
+          "cancellation cannot interrupt an accepted undo delivery");
+    game_result(&f, SESSION_GAME_ACCEPTED, 3u, 0);
+    tx_result(&f, SESSION_TX_OK);
+    rx(&f, 1u, "CANCEL TAKEBACK 3");
+    expect_send(&f, "ACK 3", 1u, "accepted undo replays ACK across cancellation");
+    check(f.state.current_ply == 2u && count_actions(&f, SESSION_ACT_DELIVER_GAME) == 0u,
+          "crossed cancellation never undoes twice");
+
+    make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
+    f.state.current_ply = 3u;
+    local_request(&f, SESSION_REQUEST_TAKEBACK, 3u, 0);
+    tx_result(&f, SESSION_TX_OK);
+    timeout(&f, SESSION_TIMER_DECISION);
+    tx_result(&f, SESSION_TX_OK);
+    rx(&f, 1u, "ACK 3");
+    check(find_action(&f, SESSION_ACT_DELIVER_GAME) != 0,
+          "ACK crossing withdrawal still synchronizes the requester");
+    game_result(&f, SESSION_GAME_ACCEPTED, 3u, 0);
+    expect_control_result(&f, SESSION_REQUEST_TAKEBACK, SESSION_CONTROL_ACCEPTED,
+                          "crossed acceptance completes the same undo");
+    check(f.state.current_ply == 2u && f.state.phase == SESSION_PHASE_ACTIVE,
+          "crossed acceptance keeps both boards and the connection");
+    check(timeout(&f, SESSION_TIMER_DECISION) == 0u,
+          "completed takeback disarms the stale human deadline");
+}
+
+static void test_unconfirmed_takeback_can_continue(void)
+{
+    Fixture f;
+    uint8_t i;
+
+    make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
+    f.state.current_ply = 3u;
+    local_request(&f, SESSION_REQUEST_TAKEBACK, 3u, 0);
+    tx_result(&f, SESSION_TX_OK);
+    timeout(&f, SESSION_TIMER_DECISION);
+    tx_result(&f, SESSION_TX_OK);
+    expect_control_result(&f, SESSION_REQUEST_TAKEBACK, SESSION_CONTROL_CANCELLED,
+                          "human deadline releases the UI after CANCEL handoff");
+    for (i = 0u; i <= SESSION_DIRECT_REPLY_RETRIES; ++i) {
+        rx(&f, 1u, "PING");
+        tx_result(&f, SESSION_TX_OK);
+        timeout(&f, SESSION_TIMER_CONTROL);
+        tx_result(&f, SESSION_TX_OK);
+    }
+    check(f.state.phase == SESSION_PHASE_ACTIVE && f.state.current_ply == 3u,
+          "lost cancellation confirmation cannot end a live game");
+    /* Acceptance can still arrive after the old cancellation retry limit. */
+    {
+        Fixture crossed = f;
+        rx(&crossed, 1u, "ACK 3");
+        game_result(&crossed, SESSION_GAME_ACCEPTED, 3u, 0);
+        check(crossed.state.current_ply == 2u && crossed.state.phase == SESSION_PHASE_ACTIVE,
+              "late accepted ACK still applies one correlated undo");
+    }
+    rx(&f, 1u, "MOVE 4 e7e5");
+    check(find_action(&f, SESSION_ACT_DELIVER_GAME) != 0,
+          "opponent move after unconfirmed withdrawal is delivered");
+    game_result(&f, SESSION_GAME_ACCEPTED, 4u, "e5");
+    expect_send(&f, "ACK 4 e5", 1u, "following move is confirmed");
+    tx_result(&f, SESSION_TX_OK);
+    check(f.state.current_ply == 4u && f.state.pending_control == 0u,
+          "following move clears the withdrawn takeback");
+}
+
+static void test_remote_decision_deadline(void)
+{
+    static const char *const requests[] = { "TAKEBACK 3", "DRAW", "RESET", "RQ" };
+    static const char *const replies[] = { "NACK 3", "NACK DRAW", "NACK RESET", "RN" };
+    Fixture f;
+    uint8_t i;
+
+    for (i = 0u; i < 4u; ++i) {
+        make_active(&f, SESSION_ROLE_GUEST, SESSION_COLOR_BLACK);
+        f.state.current_ply = 3u;
+        rx(&f, 1u, requests[i]);
+        expect_timer(&f, SESSION_TIMER_DECISION, SESSION_DECISION_TICKS,
+                     "remote prompt has an autonomous real-time deadline");
+        rx(&f, 1u, requests[i]);
+        check(find_action(&f, SESSION_ACT_TIMER_SET) == 0,
+              "duplicate request cannot restart the remote deadline");
+        timeout(&f, SESSION_TIMER_DECISION);
+        expect_send(&f, replies[i], 1u, "remote deadline rejects without CANCEL");
+        tx_result(&f, SESSION_TX_OK);
+        check(f.state.phase == SESSION_PHASE_ACTIVE && f.state.current_ply == 3u &&
+              f.state.pending_request_id == 0u && f.state.pending_control == 0u,
+              "remote timeout closes the prompt without changing the game");
+        check(user_decision(&f, SESSION_DECISION_ACCEPT) == 0u,
+              "late Y after remote expiry is inert");
+    }
+}
+
+static void test_cancelled_control_can_move(void)
+{
+    static const uint8_t requests[] = { SESSION_REQUEST_DRAW, SESSION_REQUEST_RESET };
+    static const char *const acks[] = { "ACK DRAW", "ACK RESET" };
+    Fixture f;
+    uint8_t i;
+
+    for (i = 0u; i < 2u; ++i) {
+        make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
+        f.state.current_ply = 2u;
+        local_request(&f, requests[i], 0u, 0);
+        tx_result(&f, SESSION_TX_OK);
+        timeout(&f, SESSION_TIMER_DECISION);
+        tx_result(&f, SESSION_TX_OK);
+        local_request(&f, SESSION_REQUEST_MOVE, 0u, "g1f3");
+        expect_send(&f, "MOVE 3 g1f3", 1u, "expired DRAW/RESET does not block our move");
+        tx_result(&f, SESSION_TX_OK);
+        {
+            Fixture crossed = f;
+            rx(&crossed, 1u, acks[i]);
+            check(crossed.state.pending_control == 0u && crossed.state.withdrawn_control == 0u &&
+                  crossed.state.phase == (i ? SESSION_PHASE_ACTIVE : SESSION_PHASE_OVER),
+                  "crossed accepted control discards the uncommitted move");
+        }
+        rx(&f, 1u, "ACK 3 Nf3");
+        check(f.state.current_ply == 3u && f.state.withdrawn_control == 0u,
+              "confirmed next move discards the old withdrawal");
+        rx(&f, 1u, acks[i]);
+        check(f.state.current_ply == 3u && f.state.phase == SESSION_PHASE_ACTIVE,
+              "late control ACK cannot mutate the confirmed new position");
+    }
+}
+
+static void test_lost_withdrawal_between_two_peers(void)
+{
+    Fixture host, guest;
+    uint8_t retry;
+
+    make_active(&host, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
+    make_active(&guest, SESSION_ROLE_GUEST, SESSION_COLOR_BLACK);
+    host.state.current_ply = guest.state.current_ply = 3u;
+    local_request(&host, SESSION_REQUEST_TAKEBACK, 3u, 0);
+    tx_result(&host, SESSION_TX_OK);
+    rx(&guest, 1u, "TAKEBACK 3");
+    timeout(&host, SESSION_TIMER_DECISION);
+    tx_result(&host, SESSION_TX_OK); /* Drop CANCEL. */
+    timeout(&guest, SESSION_TIMER_DECISION);
+    tx_result(&guest, SESSION_TX_OK); /* Drop NACK. */
+    for (retry = 0u; retry <= SESSION_DIRECT_REPLY_RETRIES; ++retry) {
+        rx(&host, 1u, "PING");
+        expect_send(&host, "ACK PING", 1u, "live requester answers keepalive");
+        tx_result(&host, SESSION_TX_OK);
+        timeout(&host, SESSION_TIMER_CONTROL);
+        tx_result(&host, SESSION_TX_OK); /* Drop every cancellation retransmission. */
+    }
+    local_request(&guest, SESSION_REQUEST_MOVE, 0u, "e7e5");
+    expect_send(&guest, "MOVE 4 e7e5", 1u, "receiver is no longer blocked by its prompt");
+    tx_result(&guest, SESSION_TX_OK);
+    rx(&host, 1u, "MOVE 4 e7e5");
+    game_result(&host, SESSION_GAME_ACCEPTED, 4u, "e5");
+    tx_result(&host, SESSION_TX_OK);
+    rx(&guest, 1u, "ACK 4 e5");
+    check(host.state.current_ply == 4u && guest.state.current_ply == 4u &&
+          host.state.phase == SESSION_PHASE_ACTIVE && guest.state.phase == SESSION_PHASE_ACTIVE &&
+          host.state.pending_control == 0u && guest.state.pending_control == 0u,
+          "both peers commit the next move with cancellation and NACK entirely lost");
+}
+
 static void test_retry_and_failure_paths(void)
 {
     Fixture f;
@@ -605,6 +838,34 @@ static void test_retry_and_failure_paths(void)
           "reply retry limit closes");
     check(find_action(&f, SESSION_ACT_SESSION_CHANGED) != 0,
           "reply retry limit ends");
+
+    /* The human deadline is independent of transport retries. */
+    make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
+    f.state.current_ply = 3u;
+    local_request(&f, SESSION_REQUEST_TAKEBACK, 3u, 0);
+    tx_result(&f, SESSION_TX_OK);
+    expect_timer(&f, SESSION_TIMER_DECISION, SESSION_DECISION_TICKS,
+                 "takeback gets common real-time decision deadline");
+    for (i = 0u; i < SESSION_DIRECT_REPLY_RETRIES; ++i) {
+        timeout(&f, SESSION_TIMER_CONTROL);
+        expect_send(&f, "TAKEBACK 3", 1u, "takeback keeps retrying");
+        tx_result(&f, SESSION_TX_OK);
+    }
+    timeout(&f, SESSION_TIMER_CONTROL);
+    check(find_action(&f, SESSION_ACT_SESSION_CHANGED) == 0,
+          "takeback retry limit waits for the human deadline");
+    timeout(&f, SESSION_TIMER_DECISION);
+    expect_send(&f, "CANCEL TAKEBACK 3", 1u,
+                "unanswered takeback is withdrawn, not disconnected");
+    tx_result(&f, SESSION_TX_OK);
+    rx(&f, 1u, "NACK 3");
+    expect_control_result(&f, SESSION_REQUEST_TAKEBACK, SESSION_CONTROL_REJECTED,
+                          "expired takeback is rejected");
+    check(f.state.takeback_cancel_pending == 0u,
+          "takeback cancellation state cannot leak into the next operation");
+    check(f.state.phase == SESSION_PHASE_ACTIVE && f.state.current_ply == 3u &&
+              find_action(&f, SESSION_ACT_LINK_CLOSE) == 0,
+          "takeback expiry keeps the board and connection");
 
     fixture_init(&f, SESSION_ROLE_GUEST, SESSION_COLOR_UNKNOWN);
     link_up(&f, 1u);
@@ -1072,6 +1333,7 @@ static void test_draw_reset_cancel_timeout(void)
     static const char *const cancels[] = { "CANCEL DRAW", "CANCEL RESET" };
     static const char *const nacks[] = { "NACK DRAW", "NACK RESET" };
     Fixture f;
+    SessionState before;
     uint8_t role;
     uint8_t item;
     uint8_t retry;
@@ -1094,16 +1356,20 @@ static void test_draw_reset_cancel_timeout(void)
             timeout(&f, SESSION_TIMER_CONTROL);
             check(find_action(&f, SESSION_ACT_LINK_CLOSE) == 0,
                   "unanswered control keeps session open");
-            expect_timer(&f, SESSION_TIMER_CONTROL,
-                         SESSION_CONTROL_CANCEL_TICKS,
-                         "unanswered control starts five minute wait");
+            check((f.state.timer_mask & (1u << SESSION_TIMER_DECISION)) != 0u,
+                  "unanswered control retains its original human deadline");
             check((f.state.timer_mask &
                    (uint8_t)(1u << SESSION_TIMER_LIVENESS)) != 0u,
-                  "five minute control wait preserves liveness");
+                  "human decision wait preserves liveness");
 
-            timeout(&f, SESSION_TIMER_CONTROL);
+            timeout(&f, SESSION_TIMER_DECISION);
             expect_send(&f, cancels[item], 1u, "control cancellation sent");
             tx_result(&f, SESSION_TX_OK);
+            before = f.state;
+            rx(&f, 1u, item == 0u ? "NACK DRAWX" : "NACK RESETX");
+            check(f.count == 0u &&
+                      memcmp(&f.state, &before, sizeof(before)) == 0,
+                  "nack suffix preserves pending cancellation");
             rx(&f, 1u, nacks[item]);
             expect_control_result(&f, controls[item],
                                   SESSION_CONTROL_CANCELLED,
@@ -1220,9 +1486,9 @@ static void test_draw_and_crossed_controls(void)
               action->data.game.delivery_id == SESSION_CONTROL_ACCEPTED &&
               action->data.game.value == SESSION_REQUEST_DRAW,
           "draw ack reports game result");
-    expect_send(&f, "RESET", 1u, "draw ack starts rematch reset");
-    check(f.state.pending_control == SESSION_REQUEST_RESET,
-          "draw rematch waits reset ack");
+    check(find_action(&f, SESSION_ACT_SEND) == 0 &&
+              f.state.pending_control == 0u && f.state.phase == SESSION_PHASE_OVER,
+          "draw ack leaves finished game with no rematch");
 
     make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
     local_request(&f, SESSION_REQUEST_DRAW, 0u, 0);
@@ -1233,27 +1499,35 @@ static void test_draw_and_crossed_controls(void)
     expect_control_result(&f, SESSION_REQUEST_DRAW,
                           SESSION_CONTROL_ACCEPTED,
                           "crossed draw reports accepted completion");
-    expect_send(&f, "RESET", 1u, "crossed draw advances to reset");
-    tx_result(&f, SESSION_TX_OK);
+    check(find_action(&f, SESSION_ACT_SEND) == 0 &&
+              f.state.phase == SESSION_PHASE_OVER,
+          "crossed draw remains finished");
     rx(&f, 1u, "DRAW");
     expect_send(&f, "ACK DRAW", 1u,
                 "duplicate crossed draw re-acked during reset");
     tx_result(&f, SESSION_TX_OK);
-    check(f.state.pending_control == SESSION_REQUEST_RESET,
-          "duplicate draw preserves rematch reset");
+    check(f.state.pending_control == 0u && f.state.phase == SESSION_PHASE_OVER,
+          "duplicate draw preserves finished game");
     rx(&f, 1u, "RESET");
-    expect_send(&f, "ACK RESET", 1u,
-                "crossed draw reset is accepted in game-over phase");
+    check(find_action(&f, SESSION_ACT_REQUEST_DECISION) != 0,
+          "crossed draw restart asks consent");
+    user_decision(&f, SESSION_DECISION_REJECT);
+    expect_send(&f, "NACK RESET", 1u, "finished restart may be declined");
+    tx_result(&f, SESSION_TX_OK);
+    rx(&f, 1u, "DRAW");
+    expect_send(&f, "ACK DRAW", 1u, "accepted draw survives declined reset");
+    tx_result(&f, SESSION_TX_OK);
+    rx(&f, 1u, "RESET");
+    user_decision(&f, SESSION_DECISION_ACCEPT);
+    expect_send(&f, "ACK RESET", 1u, "manual reset accepted after consent");
     tx_result(&f, SESSION_TX_OK);
     check(f.state.phase == SESSION_PHASE_ACTIVE &&
               f.state.pending_control == 0u,
           "crossed draw reset starts rematch");
     check(find_action(&f, SESSION_ACT_DELIVER_GAME) != 0 &&
               find_action(&f, SESSION_ACT_DELIVER_GAME)->data.game.kind ==
-                  SESSION_DELIVER_CONTROL_RESULT &&
-              find_action(&f, SESSION_ACT_DELIVER_GAME)
-                      ->data.game.delivery_id == SESSION_CONTROL_ACCEPTED,
-          "crossed local reset reports local control result");
+                  SESSION_DELIVER_CONTROL && !f.state.accepted_draw,
+          "accepted manual reset clears prior draw replay");
 
     make_active(&f, SESSION_ROLE_HOST, SESSION_COLOR_WHITE);
     local_request(&f, SESSION_REQUEST_RESET, 0u, 0);
@@ -1276,15 +1550,10 @@ static void test_draw_and_crossed_controls(void)
     user_decision(&f, SESSION_DECISION_ACCEPT);
     tx_result(&f, SESSION_TX_OK);
     timeout(&f, SESSION_TIMER_CONTROL);
-    expect_send(&f, "RESET", 1u,
-                "draw receiver retries a missing rematch reset");
-    check(f.state.pending_origin != 0u,
-          "draw receiver owns fallback reset after timeout");
-    tx_result(&f, SESSION_TX_OK);
-    rx(&f, 1u, "ACK RESET");
-    check(f.state.phase == SESSION_PHASE_ACTIVE &&
-              f.state.pending_control == 0u,
-          "draw receiver fallback reset converges to active game");
+    check(find_action(&f, SESSION_ACT_SEND) == 0 &&
+              f.state.pending_control == 0u && f.state.phase == SESSION_PHASE_OVER &&
+              f.state.timer_mask == (uint8_t)(1u << SESSION_TIMER_LIVENESS),
+          "draw receiver has liveness without acceptant timeout");
 }
 
 static void test_draw_rematch_two_peers(void)
@@ -1309,16 +1578,23 @@ static void test_draw_rematch_two_peers(void)
     expect_send(&guest, "ACK DRAW", 1u, "two-peer draw accepted");
     tx_result(&guest, SESSION_TX_OK);
     check(guest.state.phase == SESSION_PHASE_OVER &&
-              guest.state.pending_control == SESSION_REQUEST_RESET &&
+              guest.state.pending_control == 0u &&
               guest.state.timer_mask ==
-                  (uint8_t)(1u << SESSION_TIMER_CONTROL),
-          "accepted draw waits reset with only control timer");
+                  (uint8_t)(1u << SESSION_TIMER_LIVENESS),
+          "accepted draw keeps finished game and liveness");
 
     rx(&host, 1u, "ACK DRAW");
-    expect_send(&host, "RESET", 1u, "two-peer draw starts reset");
+    check(host.state.phase == SESSION_PHASE_OVER &&
+              find_action(&host, SESSION_ACT_SEND) == 0,
+          "two-peer draw stays over");
+    local_request(&host, SESSION_REQUEST_RESET, 0u, 0);
+    expect_send(&host, "RESET", 1u, "manual two-peer restart request");
     tx_result(&host, SESSION_TX_OK);
 
     rx(&guest, 1u, "RESET");
+    check(find_action(&guest, SESSION_ACT_REQUEST_DECISION) != 0,
+          "manual two-peer restart asks consent");
+    user_decision(&guest, SESSION_DECISION_ACCEPT);
     expect_send(&guest, "ACK RESET", 1u,
                 "two-peer rematch reset acknowledged");
     tx_result(&guest, SESSION_TX_OK);
@@ -1446,10 +1722,10 @@ static void test_control_phase_guards(void)
     check(f.state.phase == SESSION_PHASE_OVER,
           "accepted draw enters game-over phase");
     rx(&f, 1u, "RESET");
-    expect_send(&f, "ACK RESET", 1u,
-                "accepted draw auto-acks rematch reset");
-    check(find_action(&f, SESSION_ACT_REQUEST_DECISION) == 0,
-          "draw rematch reset has no second prompt");
+    check(find_action(&f, SESSION_ACT_REQUEST_DECISION) != 0,
+          "draw restart asks consent");
+    user_decision(&f, SESSION_DECISION_ACCEPT);
+    expect_send(&f, "ACK RESET", 1u, "draw restart accepted explicitly");
     tx_result(&f, SESSION_TX_OK);
     check(f.state.phase == SESSION_PHASE_ACTIVE,
           "draw rematch reset starts game");
@@ -1684,6 +1960,9 @@ static void test_prompt_and_restore_timeouts(void)
         tx_result(&f, SESSION_TX_OK);
     }
     timeout(&f, SESSION_TIMER_CONTROL);
+    check(find_action(&f, SESSION_ACT_LINK_CLOSE) == 0,
+          "restore approval waits beyond transport retries");
+    timeout(&f, SESSION_TIMER_DECISION);
     expect_send(&f, "RN", 1u, "restore request timeout cancels");
     tx_result(&f, SESSION_TX_OK);
     action = find_action(&f, SESSION_ACT_DELIVER_GAME);
@@ -1864,9 +2143,11 @@ static void test_local_handoff_actions(void)
               action->data.game.delivery_id == SESSION_CONTROL_ACCEPTED &&
               action->data.game.value == SESSION_REQUEST_RESIGN,
           "crossed host resign reports acknowledgement once");
-    expect_send(&f, "RESET", 1u, "crossed host starts automatic reset");
-    check(f.state.pending_control == SESSION_REQUEST_RESET,
-          "crossed host owns automatic reset");
+    check(find_action(&f, SESSION_ACT_SEND) == 0 &&
+              f.state.pending_control == 0u && f.state.phase == SESSION_PHASE_OVER,
+          "crossed host resign stays over");
+    local_request(&f, SESSION_REQUEST_RESET, 0u, 0);
+    expect_send(&f, "RESET", 1u, "host manually requests restart");
     tx_result(&f, SESSION_TX_OK);
     rx(&f, 1u, "ACK RESET");
     action = find_action(&f, SESSION_ACT_SESSION_CHANGED);
@@ -1887,12 +2168,12 @@ static void test_local_handoff_actions(void)
               action->data.game.kind == SESSION_DELIVER_CONTROL_RESULT &&
               action->data.game.delivery_id == SESSION_CONTROL_ACCEPTED &&
               f.state.pending_control == 0u,
-          "crossed guest waits for host automatic reset");
+          "crossed guest remains finished");
     rx(&f, 1u, "RESET");
-    expect_send(&f, "ACK RESET", 1u,
-                "crossed guest accepts host reset without prompt");
-    check(find_action(&f, SESSION_ACT_REQUEST_DECISION) == 0,
-          "post-resign reset never asks the guest");
+    check(find_action(&f, SESSION_ACT_REQUEST_DECISION) != 0,
+          "post-resign reset asks guest consent");
+    user_decision(&f, SESSION_DECISION_ACCEPT);
+    expect_send(&f, "ACK RESET", 1u, "guest explicitly accepts restart");
     tx_result(&f, SESSION_TX_OK);
     action = find_action(&f, SESSION_ACT_SESSION_CHANGED);
     check(action != 0 &&
@@ -2323,6 +2604,11 @@ int main(void)
     test_moves_and_tx_guard();
     test_controls_and_liveness();
     test_control_replies_and_duplicates();
+    test_takeback_cancellation_races();
+    test_unconfirmed_takeback_can_continue();
+    test_remote_decision_deadline();
+    test_lost_withdrawal_between_two_peers();
+    test_cancelled_control_can_move();
     test_retry_and_failure_paths();
     test_invalid_and_ordered_inputs();
     test_restore();

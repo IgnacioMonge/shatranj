@@ -3,4 +3,6 @@
 Licensing, provenance, and Next-selection metadata for the Lichess-derived
 assets stored canonically under `assets/pc-client/`.
 
-License: GNU Affero General Public License v3.0. See `LICENSE.lichess-AGPL-3.0.txt`.
+Board provenance is in `board/source.json`; per-set piece provenance is in
+`pieces/source.json`. License texts are stored in `licenses/` and
+`LICENSE.lichess-AGPL-3.0.txt`.

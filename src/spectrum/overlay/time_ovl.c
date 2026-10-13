@@ -1,5 +1,6 @@
 #include "spectrum/overlay/overlay_api.h"
 #include "spectrum/transport/net.h"
+#include "spectrum/config/session.h"
 #if defined(NETCHESSZX_SPECTRANEXT) && !defined(NETCHESSZX_HOST_TEST)
 #include "spectrum/lowram_map.h"
 #endif

@@ -14,8 +14,6 @@ void spectrum_render_board_coord_mark(const char *spec) __z88dk_fastcall;
 void spectrum_render_status(const char *text) __z88dk_fastcall;
 void spectrum_render_clock(const char *text) __z88dk_fastcall;
 void spectrum_render_game_timer_clear(const char *text) __z88dk_fastcall;
-void spectrum_render_game_timer_char(const char *spec) __z88dk_fastcall;
-void spectrum_render_menu_timer_char(const char *spec) __z88dk_fastcall;
 void spectrum_render_turn_label(uint8_t mode) __z88dk_fastcall;
 void spectrum_render_notice(const char *text) __z88dk_fastcall;
 void spectrum_render_notice_error(const char *text) __z88dk_fastcall;
@@ -36,6 +34,8 @@ void spectrum_render_chat_scroll(void);
 void spectrum_render_input(const char *text) __z88dk_fastcall;
 void spectrum_render_input_cell(const char *spec) __z88dk_fastcall;
 uint8_t spectrum_render_about(void);
+uint8_t spectrum_render_game_stats(void);
+uint8_t spectrum_render_chlog(void);
 #ifdef NETCHESSZX_NEXT_BANKING
 void spectrum_render_about_off(void);
 #endif
@@ -46,8 +46,5 @@ void spectrum_render_ikkle_at(const char *spec) __z88dk_fastcall;
 void spectrum_render_ikkle_abs_at(const char *spec) __z88dk_fastcall;
 void spectrum_render_fileui_frame(void);
 void spectrum_render_fileui_select(uint16_t slot_on) __z88dk_fastcall;
-
-uint8_t spectrum_key_edit_pressed(void);
-uint8_t spectrum_key_poll(void);
 
 #endif

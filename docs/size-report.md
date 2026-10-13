@@ -28,3 +28,14 @@ when a branch is expected to be size-neutral or smaller.
 `make full-check` is the release gate and always enables `--fail-on-growth`.
 The tracked baseline therefore records the deliberately accepted 1.2 image;
 later growth must be reviewed and re-baselined explicitly.
+
+Classic has two distinct margins: ordinary resident/BSS growth ends at the
+fixed IM2 pointer at `0xfcff`, while `SP_GAP` includes that pointer through
+`0xfd00`. Shrinking ordinary code or relocating BSS below the resident image
+therefore need not increase the reported stack gap.
+
+The Classic boot capsule reuses `0x6800` until the first CONFIG load. Its bytes
+remain in the TAP, so count resident savings separately from tape savings:
+the second CODE pair and extra BASIC LOAD add 30 bytes of framing/loader data.
+`check_tap_image.py` verifies both CODE payloads, their order, `CLEAR 0x67ff`,
+and entry at the resident CRT. Next retains its existing boot packaging.

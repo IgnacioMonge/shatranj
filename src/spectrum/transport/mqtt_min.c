@@ -163,9 +163,9 @@ int16_t spectrum_mqtt_parse_publish(const uint8_t *packet,
     if (topic_len >= 4u) {
         const uint8_t *suffix = packet + pos + topic_len - 4u;
 
-        if (suffix[0] == '/' &&
-            ((suffix[1] == 'w' && suffix[2] == '2' && suffix[3] == 'b') ||
-             (suffix[1] == 'b' && suffix[2] == '2' && suffix[3] == 'w'))) {
+        if (suffix[0] == '/' && suffix[2] == '2' &&
+            ((suffix[1] == 'w' && suffix[3] == 'b') ||
+             (suffix[1] == 'b' && suffix[3] == 'w'))) {
             *flags |= SPECTRUM_LINK_PAYLOAD_GAME_ROUTE;
         }
     }

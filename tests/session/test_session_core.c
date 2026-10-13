@@ -6,7 +6,7 @@
 typedef char session_u8_tag_check[(sizeof(((SessionState *)0)->phase) == 1u)
                                       ? 1
                                       : -1];
-typedef char session_action_capacity_check[(SESSION_ACTION_CAPACITY >= 4u)
+typedef char session_action_capacity_check[(SESSION_ACTION_CAPACITY >= 5u)
                                                ? 1
                                                : -1];
 typedef char session_payload_bound_check[(SESSION_PAYLOAD_MAX <= 255u) ? 1 : -1];

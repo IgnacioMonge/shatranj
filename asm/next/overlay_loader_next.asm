@@ -7,7 +7,7 @@ SECTION code_user
 ; block and piece sets from a ZX0-compressed .nex bundle.
 ; At boot 30 raw 8K pages are expanded into banks 16-30. The immutable
 ; 0x7000..0x7fff resident window is then copied into the upper half of each of
-; the seventeen 4K overlay pages; slot 3 selects them directly thereafter.
+; the eighteen 4K overlay pages; slot 3 selects them directly thereafter.
 ;
 ; Screen is asm/spectrum/screen.asm with NETCHESSZX_NEXT_GFX: board squares,
 ; pieces and move markers are Next hardware sprites. Cold sprite/palette setup
@@ -20,6 +20,7 @@ PUBLIC _spectrum_overlay_exec_cached
 PUBLIC _spectrum_assets_load
 PUBLIC _spectrum_assets_fatal
 PUBLIC _spectrum_render_about
+PUBLIC _spectrum_render_game_stats
 PUBLIC _spectrum_render_about_off
 PUBLIC _netchesszx_piece_set_load
 PUBLIC _spectrum_overlay_loaded_id
@@ -41,12 +42,12 @@ EXTERN next_graphics_bank_about
 
 _spectrum_overlay_context EQU 0x5FE0
 _overlay_code_slot EQU 0x6000
-_overlay_scratch_base EQU 0x3C2B
+_overlay_scratch_base EQU 0x3C78
 ovl_invalid_id EQU 0xff
 INCLUDE "overlay_atlas_table.asm"
 INCLUDE "asm/next/extension_bank_layout.asm"
 
-asset_load_size       EQU 1196
+asset_load_size       EQU 1273
 about_board_size      EQU 0
 
 ; Next MMU banking. Compressed NEX banks 8-11 map as pages 16-23. The raw
@@ -58,7 +59,7 @@ next_mmu_slot3        EQU 0x53
 next_compressed_page_base EQU 16
 next_bundle_page_base EQU 32
 next_overlay_page_base EQU 44
-next_overlay_page_count EQU 17
+next_overlay_page_count EQU 18
 next_bundle_raw_bank_base EQU 16
 next_bundle_page_count EQU 30
 next_bundle_header_size EQU 8 + (next_bundle_page_count * 2)
@@ -79,21 +80,32 @@ next_saved_mmu2:        DEFS 1
 next_saved_mmu3:        DEFS 1
 next_copy_page:         DEFS 1
 next_expand_left:       DEFS 1
+; Boot expansion finishes at zero; reuse its dead counter at runtime.
+ovl_call_active EQU next_expand_left
 
 SECTION code_user
 
-; SDCC/IY: two uint8 args packed into one stack word:
-;   SP+2 = ovl_id, SP+3 = entry_id.
+; SDCC/IY callee: two uint8 args packed into one stack word (ovl_id low,
+; entry_id high), popped here. A nested plain exec leaves the cache flag alone
+; and fails in the cached path below.
 _spectrum_overlay_exec:
+    ld a, (ovl_call_active)
+    or a
+    jr nz, _spectrum_overlay_exec_cached
     xor a
     ld (ovl_cache_ready), a
 
 _spectrum_overlay_exec_cached:
-    ld hl, 2
-    add hl, sp
-    ld a, (hl)
-    inc hl
-    ld b, (hl)
+    pop hl
+    pop bc
+    push hl
+    ld a, c
+ovl_args_decoded:
+    ld c, a
+    ld a, (ovl_call_active)
+    or a
+    jp nz, ovl_nested_fail
+    ld a, c
 ovl_args_canonical:
     ld (ovl_id), a
     ld a, b
@@ -174,6 +186,12 @@ assets_fatal_halt:
 ; Show the About screen: full-screen Layer 2 image from expanded VRAM. The
 ; palette is staged in the permanent slot-1 page and written as 9-bit pairs; the
 ; pixels are displayed in place from the bundle banks (no copy).
+_spectrum_render_game_stats:
+    ld hl, 12 + 256
+    push hl
+    call _spectrum_overlay_exec
+    ret
+
 _spectrum_render_about:
     ld hl, next_graphics_bank_about
     call next_graphics_bank_call
@@ -259,6 +277,8 @@ ovl_call_loaded:
     or a
     sbc hl, de
     jr nc, ovl_bad_entry
+    ld a, 1
+    ld (ovl_call_active), a
     pop de
     pop iy
     pop ix
@@ -278,6 +298,8 @@ ovl_return:
     ; RST 8/DivMMC may have owned slots 0+1 while the overlay ran. Restore the
     ; extension atomically before returning to a possible slot-1 caller.
     DEFB 0xed, 0x91, next_mmu_slot1, next_extension_page
+    xor a
+    ld (ovl_call_active), a
     ei
     ret
 
@@ -287,9 +309,14 @@ ovl_bad_entry:
 
 ovl_fail:
     xor a
+    ld (ovl_call_active), a
     ld (ovl_cache_ready), a
     pop iy
     pop ix
+    ld hl, 0
+    ret
+
+ovl_nested_fail:
     ld hl, 0
     ret
 
@@ -394,7 +421,7 @@ next_copy_begin:
     rlca
     add a, next_bundle_page_base
     ld (next_copy_page), a
-    call next_map_copy_page
+    call next_map_slot0
 
     ld a, h
     and 0x1f
@@ -414,7 +441,7 @@ next_copy_loop:
     ld a, (next_copy_page)
     inc a
     ld (next_copy_page), a
-    call next_map_copy_page
+    call next_map_slot0
     jr next_copy_loop
 
 next_copy_done:
@@ -449,20 +476,9 @@ next_copy_pump:
     pop bc
     ret
 
-next_map_copy_page:
-    push bc
-    push de
-    push hl
-    call next_map_slot0
-    pop hl
-    pop de
-    pop bc
-    ret
-
 next_map_slot1:
-    ld e, a
-    ld a, next_mmu_slot1
-    jp nextreg_write
+    DEFB 0xed, 0x92, next_mmu_slot1
+    ret
 
 nextreg_read:
     ld bc, nextreg_select
@@ -634,26 +650,22 @@ next_install_overlay_mirrors_loop:
 
 ; A = first MMU page of a compressed 16K bank. Maps both source slots.
 next_map_compressed_bank:
-    push af
     call next_map_slot0
-    pop af
     inc a
     jp next_map_slot1
 
+; Z80N fixed-register writes preserve registers, flags and IFF.
 next_map_slot0:
-    ld e, a
-    ld a, next_mmu_slot0
-    jp nextreg_write
+    DEFB 0xed, 0x92, next_mmu_slot0
+    ret
 
 next_map_slot2:
-    ld e, a
-    ld a, next_mmu_slot2
-    jp nextreg_write
+    DEFB 0xed, 0x92, next_mmu_slot2
+    ret
 
 next_map_slot3:
-    ld e, a
-    ld a, next_mmu_slot3
-    jp nextreg_write
+    DEFB 0xed, 0x92, next_mmu_slot3
+    ret
 
 ; Classic ZX0 standard decoder by Einar Saukas (69 bytes). HL=source,
 ; DE=destination. Uses main registers only and preserves IX/IY.

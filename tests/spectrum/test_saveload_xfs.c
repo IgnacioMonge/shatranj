@@ -28,9 +28,14 @@ static uint8_t mock_close_result;
 static uint8_t mock_mkdir_ok = 1u;
 static uint8_t mock_commit_ok = 1u;
 static uint8_t mock_unlink_count;
+static uint8_t mock_rename_count;
 static uint8_t mock_mkdir_count;
 static uint8_t mock_commit_count;
 static uint8_t mock_replace_count;
+static uint8_t mock_file_present;
+static uint8_t mock_close_count;
+static uint16_t mock_file_size;
+static uint16_t mock_read_offset;
 static int16_t mock_replace_result;
 static uint16_t mock_replace_len;
 static const void *mock_replace_buf;
@@ -38,6 +43,8 @@ static char mock_last_replace[64];
 static char mock_last_temp[64];
 static char mock_last_commit[64];
 static char mock_last_unlink[64];
+static char mock_last_rename_source[64];
+static uint16_t mock_last_rename_target;
 
 static void mock_path_copy(char *dst, const char *src)
 {
@@ -48,7 +55,7 @@ static void mock_path_copy(char *dst, const char *src)
 void esx_fopen(const char *path)
 {
     (void)path;
-    esx_handle = 0u;
+    esx_handle = mock_file_present;
 }
 
 void esx_fcreate(const char *path)
@@ -59,7 +66,10 @@ void esx_fcreate(const char *path)
 
 void esx_fread(void)
 {
-    esx_result = 0u;
+    uint16_t remaining = (uint16_t)(mock_file_size - mock_read_offset);
+
+    esx_result = remaining < esx_count ? remaining : esx_count;
+    mock_read_offset = (uint16_t)(mock_read_offset + esx_result);
 }
 
 void esx_fwrite(void)
@@ -73,6 +83,7 @@ uint8_t esx_fclose(void)
 {
     uint8_t was_file = (uint8_t)(esx_handle == 1u);
 
+    ++mock_close_count;
     esx_handle = 0u;
     return was_file ? mock_close_result : 0u;
 }
@@ -81,6 +92,14 @@ void esx_funlink(const char *path)
 {
     ++mock_unlink_count;
     mock_path_copy(mock_last_unlink, path);
+    esx_result = 1u;
+}
+
+void esx_frename(const char *path)
+{
+    ++mock_rename_count;
+    mock_path_copy(mock_last_rename_source, path);
+    mock_last_rename_target = esx_buf;
     esx_result = 1u;
 }
 
@@ -128,6 +147,11 @@ uint16_t spectrum_net_runtime_fat_time(void)
     return (uint16_t)((15u << 11) | (26u << 5));
 }
 
+int16_t spectrum_net_runtime_fat_day_delta(void)
+{
+    return 0;
+}
+
 #include "../../src/spectrum/overlay/saveload_ovl.c"
 
 static void reset_mock(void)
@@ -142,21 +166,49 @@ static void reset_mock(void)
     mock_mkdir_ok = 1u;
     mock_commit_ok = 1u;
     mock_unlink_count = 0u;
+    mock_rename_count = 0u;
     mock_mkdir_count = 0u;
     mock_commit_count = 0u;
     mock_replace_count = 0u;
+    mock_file_present = 0u;
+    mock_close_count = 0u;
+    mock_file_size = 0u;
+    mock_read_offset = 0u;
     mock_replace_result = 0;
     mock_replace_len = 0u;
     mock_replace_buf = NULL;
     mock_last_replace[0] = mock_last_temp[0] = 0;
     mock_last_commit[0] = '\0';
     mock_last_unlink[0] = '\0';
+    mock_last_rename_source[0] = '\0';
+    mock_last_rename_target = 0u;
 }
 
 int main(void)
 {
     char payload[NETCHESSZX_SAVE_WIRE_B64_SIZE] = {0};
     uint8_t result;
+
+    reset_mock();
+    mock_file_present = 1u;
+    mock_file_size = NETCHESSZX_SAVE_WIRE_B64_SIZE;
+    CHECK(netchesszx_saveload_test_load("01", payload, &result) == 1u);
+    CHECK(result == SPECTRUM_OVL_SAVELOAD_OK);
+    CHECK(mock_close_count == 1u);
+
+    reset_mock();
+    mock_file_present = 1u;
+    mock_file_size = NETCHESSZX_SAVE_WIRE_B64_SIZE - 1u;
+    CHECK(netchesszx_saveload_test_load("01", payload, &result) == 0u);
+    CHECK(result == SPECTRUM_OVL_SAVELOAD_ERR_DATA);
+    CHECK(mock_close_count == 1u);
+
+    reset_mock();
+    mock_file_present = 1u;
+    mock_file_size = NETCHESSZX_SAVE_WIRE_B64_SIZE + 1u;
+    CHECK(netchesszx_saveload_test_load("01", payload, &result) == 0u);
+    CHECK(result == SPECTRUM_OVL_SAVELOAD_ERR_DATA);
+    CHECK(mock_close_count == 1u);
 
     reset_mock();
     /* The slot is replaced in one transaction. /CFG is the only commit;
@@ -191,6 +243,16 @@ int main(void)
     CHECK(netchesszx_saveload_test_save("bad-name", payload, &result) == 0u);
     CHECK(result == SPECTRUM_OVL_SAVELOAD_ERR_NAME);
     CHECK(mock_replace_count == 3u);
+
+    reset_mock();
+    CHECK(netchesszx_saveload_test_erase("SAVE01", &result) == 1u);
+    CHECK(result == SPECTRUM_OVL_SAVELOAD_OK);
+    CHECK(mock_rename_count == 1u);
+    CHECK(strcmp(mock_last_rename_source, "/CFG/SAVE01.STJ") == 0);
+    CHECK(mock_last_rename_target ==
+          (uint16_t)(uintptr_t)SAVELOAD_TRASH_PATH_ARG);
+    CHECK(strcmp(SAVELOAD_TRASH_PATH_ARG, "/CFG/SAVE01.DEL") == 0);
+    CHECK(mock_unlink_count == 0u);
 
     if (failures != 0) {
         return 1;

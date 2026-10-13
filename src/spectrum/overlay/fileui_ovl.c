@@ -13,11 +13,12 @@
 
 #include "spectrum/overlay/overlay_api.h"
 #include "spectrum/overlay/overlay_context.h"
+#include "spectrum/ui/layout.h"
 #if defined(NETCHESSZX_SPECTRANEXT) && !defined(NETCHESSZX_HOST_TEST)
 #include "spectrum/lowram_map.h"
 #endif
-/* Resident render helpers (declared locally: overlays do not include
-   spectrum/ui headers; the capabilities policy governs these imports). */
+/* Resident render helpers stay local; layout.h supplies target presentation
+   constants without exposing renderer internals. */
 void spectrum_render_ikkle_at(const char *spec) __z88dk_fastcall;
 void spectrum_render_fileui_frame(void);
 void spectrum_render_fileui_select(uint16_t slot_on) __z88dk_fastcall;
@@ -35,22 +36,21 @@ void esx_readdir(void);
 
 #define FILEUI_SLOTS 10u
 #define FILEUI_NAME_MAX 8u
-#define FILEUI_LINE_WIDTH 24u
+#define FILEUI_NAME_SIZE (FILEUI_NAME_MAX + 1u)
+#define FILEUI_STAMP_SIZE 4u
+#define FILEUI_CANDIDATE_SIZE (FILEUI_NAME_SIZE + FILEUI_STAMP_SIZE)
+#define FILEUI_CANDIDATE_BYTES (FILEUI_SLOTS * FILEUI_CANDIDATE_SIZE)
+#if FILEUI_CANDIDATE_BYTES > NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_SIZE
+#error "FILEUI candidates must fit overlay scratch"
+#endif
 
-#define FILEUI_ROW_HEADER 5u
-#define FILEUI_ROW_LEGEND 7u
-#define FILEUI_ROW_FIRST 9u
-#define FILEUI_ROW_FOOTER 20u
-
-#define FILEUI_COL_ITEM 4u
-#define FILEUI_COL_HEADER 12u
-#define FILEUI_COL_FOOTER 6u
-
-#define FILEUI_ATTR_HEADER 0x38u
-#define FILEUI_ATTR_LEGEND 0x06u
-#define FILEUI_ATTR_SAVED 0x05u
-#define FILEUI_ATTR_FREE 0x07u
-#define FILEUI_ATTR_FOOTER 0x06u
+#ifdef NETCHESSZX_HOST_TEST
+static char fileui_host_candidates[FILEUI_CANDIDATE_BYTES];
+#define FILEUI_CANDIDATES ((char *)fileui_host_candidates)
+#else
+#define FILEUI_CANDIDATES \
+    ((char *)NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR)
+#endif
 
 /* esxDOS F_READDIR short entry: attr byte, ASCIIZ 8.3 name, 2 bytes time,
    2 bytes date, 4 bytes size. */
@@ -59,7 +59,6 @@ void esx_readdir(void);
 
 #ifdef NETCHESSZX_SPECTRANEXT
 static char fileui_dir[] = "/CFG";
-static unsigned char fileui_xfs_stamp[4];
 #if !defined(NETCHESSZX_HOST_TEST)
 #define FILEUI_DIR_ARG ((char *)NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR)
 #define fileui_stage_dir() spectrum_append_text(FILEUI_DIR_ARG, fileui_dir)
@@ -73,11 +72,10 @@ static char fileui_dir[] = "/SYS/CONFIG";
 #define fileui_stage_dir() ((void)0)
 #endif
 
-/* FAT stamp (time lo/hi, date lo/hi) of the entry accepted last by
-   fileui_entry_stj; points into the caller's dirent buffer. */
 static const unsigned char *fileui_stamp;
 
 #ifdef NETCHESSZX_SPECTRANEXT
+static unsigned char fileui_name_stamp[FILEUI_STAMP_SIZE];
 static uint8_t fileui_b32(char c) __z88dk_fastcall
 {
     if (c >= '0' && c <= '9') {
@@ -118,11 +116,11 @@ static uint8_t fileui_stamp_from_name(const char *name) __z88dk_fastcall
                       ((uint16_t)month << 5) | day);
     time = (uint16_t)(((uint16_t)hour << 11) |
                       ((uint16_t)(minute_tens * 10u + minute_ones) << 5));
-    fileui_xfs_stamp[0] = (uint8_t)time;
-    fileui_xfs_stamp[1] = (uint8_t)(time >> 8);
-    fileui_xfs_stamp[2] = (uint8_t)date;
-    fileui_xfs_stamp[3] = (uint8_t)(date >> 8);
-    fileui_stamp = fileui_xfs_stamp;
+    fileui_name_stamp[0] = (uint8_t)time;
+    fileui_name_stamp[1] = (uint8_t)(time >> 8);
+    fileui_name_stamp[2] = (uint8_t)date;
+    fileui_name_stamp[3] = (uint8_t)(date >> 8);
+    fileui_stamp = fileui_name_stamp;
     return 1u;
 }
 #endif
@@ -164,10 +162,7 @@ static uint8_t fileui_entry_stj(const unsigned char *ent, char *out)
     if (!(p[5] | p[6] | p[7] | p[8])) {
         return 0u;
     }
-#ifdef NETCHESSZX_SPECTRANEXT
-    /* The adapter synthesizes size but has no timestamp; decode the stamp
-       embedded in the eight-character XFS basename instead. */
-#else
+#ifndef NETCHESSZX_SPECTRANEXT
     fileui_stamp = p + 1u;
 #endif
     p = ent + 1u;
@@ -190,6 +185,40 @@ static uint8_t fileui_entry_stj(const unsigned char *ent, char *out)
         return 0u;
     }
 #endif
+    return slot;
+}
+
+/* Keep one basename per slot. The compact timestamp suffix sorts oldest to
+   newest in byte order, including the 000000 no-clock fallback. */
+static uint8_t fileui_newer(const char *name, const char *current)
+{
+    uint8_t i = 2u;
+
+    while (i < FILEUI_NAME_MAX && name[i] == current[i]) {
+        ++i;
+    }
+    return (uint8_t)(i < FILEUI_NAME_MAX && name[i] > current[i]);
+}
+
+static char *fileui_candidate(char *names, uint8_t slot)
+{
+    while (--slot != 0u) {
+        names += FILEUI_CANDIDATE_SIZE;
+    }
+    return names;
+}
+
+static uint8_t fileui_keep_newest(char *candidate, const char *name)
+{
+    uint8_t i;
+
+    if (candidate[0] != '\0' && !fileui_newer(name, candidate)) {
+        return 0u;
+    }
+    spectrum_append_text(candidate, name);
+    for (i = 0u; i < FILEUI_STAMP_SIZE; ++i) {
+        candidate[FILEUI_NAME_SIZE + i] = (char)fileui_stamp[i];
+    }
     return 1u;
 }
 
@@ -197,8 +226,21 @@ static uint8_t fileui_entry_stj(const unsigned char *ent, char *out)
 static uint8_t fileui_nth_name(uint8_t index, char *out)
 {
     unsigned char ent[FILEUI_DIRENT_MAX];
-    uint8_t found = 0u;
+    char name[FILEUI_NAME_SIZE];
+    uint8_t target_slot = 1u;
+    uint8_t slot;
+    uint16_t bit = 1u;
 
+    out[0] = '\0';
+    while (!(spectrum_fileui_used_mask & bit) || index != 0u) {
+        if (spectrum_fileui_used_mask & bit) {
+            --index;
+        }
+        bit <<= 1;
+        if (++target_slot > FILEUI_SLOTS) {
+            return 0u;
+        }
+    }
     fileui_stage_dir();
     esx_opendir(FILEUI_DIR_ARG);
     if (!esx_handle) {
@@ -213,16 +255,16 @@ static uint8_t fileui_nth_name(uint8_t index, char *out)
         if (!esx_result) {
             break;
         }
-        if (fileui_entry_stj(ent, out)) {
-            if (found == index) {
-                esx_fclose();
-                return 1u;
+        slot = fileui_entry_stj(ent, name);
+        if (slot != 0u) {
+            if (slot == target_slot &&
+                (out[0] == '\0' || fileui_newer(name, out))) {
+                spectrum_append_text(out, name);
             }
-            ++found;
         }
     }
     esx_fclose();
-    return 0u;
+    return (uint8_t)(out[0] != '\0');
 }
 
 
@@ -250,7 +292,7 @@ static uint8_t fileui_gen_slot(char *out) __z88dk_fastcall
 static void fileui_text(uint8_t row, uint8_t col, uint8_t attr,
                         const char *text)
 {
-    char spec[32]; /* 3-byte header + widest line (24 chars) + NUL */
+    char spec[32]; /* Existing stack capacity: header, text and terminator. */
     char *q = spec + 3;
 
     spec[0] = (char)row;
@@ -279,7 +321,7 @@ static char *fileui_two(char *q, uint8_t v)
 /* "NAME     DD-MM-YY HH:MM" from the dirent name and FAT stamp. */
 static void fileui_row(uint8_t slot, const char *name)
 {
-    char line[FILEUI_LINE_WIDTH + 1u];
+    char line[NETCHESSZX_FILEUI_LINE_WIDTH + 1u];
     char *q = line;
     const unsigned char *s = fileui_stamp;
     uint8_t v;
@@ -320,28 +362,41 @@ static void fileui_row(uint8_t slot, const char *name)
         *q++ = '-';
     }
     /* Pad so a shrinking line self-clears its old tail. */
-    while (q < line + FILEUI_LINE_WIDTH) {
+    while (q < line + NETCHESSZX_FILEUI_LINE_WIDTH) {
         *q++ = ' ';
     }
     *q = '\0';
-    fileui_text((uint8_t)(FILEUI_ROW_FIRST + slot), FILEUI_COL_ITEM,
-                name ? FILEUI_ATTR_SAVED : FILEUI_ATTR_FREE, line);
+    fileui_text((uint8_t)(NETCHESSZX_FILEUI_ROW_FIRST + slot),
+                NETCHESSZX_FILEUI_COL_ITEM,
+                name ? NETCHESSZX_ATTR_FILEUI_SAVED
+                     : NETCHESSZX_ATTR_FILEUI_FREE,
+                line);
 }
 
 static void fileui_footer(void)
 {
     static const char footer[] = "ENTER-LOAD/SAVE  E-ERASE";
 
-    fileui_text(FILEUI_ROW_FOOTER, FILEUI_COL_FOOTER, FILEUI_ATTR_FOOTER,
-                footer);
+    fileui_text(NETCHESSZX_FILEUI_ROW_FOOTER,
+                NETCHESSZX_FILEUI_COL_FOOTER,
+                NETCHESSZX_ATTR_FILEUI_FOOTER, footer);
 }
 
 uint8_t fileui_render_ovl(uint8_t *ctx) __z88dk_fastcall
 {
+#if defined(NETCHESSZX_SDCC_IY) && !defined(NETCHESSZX_SPECTRANEXT)
+    /* Work between directory calls and the initial redraw can span frames.
+       The sdcc_iy build and wrappers preserve the live-interrupt contract. */
+#asm
+    ei
+#endasm
+#endif
     static const char header[] = " SAVED GAMES";
     static const char legend[] = "NAME     DATE     TIME";
     unsigned char ent[FILEUI_DIRENT_MAX];
-    char name[FILEUI_NAME_MAX + 1u];
+    char name[FILEUI_NAME_SIZE];
+    char *names = FILEUI_CANDIDATES;
+    char *candidate = names;
     uint8_t sel = ctx[SPECTRUM_OVL_CTX_FILEUI_SEL];
     uint8_t list_only = ctx[SPECTRUM_OVL_CTX_FILEUI_KEY];
     /* List-only refresh: free rows past the previous count are already
@@ -350,21 +405,28 @@ uint8_t fileui_render_ovl(uint8_t *ctx) __z88dk_fastcall
     uint8_t count = 0u;
     uint8_t slot;
     uint16_t used = 0u;
+    uint16_t bit;
 
     /* RENDER must leave a deterministic ACTION for the resident caller. */
     ctx[SPECTRUM_OVL_CTX_FILEUI_ACTION] = SPECTRUM_OVL_FILEUI_ACT_NONE;
     if (!list_only) {
         spectrum_render_fileui_frame();
-        fileui_text(FILEUI_ROW_HEADER, FILEUI_COL_HEADER, FILEUI_ATTR_HEADER,
-                    header);
-        fileui_text(FILEUI_ROW_LEGEND, FILEUI_COL_ITEM, FILEUI_ATTR_LEGEND,
-                    legend);
+        fileui_text(NETCHESSZX_FILEUI_ROW_HEADER,
+                    NETCHESSZX_FILEUI_COL_HEADER,
+                    NETCHESSZX_ATTR_FILEUI_HEADER, header);
+        fileui_text(NETCHESSZX_FILEUI_ROW_LEGEND,
+                    NETCHESSZX_FILEUI_COL_ITEM,
+                    NETCHESSZX_ATTR_FILEUI_LEGEND, legend);
         fileui_footer();
     }
     fileui_stage_dir();
     esx_opendir(FILEUI_DIR_ARG);
+    for (slot = 0u; slot < FILEUI_SLOTS; ++slot) {
+        *candidate = '\0';
+        candidate += FILEUI_CANDIDATE_SIZE;
+    }
     if (esx_handle) {
-        while (count < FILEUI_SLOTS) {
+        for (;;) {
             esx_buf = (uint16_t)ent;
             esx_readdir();
 #ifndef NETCHESSZX_SPECTRANEXT
@@ -373,15 +435,28 @@ uint8_t fileui_render_ovl(uint8_t *ctx) __z88dk_fastcall
             if (!esx_result) {
                 break;
             }
-            if (fileui_entry_stj(ent, name)) {
-                slot = (uint8_t)(((uint8_t)(name[0] - '0') * 10u) +
-                                 (uint8_t)(name[1] - '0'));
-                used |= (uint16_t)(1u << (slot - 1u));
-                fileui_row(count, name);
-                ++count;
+            slot = fileui_entry_stj(ent, name);
+            if (slot != 0u) {
+                candidate = fileui_candidate(names, slot);
+                bit = (uint16_t)(1u << (slot - 1u));
+                if (!(used & bit)) {
+                    used |= bit;
+                    ++count;
+                }
+                (void)fileui_keep_newest(candidate, name);
             }
         }
         esx_fclose();
+    }
+    candidate = names;
+    count = 0u;
+    for (slot = 0u; slot < FILEUI_SLOTS; ++slot) {
+        if (*candidate != '\0') {
+            fileui_stamp =
+                (const unsigned char *)(candidate + FILEUI_NAME_SIZE);
+            fileui_row(count++, candidate);
+        }
+        candidate += FILEUI_CANDIDATE_SIZE;
     }
     for (slot = count; slot < limit; ++slot) {
         fileui_row(slot, 0);
@@ -397,6 +472,11 @@ uint8_t fileui_render_ovl(uint8_t *ctx) __z88dk_fastcall
    0 not found. */
 uint8_t fileui_pick_ovl(uint8_t *ctx) __z88dk_fastcall
 {
+#if defined(NETCHESSZX_SDCC_IY) && !defined(NETCHESSZX_SPECTRANEXT)
+#asm
+    ei
+#endasm
+#endif
     uint8_t sel = ctx[SPECTRUM_OVL_CTX_FILEUI_SEL];
     uint8_t count = spectrum_fileui_count;
     char *dst = fileui_ctx_name(ctx);

@@ -1,17 +1,22 @@
 SECTION code_user
 
-; ROM IM1 requires IY=$5C3A while interrupts are live. esxDOS calls are
-; allowed to clobber IY, so every RST 8 site restores it before returning to
-; resident C or pumping the UART.
+; Next ROM IM1 requires IY=$5C3A while interrupts are live. Classic now uses a
+; resident IM2 frame ISR, but shared live-interrupt code keeps the same IY
+; contract. The esxDOS-compatible API preserves IY; every RST 8 site also saves
+; it defensively before returning to resident C or pumping the UART.
 ;
 ; SDCC/IY: two uint8 args are packed into one stack word:
 ;   SP+2 = ovl_id, SP+3 = entry_id.
 
 PUBLIC _spectrum_overlay_exec
 PUBLIC _spectrum_overlay_exec_cached
+IFNDEF NETCHESSZX_CLASSIC_BOOT
 PUBLIC _spectrum_assets_load
 PUBLIC _spectrum_assets_fatal
+ENDIF
 PUBLIC _spectrum_render_about
+PUBLIC _spectrum_render_game_stats
+PUBLIC _spectrum_render_chlog
 PUBLIC _netchesszx_piece_set_load
 PUBLIC _spectrum_overlay_loaded_id
 PUBLIC _overlay_code_slot
@@ -22,6 +27,7 @@ PUBLIC _spxn_overlay_loader_start
 PUBLIC _spxn_overlay_loader_end
 PUBLIC _spectrum_spxn_frame_wait
 PUBLIC _spxn_rom_held
+PUBLIC _spxn_dat_id
 ENDIF
 PUBLIC _spectrum_overlay_context
 PUBLIC ovl_close_overlay_file
@@ -41,7 +47,11 @@ EXTERN _esx_result
 EXTERN _esx_fopen
 EXTERN _esx_fread
 EXTERN _esx_fclose
-EXTERN _spxn_xfs_fseek
+EXTERN _spxn_xfs_open_here
+EXTERN _spxn_xfs_select_slot0
+EXTERN _spxn_dat_bind
+EXTERN _spxn_dat_release
+EXTERN _spxn_xfs_firmware_probe
 EXTERN _spxn_xfs_init
 EXTERN _spectrum_input_frame_tick
 EXTERN asm_z80_push_di
@@ -69,20 +79,22 @@ _overlay_code_slot EQU 0x6800
 ENDIF
 ovl_invalid_id EQU 0xff
 INCLUDE "overlay_atlas_table.asm"
-asset_load_addr EQU 0x6000
-asset_load_size EQU 1196
-asset_piece_offset EQU 812
+asset_load_addr EQU 0x6001
+asset_load_size EQU 1273
+asset_piece_offset EQU 889
 piece_sprite_set_size EQU 384
+about_board_size EQU 5472
+IFDEF NETCHESSZX_SPECTRANEXT
 about_board_offset EQU asset_load_size
-about_board_size EQU 5184
 piece_set_extra_offset EQU about_board_offset + about_board_size
+ELSE
+piece_set_extra_offset EQU asset_load_size
+about_board_offset EQU piece_set_extra_offset + (piece_sprite_set_size * 2)
+ENDIF
 about_ovl_id EQU 12
 about_render_entry EQU 0
-IFDEF NETCHESSZX_SPECTRANEXT
-time_config_ovl_id EQU 16
-time_config_init_entry EQU 2
-time_config_probe_key EQU 0xFF
-ENDIF
+; The changelog text page is entry 2 of the status (MENU_LOGIC) overlay.
+chlog_ovl_id EQU 7
 ovl_atlas_fingerprint_offset EQU 96
 ovl_atlas_fingerprint_size EQU 4
 
@@ -98,13 +110,48 @@ ovl_cache_ready: DEFS 1
 ovl_file_open: DEFS 1
 IFDEF NETCHESSZX_SPECTRANEXT
 ovl_xfs_ready: DEFS 1
-ovl_atlas_ready: DEFS 1
 ovl_atlas_file_fingerprint: DEFS ovl_atlas_fingerprint_size
 _spxn_rom_held EQU ovl_atlas_file_fingerprint + 3
+ELSE
+; Reject recursive dispatch before cache/id mutation or overwriting the slot.
+ovl_call_active: DEFS 1
 ENDIF
 asset_set_index: DEFS 1
+IFDEF NETCHESSZX_SPECTRANEXT
 _spectrum_overlay_loaded_id: DEFS 1
 ovl_load_size: DEFS 2
+; Retained SHATRANJ.DAT descriptor (fd+1, 0 = none). It must stay inside the
+; 0x50 bytes _spectrum_assets_load clears and outside the XFS state/scratch;
+; the byte comes from the write-only ovl_atlas_ready this change deleted.
+_spxn_dat_id: DEFS 1
+ELSE
+ovl_load_size: DEFS 2
+_spectrum_overlay_loaded_id: DEFS 1
+
+; Only the IM2 pointer has a fixed address. frame_clock_init writes both
+; bytes before enabling IM2; ordinary loader state stays in the zeroed TAP.
+SECTION bss_frame_clock_vector
+ORG 0xfcff
+PUBLIC _spectrum_frame_clock_vector_reservation
+_spectrum_frame_clock_vector_reservation: DEFS 2
+
+; The CRT stack starts at the top of RAM (REGISTER_SP=0), reclaiming the 168
+; unused UDG bytes. The two DIRECT receive slots live right above the vector,
+; so the linked CODE/DATA/BSS below it gains their 96 bytes. Both are written
+; before they are read; nothing relies on TAP zeroing here.
+IFDEF NETCHESSZX_HIGH_SCRATCH
+SECTION bss_high_scratch
+ORG 0xfd01
+PUBLIC _direct_rx_payload
+PUBLIC _direct_rx_payload2
+_direct_rx_payload: DEFS 48
+_direct_rx_payload2: DEFS 48
+; MOVES header label keys; the panel code zeroes them when it blanks the row.
+PUBLIC _spectrum_moves_header_shown
+_spectrum_moves_header_shown: DEFS 2
+ENDIF
+SECTION bss_user
+ENDIF
 IFDEF NETCHESSZX_SPECTRANEXT
 ; These states never overlap: the fingerprint is dead after boot verification,
 ; and id/entry are dead while their selected overlay is executing.
@@ -113,52 +160,68 @@ ovl_spxn_page_count EQU _spectrum_overlay_loaded_id
 ovl_spxn_current_page EQU ovl_id
 ovl_spxn_return_value EQU ovl_entry_id
 ovl_spxn_copy_dst EQU ovl_atlas_file_fingerprint + 1
+; The copy destination is dead after preload. Keep activity independent of
+; ROM visibility, which frame_wait temporarily drops during an overlay call.
+ovl_call_active EQU ovl_atlas_file_fingerprint + 2
 ENDIF
 
 SECTION code_user
 
+; Callee ABI: pops its packed uint8 args (C = ovl_id, B = entry_id). A nested
+; plain exec leaves the cache flag alone and fails in the cached path below.
 _spectrum_overlay_exec:
+    ld a, (ovl_call_active)
+    or a
+    jr nz, _spectrum_overlay_exec_cached
     xor a
     ld (ovl_cache_ready), a
 
 _spectrum_overlay_exec_cached:
-IFDEF NETCHESSZX_SPECTRANEXT
-    ld a, (_spxn_rom_held)
+    pop hl
+    pop bc
+    push hl
+    ld a, (ovl_call_active)
     or a
     jr nz, ovl_exec_nested_fail
-ENDIF
-    ld hl, 2
-    add hl, sp
-    ld a, (hl)
-    inc hl
-    ld b, (hl)
+    ld a, c
 ovl_args_canonical:
     ld (ovl_id), a
     ld a, b
     ld (ovl_entry_id), a
 
-IFDEF NETCHESSZX_SPECTRANEXT
     jr ovl_exec_after_xfs_helper
 ovl_exec_nested_fail:
     ld hl, 0
     ret
-; HL=ASCIIZ path. Establish cartridge identity before the first XFS open;
-; the external adapter intentionally does not repeat detection per operation.
-; Return A=compatibility handle with carry clear, or carry set on failure.
+IFDEF NETCHESSZX_SPECTRANEXT
+; HL=ASCIIZ path. Establish cartridge identity and firmware 1.0 before the
+; first XFS open; the external adapter intentionally does not repeat
+; detection per operation. ovl_xfs_ready: 0 no cartridge, 1 ready, 2 firmware
+; older than 1.0 (the fatal screen names it). Opens on the current mount (no
+; SETMOUNTPOINT). Return A=compatibility handle with carry clear, or carry set
+; on failure.
 ovl_xfs_open_readonly:
     ld a, (ovl_xfs_ready)
-    or a
-    jr nz, ovl_xfs_open
+    dec a
+    jr z, ovl_xfs_open
     push hl
     call _spxn_detect
-    ld a, l
-    pop hl
-    cp 1
-    jr nz, ovl_xfs_open_fail
+    xor a
+    dec l
+    jr nz, ovl_xfs_checked
+    ld hl, asset_load_addr      ; reply buffer: the DAT has not loaded yet
+    call _spxn_xfs_firmware_probe
     ld a, 1
+    bit 0, l
+    jr z, ovl_xfs_checked
+    inc a
+ovl_xfs_checked:
+    pop hl
     ld (ovl_xfs_ready), a
+    dec a
+    jr nz, ovl_xfs_open_fail
 ovl_xfs_open:
-    call _esx_fopen
+    call _spxn_xfs_open_here
     ld a, (_esx_handle)
     or a
     ret nz
@@ -167,8 +230,20 @@ ovl_xfs_open_fail:
     ld (_esx_handle), a
     scf
     ret
-ovl_exec_after_xfs_helper:
+ELSE
+; HL=ASCIIZ path. Return A=esxDOS handle with carry clear, or carry set.
+ovl_esx_open_readonly:
+    push hl
+    pop ix
+    ld b, 0x01
+    ld a, '*'
+    push iy
+    rst 8
+    defb 0x9a
+    pop iy
+    ret
 ENDIF
+ovl_exec_after_xfs_helper:
 
     push ix
     push iy
@@ -177,6 +252,7 @@ ENDIF
     jp c, ovl_fail
     jp ovl_call_loaded
 
+IFNDEF NETCHESSZX_CLASSIC_BOOT
 _spectrum_assets_load:
 IFDEF NETCHESSZX_SPECTRANEXT
     ; bss_user is anchored below the TAP CODE block to recover the inactive
@@ -196,18 +272,22 @@ ENDIF
     call ovl_close_overlay_file
     ld hl, asset_filename
 IFDEF NETCHESSZX_SPECTRANEXT
+    ; Launch mount first (direct HTTP(S) start); an installed package lives
+    ; on slot 0. The descriptor stays open as the retained resource.
+    call ovl_xfs_open_readonly
+    jr nc, assets_dat_open
+    ld a, (ovl_xfs_ready)
+    dec a
+    jr nz, assets_fail
+    call _spxn_xfs_select_slot0
+    ld hl, asset_filename
     call ovl_xfs_open_readonly
     jr c, assets_fail
+assets_dat_open:
     ld a, (_esx_handle)
+    ld (_spxn_dat_id), a
 ELSE
-    push hl
-    pop ix
-    ld b, 0x01
-    ld a, '*'
-    push iy
-    rst 8
-    defb 0x9a
-    pop iy
+    call ovl_esx_open_readonly
     jr c, assets_fail
 ENDIF
     ld (ovl_handle), a
@@ -221,7 +301,8 @@ ENDIF
     call ovl_close
 IFDEF NETCHESSZX_SPECTRANEXT
     call ovl_spxn_preload_all
-    jr c, assets_fail
+    jr c, assets_fail_release
+ENDIF
 ENDIF
 assets_success:
     pop iy
@@ -231,6 +312,10 @@ assets_success:
 
 assets_fail_close:
     call ovl_close
+IFDEF NETCHESSZX_SPECTRANEXT
+assets_fail_release:
+    call _spxn_dat_release
+ENDIF
 assets_fail:
     pop iy
     pop ix
@@ -248,23 +333,12 @@ npsl_index_ok:
     push iy
     call ovl_close_overlay_file
 
+IFNDEF NETCHESSZX_SPECTRANEXT
     ld hl, asset_filename
-IFDEF NETCHESSZX_SPECTRANEXT
-    call ovl_xfs_open_readonly
+    call ovl_esx_open_readonly
     jr c, npsl_fail
-    ld a, (_esx_handle)
-ELSE
-    push hl
-    pop ix
-    ld b, 0x01
-    ld a, '*'
-    push iy
-    rst 8
-    defb 0x9a
-    pop iy
-    jr c, npsl_fail
-ENDIF
     ld (ovl_handle), a
+ENDIF
 
     ld a, (asset_set_index)
     add a, a
@@ -275,15 +349,17 @@ ENDIF
     ld e, (hl)
     inc hl
     ld d, (hl)
-    ld bc, 0
-    ld a, (ovl_handle)
 IFDEF NETCHESSZX_SPECTRANEXT
     ex de, hl
-    call _spxn_xfs_fseek
+    call _spxn_dat_bind         ; borrow the retained DAT and seek
+    ld a, (_esx_handle)
+    ld (ovl_handle), a
     ld a, l
     or a
     jr z, npsl_fail_close
 ELSE
+    ld bc, 0
+    ld a, (ovl_handle)
     ld ix, 0
     ld l, 0
     push iy
@@ -311,16 +387,35 @@ piece_set_offsets:
     DW piece_set_extra_offset
     DW piece_set_extra_offset + piece_sprite_set_size
 
+IFNDEF NETCHESSZX_CLASSIC_BOOT
 _spectrum_assets_fatal:
     di
+IFDEF NETCHESSZX_SPECTRANEXT
+    call _spxn_dat_release
+ENDIF
     ld a, 2
     out (254), a
     ld hl, assets_fatal_bitmap
     ld de, 0x4000
-    ld b, 8
+    ld bc, 8 * 256 + 4
+IFDEF NETCHESSZX_SPECTRANEXT
+    ld a, (ovl_xfs_ready)
+    cp 2
+    jr nz, assets_fatal_row
+    ; Firmware older than 1.0: clear the screen and name the cause in the UI
+    ; font's cell rows (scanlines 1..6) instead of DAT?.
+    ld hl, 0x4000
+    ld de, 0x4001
+    ld bc, 6911
+    ld (hl), l
+    ldir
+    ld hl, assets_firmware_bitmap
+    ld de, 0x4100
+    ld bc, 6 * 256 + 15
+ENDIF
 assets_fatal_row:
     push bc
-    ld b, 4
+    ld b, c
 assets_fatal_col:
     ld a, (hl)
     ld (de), a
@@ -328,28 +423,36 @@ assets_fatal_col:
     inc e
     djnz assets_fatal_col
     ld a, e
-    sub 4
+    sub c
     ld e, a
     inc d
     pop bc
     djnz assets_fatal_row
     ld hl, 0x5800
     ld a, 0x42
-    ld b, 4
+    ld b, c
 assets_fatal_attr:
     ld (hl), a
     inc hl
     djnz assets_fatal_attr
 assets_fatal_halt:
     jr assets_fatal_halt
+ENDIF
 
 _spectrum_render_about:
     ld hl, about_ovl_id + (about_render_entry * 256)
+    jr render_about_entry
+_spectrum_render_chlog:
+    ld hl, chlog_ovl_id + 512
+    jr render_about_entry
+_spectrum_render_game_stats:
+    ld hl, about_ovl_id + 256
+render_about_entry:
     push hl
     call _spectrum_overlay_exec
-    pop bc
     ret
 
+IFNDEF NETCHESSZX_CLASSIC_BOOT
 assets_fatal_bitmap:
     DEFB 0xf8,0x38,0xfe,0x7c
     DEFB 0x84,0x44,0x10,0x82
@@ -359,6 +462,18 @@ assets_fatal_bitmap:
     DEFB 0x84,0x82,0x10,0x00
     DEFB 0xf8,0x82,0x10,0x10
     DEFB 0x00,0x00,0x00,0x00
+IFDEF NETCHESSZX_SPECTRANEXT
+; "FIRMWARE OUTDATED: SEE README" in the 4x6 UI font (font_packed/font_lut
+; of assets/spectrum/ui_runtime_assets.asm), which is not loaded yet.
+assets_firmware_bitmap:
+    DEFB 0xee,0xca,0xa4,0xce,0x04,0xae,0xc4,0xee,0xc0,0x06,0xee,0x0c,0xe4,0xca,0xe0
+    DEFB 0x84,0xae,0xaa,0xa8,0x0a,0xa4,0xaa,0x48,0xa0,0x08,0x88,0x0a,0x8a,0xae,0x80
+    DEFB 0xc4,0xae,0xea,0xac,0x0a,0xa4,0xaa,0x4c,0xa8,0x04,0xcc,0x0a,0xca,0xae,0xc0
+    DEFB 0x84,0xce,0xee,0xc8,0x0a,0xa4,0xae,0x48,0xa0,0x02,0x88,0x0c,0x8e,0xae,0x80
+    DEFB 0x84,0xaa,0xea,0xa8,0x0a,0xa4,0xaa,0x48,0xa0,0x0a,0x88,0x0a,0x8a,0xaa,0x80
+    DEFB 0x8e,0xaa,0x4a,0xae,0x04,0xe4,0xca,0x4e,0xc8,0x04,0xee,0x0a,0xea,0xca,0xe0
+ENDIF
+ENDIF
 
 ovl_ensure_loaded:
 IFDEF NETCHESSZX_SPECTRANEXT
@@ -386,7 +501,13 @@ ELSE
     ret
 ENDIF
 
+IFNDEF NETCHESSZX_SPECTRANEXT
+; One retry for a failed load: the failed attempt closed the file, so the
+; second one reopens, seeks and reads again from scratch.
 ovl_load:
+    call ovl_load_try
+    ret nc
+ovl_load_try:
     xor a
     ld (ovl_cache_ready), a
 
@@ -394,34 +515,13 @@ ovl_load:
     or a
     jr nz, ovl_file_ready
     ld hl, ovl_filename
-IFDEF NETCHESSZX_SPECTRANEXT
-    call ovl_xfs_open_readonly
+    call ovl_esx_open_readonly
     jp c, ovl_load_fail
-    ld a, (_esx_handle)
-ELSE
-    push hl
-    pop ix
-    ld b, 0x01
-    ld a, '*'
-    push iy
-    rst 8
-    defb 0x9a
-    pop iy
-    jp c, ovl_load_fail
-ENDIF
     ld (ovl_handle), a
     ld a, 1
     ld (ovl_file_open), a
 
 ovl_file_ready:
-IFDEF NETCHESSZX_SPECTRANEXT
-    ld a, (ovl_atlas_ready)
-    or a
-    jr nz, ovl_atlas_verified
-    call ovl_verify_atlas
-    jp c, ovl_load_fail_close
-ovl_atlas_verified:
-ENDIF
     call ovl_select_atlas_entry
     jp c, ovl_load_fail_close
 
@@ -436,14 +536,9 @@ ovl_read:
     ld (_spectrum_overlay_loaded_id), a
     ld a, 1
     ld (ovl_cache_ready), a
-IFDEF NETCHESSZX_SPECTRANEXT
-    ; The XFS compatibility seam has one live handle. Release the atlas
-    ; before entering the overlay so save/load and directory calls can use
-    ; that adapter slot; a cache miss reopens and seeks it again.
-    call ovl_close_overlay_file
-    jr c, ovl_load_fail
-ENDIF
     ret
+
+ENDIF
 
 IFDEF NETCHESSZX_SPECTRANEXT
 ; Reject a stale SHATRANJ.OVL before executing any of its offsets.  The build
@@ -468,8 +563,6 @@ ovl_verify_atlas:
     ld a, (_overlay_scratch_base + ovl_atlas_fingerprint_offset + 3)
     cp ovl_atlas_fingerprint_3
     jr nz, ovl_verify_atlas_bad
-    ld a, 1
-    ld (ovl_atlas_ready), a
     or a
     ret
 ovl_verify_atlas_bad:
@@ -506,12 +599,14 @@ ovl_spxn_preload_loop:
     jp c, ovl_spxn_preload_fail_allocated
 
     call asm_z80_push_di
+    push iy
     call spxn_pagein
     ld a, spxn_overlay_owner
     call spxn_reserve_page
     jp c, ovl_spxn_reserve_fail_paged
     ld (ovl_spxn_current_page), a
     call spxn_pageout
+    pop iy
     call asm_z80_pop_ei
     ld a, (ovl_spxn_page_count)
     or a
@@ -558,15 +653,18 @@ ovl_spxn_chunk_ready:
     jr c, ovl_spxn_preload_fail_allocated
 
     call asm_z80_push_di
+    push iy
     call spxn_pagein
     ld a, (ovl_spxn_current_page)
-    call spxn_set_page_b
+    call spxn_push_page_b
     ld bc, (spxn_overlay_chunk_size)
     ld hl, spxn_overlay_stage
     ld de, (ovl_spxn_copy_dst)
     ldir
     ld (ovl_spxn_copy_dst), de
+    call spxn_pop_page_b
     call spxn_pageout
+    pop iy
     call asm_z80_pop_ei
 
     ld bc, (spxn_overlay_chunk_size)
@@ -578,12 +676,15 @@ ovl_spxn_chunk_ready:
 
 ovl_spxn_reserve_fail_paged:
     call spxn_pageout
+    pop iy
     call asm_z80_pop_ei
     jr ovl_spxn_preload_fail_allocated
 
 ovl_spxn_preload_done:
     call ovl_close_overlay_file
     jr c, ovl_spxn_preload_fail_allocated
+    xor a
+    ld (ovl_call_active), a
     ld a, 1
     ld (ovl_spxn_pages_ready), a
     or a
@@ -592,8 +693,6 @@ ovl_spxn_preload_done:
 ovl_spxn_preload_fail_close:
     call ovl_close_overlay_file
 ovl_spxn_preload_fail:
-    xor a
-    ld (ovl_atlas_ready), a
     scf
     ret
 
@@ -603,6 +702,7 @@ ovl_spxn_preload_fail_allocated:
     or a
     jr z, ovl_spxn_preload_freed
     call asm_z80_push_di
+    push iy
     call spxn_pagein
     ld a, (ovl_spxn_page_count)
     ld b, a
@@ -617,36 +717,21 @@ ovl_spxn_preload_free_loop:
     inc hl
     djnz ovl_spxn_preload_free_loop
     call spxn_pageout
+    pop iy
     call asm_z80_pop_ei
 ovl_spxn_preload_freed:
     xor a
     ld (ovl_spxn_page_count), a
-    ld (ovl_atlas_ready), a
     scf
     ret
 
 ovl_spxn_call_loaded:
-    ; Spectranext has no esxDOS/NextZXOS RTC.  TIME_CONFIG uses CTX_KEY=$ff
-    ; solely for that probe, so answer unavailable without entering its RST 8.
-    ld a, (ovl_id)
-    cp time_config_ovl_id
-    jr nz, ovl_spxn_map
-    ld a, (ovl_entry_id)
-    cp time_config_init_entry
-    jr nz, ovl_spxn_map
-    ld a, (_spectrum_overlay_context)
-    cp time_config_probe_key
-    jr nz, ovl_spxn_map
-    pop iy
-    pop ix
-    ei
-    ld hl, 0
-    ret
-
 ovl_spxn_map:
     pop iy
     pop ix
     di
+    push ix
+    push iy
     call spxn_pagein
     ld a, (ovl_id)
     ld e, a
@@ -658,6 +743,7 @@ ovl_spxn_map:
     call spxn_push_page_b
     ld a, 1
     ld (_spxn_rom_held), a
+    ld (ovl_call_active), a
 
     ld a, (ovl_entry_id)
     ld hl, _overlay_code_slot
@@ -699,6 +785,10 @@ ovl_spxn_bad_entry:
     xor a
     ld (_spxn_rom_held), a
     call spxn_pageout
+    pop iy
+    xor a
+    ld (ovl_call_active), a
+    pop ix
     ei
     ld hl, 0
     ret
@@ -710,6 +800,10 @@ ovl_spxn_return:
     xor a
     ld (_spxn_rom_held), a
     call spxn_pageout
+    pop iy
+    xor a
+    ld (ovl_call_active), a
+    pop ix
     ei
     ld hl, (ovl_spxn_return_value)
     ret
@@ -718,7 +812,12 @@ ovl_spxn_return:
 ; Spectrum ROM only for HALT/IM1 and the resident input tick, then restore the
 ; exact overlay page before returning.
 _spectrum_spxn_frame_wait:
+    push ix
+    push iy
     push af
+    push bc
+    push de
+    push hl
     ld a, (_spxn_rom_held)
     or a
     jr z, ovl_spxn_frame_plain
@@ -732,17 +831,10 @@ ovl_spxn_frame_plain:
     xor a
 ovl_spxn_frame_marker:
     push af
+    ld iy, 0x5C3A
     ei
     halt
-    push af
-    push bc
-    push de
-    push hl
     call _spectrum_input_frame_tick
-    pop hl
-    pop de
-    pop bc
-    pop af
     pop af
     or a
     jr z, ovl_spxn_frame_done
@@ -753,16 +845,24 @@ ovl_spxn_frame_marker:
     ld a, 1
     ld (_spxn_rom_held), a
 ovl_spxn_frame_done:
+    pop hl
+    pop de
+    pop bc
     pop af
+    pop iy
+    pop ix
     ret
 
 _spxn_overlay_loader_end:
 SECTION code_user
 ENDIF
 
-; A=handle, IX=destination, BC=length. Read in bounded chunks and drain the
-; polling UART between them. Returns the original length in BC, CF on error or
-; short read. The handle is mirrored in ovl_handle because esxDOS may clobber A.
+; A=handle, IX=destination, BC=length. Classic reads the whole length with one
+; F_READ and drains the polling UART once afterwards: the pump never runs inside
+; a synchronous RST 8, where the required CTS flow control holds the ESP, as it
+; already does for F_OPEN and F_SYNC. Returns the original length in BC, CF on
+; error or short read; IX is not preserved. The handle is mirrored in
+; ovl_handle because esxDOS may clobber A.
 ovl_read_chunked:
 IFDEF NETCHESSZX_SPECTRANEXT
     ld (ovl_handle), a
@@ -782,81 +882,45 @@ IFDEF NETCHESSZX_SPECTRANEXT
     ret
 ELSE
     ld (ovl_handle), a
-    push bc
-    ld h, b
-    ld l, c
-ovl_read_chunk_loop:
-    ld a, h
-    or l
-    jr z, ovl_read_chunk_done
-    ld bc, 64
-    ld a, h
-    or a
-    jr nz, ovl_read_chunk_size_ready
-    ld a, l
-    cp 64
-    jr nc, ovl_read_chunk_size_ready
-    ld c, l
-    ld b, 0
-ovl_read_chunk_size_ready:
-    push hl
-    push ix
-    push bc
+    ld a, b
+    or c
+    ret z
     ld a, (ovl_handle)
+    push bc
     push iy
     rst 8
     defb 0x9d
     pop iy
     pop de
-    jr c, ovl_read_chunk_fail
-    ld a, b
-    cp d
-    jr nz, ovl_read_chunk_fail
-    ld a, c
-    cp e
-    jr nz, ovl_read_chunk_fail
-    pop ix
-    pop hl
-    or a
+    jr c, ovl_read_fail
+    ld h, b
+    ld l, c
     sbc hl, de
-    push hl
-    push ix
-    pop hl
-    add hl, de
-    push hl
-    pop ix
-    pop hl
-    push hl
-    push ix
+    jr nz, ovl_read_fail
+    push de
     call _spectrum_uart_background_pump
-    pop ix
-    pop hl
-    jr ovl_read_chunk_loop
-ovl_read_chunk_fail:
-    pop ix
-    pop hl
-    pop bc
-    scf
-    ret
-ovl_read_chunk_done:
     pop bc
     or a
+    ret
+ovl_read_fail:
+    ld b, d
+    ld c, e
+    scf
     ret
 ENDIF
 
+IFNDEF NETCHESSZX_SPECTRANEXT
 ovl_load_fail_close:
     call ovl_close_overlay_file
 
 ovl_load_fail:
     xor a
     ld (ovl_cache_ready), a
-IFDEF NETCHESSZX_SPECTRANEXT
-    ld (ovl_atlas_ready), a
-ENDIF
     ld a, ovl_invalid_id
     ld (_spectrum_overlay_loaded_id), a
     scf
     ret
+ENDIF
 
 ovl_call_loaded:
 IFDEF NETCHESSZX_SPECTRANEXT
@@ -889,6 +953,8 @@ ELSE
     pop de
     pop iy
     pop ix
+    ld a, 1
+    ld (ovl_call_active), a
     ; C fastcall entries need the context in HL; native ASM entries use DE.
     ; Stack the target so both registers can carry the same context pointer.
     ld bc, ovl_return
@@ -897,13 +963,15 @@ ELSE
     ld de, _spectrum_overlay_context
     ld h, d
     ld l, e
-    ; Overlay entry starts under DI and ovl_return unconditionally enables IM1.
+    ; Overlay entry starts under DI and ovl_return enables interrupts.
     ; Overlay callees may re-enable interrupts (for example via frame_wait), so
     ; this is not a whole-overlay DI guarantee.
     di
     ret
 
 ovl_return:
+    xor a
+    ld (ovl_call_active), a
     ei
     ret
 
@@ -976,6 +1044,9 @@ ovl_close_overlay_file:
     or a
     ret z
     call ovl_close
+IFDEF NETCHESSZX_SPECTRANEXT
+    ret c
+ENDIF
     ld a, 0
     ld (ovl_file_open), a
     ret

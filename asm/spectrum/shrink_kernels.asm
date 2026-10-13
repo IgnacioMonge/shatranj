@@ -13,18 +13,44 @@ PUBLIC _netchesszx_asm_line_has
 PUBLIC _netchesszx_asm_mqtt_strlen8
 PUBLIC _netchesszx_asm_mqtt_copy
 PUBLIC _netchess_after_prefix
+PUBLIC _netchess_text_is
 PUBLIC _netchesszx_asm_net_copy
 PUBLIC _netchesszx_asm_net_move
+IFDEF NETCHESSZX_SDCC_IY
+IFNDEF NETCHESSZX_SPECTRANEXT
+PUBLIC _netchesszx_asm_direct_pop
+ENDIF
+ENDIF
 PUBLIC _netchesszx_session_send_ack_move
 PUBLIC _netchesszx_session_send_nack_move
 PUBLIC _netchesszx_asm_restore_chunk_step
 PUBLIC _netchesszx_asm_push_frame_arg
+PUBLIC _netchesszx_asm_leave_ix
+PUBLIC _netchesszx_asm_enter_ix_hl
+PUBLIC netchesszx_load_stack_args2
 
 EXTERN _line_buf
 EXTERN _NETCHESS_PROTO_ACK_PREFIX
 EXTERN _NETCHESS_PROTO_NACK_PREFIX
 EXTERN _spectrum_net_payload_scratch
-EXTERN _spectrum_net_send_text
+EXTERN _netchesszx_session_send_ack_text
+IFDEF NETCHESSZX_SDCC_IY
+IFNDEF NETCHESSZX_SPECTRANEXT
+EXTERN _direct_rx_payload
+EXTERN _direct_rx_payload2
+EXTERN _direct_rx_link
+EXTERN _direct_rx_link2
+EXTERN _direct_rx_count
+EXTERN _direct_rx_head
+EXTERN _spectrum_overlay_context
+ENDIF
+ENDIF
+
+IFDEF NETCHESSZX_NEXT_BANKING
+direct_rx_spill EQU 0x39f9
+ELSE
+direct_rx_spill EQU 0x64fa
+ENDIF
 
 ; Custom COPT replaces "ld hl,(ix+4); push hl" before a normal C stack-ABI
 ; call with CALL here. DE is caller-scratch under sdcc_iy --no-reg-params.
@@ -34,6 +60,22 @@ _netchesszx_asm_push_frame_arg:
     ld h, (ix + 5)
     push hl
     push de
+    ret
+
+; Custom COPT turns the 5-byte SDCC frame epilogue into JP here.
+_netchesszx_asm_leave_ix:
+    ld sp, ix
+    pop ix
+    ret
+
+; Custom COPT turns the 8-byte inline frame prologue (used where HL carries a
+; fastcall argument, so ___sdcc_enter_ix cannot run) into CALL here. Keeps
+; HL, DE and BC; IX points at the saved IX exactly as the inline form.
+_netchesszx_asm_enter_ix_hl:
+    ex (sp), ix
+    push ix
+    ld ix, 2
+    add ix, sp
     ret
 
 ; Fixed RESTORE RS state kernel. The event classifier has already proved
@@ -135,7 +177,7 @@ restore_step_reject:
 ; Compact ACK/NACK builder. Golden wire vectors, including 0 and 65535, live in
 ; tests/spectrum/test_session_outgoing.c::test_ack_nack. The normal SDCC/IY ABI
 ; leaves the text pointer at SP+2. Build into the inactive transport scratch,
-; then pass that pointer in HL to spectrum_net_send_text()'s fastcall ABI.
+; then pass that pointer in HL to the session ACK sender's fastcall ABI.
 _netchesszx_session_send_ack_move:
     ld bc, _NETCHESS_PROTO_ACK_PREFIX
     jr session_send_prefixed_text
@@ -162,7 +204,7 @@ session_send_prefixed_text:
     pop bc
     call session_reply_copyz
     pop hl
-    jp _spectrum_net_send_text
+    jp _netchesszx_session_send_ack_text
 
 session_reply_copyz:
     ld a, (bc)
@@ -173,8 +215,10 @@ session_reply_copyz:
     jr nz, session_reply_copyz
     ret
 
-_netchesszx_asm_direct_parse_role_owner:
-    ld hl, 2
+; Load the first two normal C stack arguments. CALL adds its own return
+; address, so the first argument is at SP+4 here.
+netchesszx_load_stack_args2:
+    ld hl, 4
     add hl, sp
     ld e, (hl)
     inc hl
@@ -183,7 +227,14 @@ _netchesszx_asm_direct_parse_role_owner:
     ld c, (hl)
     inc hl
     ld b, (hl)
+    ret
+
+_netchesszx_asm_direct_parse_role_owner:
+    call netchesszx_load_stack_args2
     ld l, 0
+    ld a, d                             ; null owner: missing prefix
+    or e
+    ret z
 
     ld a, (de)
     cp 'H'
@@ -248,15 +299,7 @@ _netchess_proto_copy_digits:
 
 cpb_load_args:
     ex af, af'
-    ld hl, 2
-    add hl, sp
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
+    call netchesszx_load_stack_args2
     inc hl
     ld a, (hl)
     or a
@@ -323,15 +366,7 @@ cpb_ret0:
     ret
 
 _netchess_proto_copy_rest:
-    ld hl, 2
-    add hl, sp
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
+    call netchesszx_load_stack_args2
     inc hl
     ld a, (hl)
     or a
@@ -482,15 +517,7 @@ ptd_store:
     ret
 
 _netchesszx_asm_timer_tick_one_second:
-    ld hl, 2
-    add hl, sp
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
+    call netchesszx_load_stack_args2
     inc hl
     ld a, (hl)
     inc hl
@@ -524,15 +551,7 @@ ttos_inc_second:
     ret
 
 _netchess_mqtt_session_parse_u16_token:
-    ld hl, 2
-    add hl, sp
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
+    call netchesszx_load_stack_args2
     push bc
     ld hl, 0
     ld b, 0
@@ -618,15 +637,7 @@ mqtt_strlen8_done:
     ret
 
 _netchesszx_asm_mqtt_copy:
-    ld hl, 2
-    add hl, sp
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
+    call netchesszx_load_stack_args2
     inc hl
     ld a, (hl)
     or a
@@ -638,31 +649,37 @@ _netchesszx_asm_mqtt_copy:
     ldir
     ret
 
+; uint8_t netchess_text_is(text, token): nonzero only when text == token.
+_netchess_text_is:
+    ld a, 1
+    jr after_prefix_mode
+; const char *netchess_after_prefix(text, prefix): tail or NULL.
 _netchess_after_prefix:
-    ld hl, 2
-    add hl, sp
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
-    inc hl
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    ex de, hl
+    xor a
+after_prefix_mode:
+    call netchesszx_load_stack_args2    ; DE = text, BC = prefix, A kept
+    ld h, a
 after_prefix_loop:
-    ld a, (hl)
+    ld a, (bc)
     or a
     jr z, after_prefix_match
-    ld e, a
-    ld a, (bc)
-    cp e
+    ld l, a
+    ld a, (de)
+    cp l
     jr nz, after_prefix_fail
-    inc hl
+    inc de
     inc bc
     jr after_prefix_loop
 after_prefix_match:
-    ld l, c
-    ld h, b
+    ld a, h
+    ex de, hl
+    or a
+    ret z
+    ld a, (hl)                          ; whole text: the tail must be empty
+    sub 1
+    sbc a, a
+    and 1
+    ld l, a
     ret
 after_prefix_fail:
     ld hl, 0
@@ -670,18 +687,8 @@ after_prefix_fail:
 
 _netchesszx_asm_net_copy:
     ; Memmove semantics are valid for every net_copy caller.
-    jr _netchesszx_asm_net_move
-
 _netchesszx_asm_net_move:
-    ld hl, 2
-    add hl, sp
-    ld e, (hl)
-    inc hl
-    ld d, (hl)
-    inc hl
-    ld c, (hl)
-    inc hl
-    ld b, (hl)
+    call netchesszx_load_stack_args2
     inc hl
     push bc
     push de
@@ -711,3 +718,61 @@ nm_backward:
     pop de
     lddr
     ret
+
+IFDEF NETCHESSZX_SDCC_IY
+IFNDEF NETCHESSZX_SPECTRANEXT
+; Pop one already-queued Classic/Next DIRECT payload without loading the cold
+; DIRECT overlay. The caller stores destination/capacity in overlay context.
+; Return L=link id. IY/IX and the caller's stack are preserved.
+_netchesszx_asm_direct_pop:
+    ld a, (_direct_rx_head)
+    or a
+    jr nz, direct_pop_not_first
+    ld hl, _direct_rx_payload
+    ld a, (_direct_rx_link)
+    jr direct_pop_selected
+direct_pop_not_first:
+    dec a
+    jr nz, direct_pop_third
+    ld hl, _direct_rx_payload2
+    ld a, (_direct_rx_link2)
+    jr direct_pop_selected
+direct_pop_third:
+    ld hl, direct_rx_spill
+    ld a, (direct_rx_spill + 48)
+direct_pop_selected:
+    push af
+    ld a, (_spectrum_overlay_context + 2)
+    or a
+    jr z, direct_pop_advance
+    ld c, a
+    ld de, (_spectrum_overlay_context)
+direct_pop_copy:
+    dec c
+    jr z, direct_pop_terminate
+    ld a, (hl)
+    or a
+    jr z, direct_pop_terminate
+    ld (de), a
+    inc hl
+    inc de
+    jr direct_pop_copy
+direct_pop_terminate:
+    xor a
+    ld (de), a
+direct_pop_advance:
+    ld hl, _direct_rx_count
+    dec (hl)
+    ld hl, _direct_rx_head
+    inc (hl)
+    ld a, (hl)
+    cp 3
+    jr c, direct_pop_done
+    ld (hl), 0
+direct_pop_done:
+    pop af
+    ld l, a
+    ret
+netchesszx_asm_direct_pop_end:
+ENDIF
+ENDIF

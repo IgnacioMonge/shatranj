@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+uint8_t spectrum_input_parse_move(const char *text, char *move);
 
 void netchesszx_input_edit_render_overlay(void);
 void netchesszx_input_edit_begin_empty_overlay(void);

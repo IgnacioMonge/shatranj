@@ -1,15 +1,33 @@
 #include "common/protocol/game_protocol.h"
 #include "common/protocol/game_protocol_internal.h"
+#include "common/protocol/mqtt_session_protocol.h"
 
-static uint8_t proto_parse_ply_tail_after_prefix(const char *p,
-                                                 char *ply,
-                                                 uint8_t ply_cap,
-                                                 char *tail,
-                                                 uint8_t tail_cap)
+uint16_t netchess_proto_takeback_ply(const char *rx) NETCHESSZX_FASTCALL
 {
-    uint8_t n = netchess_proto_copy_digits(&p, ply, ply_cap);
+    const char *tail;
+    uint16_t ply;
 
-    if (n == 0u) {
+    if (rx == 0) {
+        return 0u;
+    }
+    tail = netchess_after_prefix(rx, *rx == 'C'
+        ? NETCHESS_PROTO_CANCEL_TAKEBACK_PREFIX : NETCHESS_PROTO_TAKEBACK_PREFIX);
+    if (tail != 0) {
+        tail = netchess_mqtt_session_parse_u16_token(tail, &ply);
+        if (tail != 0 && *tail == '\0') {
+            return ply;
+        }
+    }
+    return 0u;
+}
+
+uint8_t netchess_proto_parse_ply_tail(const char *p,
+                                      char *ply,
+                                      uint8_t ply_cap,
+                                      char *tail,
+                                      uint8_t tail_cap)
+{
+    if (p == 0 || netchess_proto_copy_digits(&p, ply, ply_cap) == 0u) {
         return 0u;
     }
     if (*p == '\0') {
@@ -37,21 +55,17 @@ uint8_t netchess_proto_is_nack(const char *rx) NETCHESSZX_FASTCALL
 }
 #endif
 
+/* The Spectrum calls netchess_proto_parse_ply_tail() directly. */
+#ifndef NETCHESSZX_SDCC_IY
 uint8_t netchess_proto_parse_ack(const char *rx,
                                  char *ply,
                                  uint8_t ply_cap,
                                  char *notation,
                                  uint8_t notation_cap)
 {
-    const char *p = netchess_after_prefix(rx, NETCHESS_PROTO_ACK_PREFIX);
-    if (p == 0) {
-        return 0u;
-    }
-    return proto_parse_ply_tail_after_prefix(p,
-                                             ply,
-                                             ply_cap,
-                                             notation,
-                                             notation_cap);
+    return netchess_proto_parse_ply_tail(
+        netchess_after_prefix(rx, NETCHESS_PROTO_ACK_PREFIX),
+        ply, ply_cap, notation, notation_cap);
 }
 
 uint8_t netchess_proto_parse_nack(const char *rx,
@@ -60,16 +74,11 @@ uint8_t netchess_proto_parse_nack(const char *rx,
                                   char *reason,
                                   uint8_t reason_cap)
 {
-    const char *p = netchess_after_prefix(rx, NETCHESS_PROTO_NACK_PREFIX);
-    if (p == 0) {
-        return 0u;
-    }
-    return proto_parse_ply_tail_after_prefix(p,
-                                             ply,
-                                             ply_cap,
-                                             reason,
-                                             reason_cap);
+    return netchess_proto_parse_ply_tail(
+        netchess_after_prefix(rx, NETCHESS_PROTO_NACK_PREFIX),
+        ply, ply_cap, reason, reason_cap);
 }
+#endif
 
 #ifndef NETCHESSZX_SDCC_IY
 uint8_t netchess_proto_parse_game_start(const char *rx,

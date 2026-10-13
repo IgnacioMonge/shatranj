@@ -2,6 +2,7 @@
 #define NETCHESSZX_SPECTRUM_SESSION_TIMING_H
 
 #include <stdint.h>
+#include "common/protocol/game_protocol.h"
 
 /* The application counters advance once per empty transport read.  DIRECT
    on SpectraNext yields one frame; every other session read yields two. */
@@ -65,6 +66,10 @@ extern uint8_t net_uart_direct_idle_ticks;
 #define NETCHESSZX_SESSION_IS_60HZ \
     (NETCHESSZX_SESSION_DIRECT_3S_POLLS == \
      NETCHESSZX_SESSION_DIRECT_3S_POLLS_AT(60u))
+#define NETCHESSZX_SESSION_FRAME_RATE \
+    (NETCHESSZX_SESSION_IS_60HZ ? 60u : 50u)
+#define NETCHESSZX_SESSION_DECISION_FRAMES \
+    (NETCHESSZX_SESSION_FRAME_RATE * NETCHESS_PROTO_DECISION_SECONDS)
 #define NETCHESSZX_SESSION_DIRECT_REPLY_POLLS \
     (NETCHESSZX_SESSION_IS_60HZ \
          ? NETCHESSZX_SESSION_DIRECT_REPLY_POLLS_AT(60u) \

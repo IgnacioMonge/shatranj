@@ -10,7 +10,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from tools.check_tap_image import TapImageError, validate_image  # noqa: E402
+from tools.check_tap_image import (  # noqa: E402
+    TapImageError, basic_loader, code_pair, tape_header, validate_image,
+)
+from tools.package_classic_boot import package_tap  # noqa: E402
 from tools.gen_overlay_atlas import (  # noqa: E402
     FINGERPRINT_LEN,
     FINGERPRINT_OFFSET,
@@ -50,9 +53,27 @@ def code_tap(code: bytes, org: int = ORG) -> bytes:
     return tap_block(0, header) + tap_block(0xFF, code)
 
 
+def standard_tap(code: bytes) -> bytes:
+    loader = basic_loader(ORG - 1, 1, ORG)
+    header = tape_header(0, "Loader", len(loader), 10, len(loader))
+    return tap_block(0, header) + tap_block(0xFF, loader) + code_tap(code)
+
+
 def expect_rejected(code: bytes, tap: bytes, message: str) -> None:
     try:
         validate_image(SYMBOLS, code, tap, ORG)
+    except TapImageError:
+        return
+    raise AssertionError(message)
+
+
+def expect_boot_rejected(code: bytes, boot: bytes, tap: bytes, message: str) -> None:
+    try:
+        validate_image(
+            SYMBOLS, code, tap, ORG,
+            boot_code=boot, boot_org=0x6800, clear_address=0x67FF,
+            entry_address=ORG,
+        )
     except TapImageError:
         return
     raise AssertionError(message)
@@ -85,6 +106,27 @@ def main() -> int:
         split_bss_symbols, code, code_tap(code), ORG)
     assert split_image.bss_bytes == 2
 
+    boot = bytes(range(148))
+    original_tap = standard_tap(code)
+    boot_tap = package_tap(original_tap, boot)
+    boot_image = validate_image(
+        SYMBOLS, code, boot_tap, ORG,
+        boot_code=boot, boot_org=0x6800, clear_address=0x67FF,
+        entry_address=ORG,
+    )
+    assert boot_image.payload == code
+    assert len(boot_tap) - len(original_tap) == len(boot) + 30
+
+    # A second CODE block is useful only when BASIC loads the capsule first.
+    loader = basic_loader(0x67FF, 2, ORG)
+    basic = tap_block(0, tape_header(0, "Loader", len(loader), 10, len(loader))) \
+        + tap_block(0xFF, loader)
+    expect_boot_rejected(
+        code, boot,
+        basic + code_tap(code) + code_pair("BOOT", boot, 0x6800),
+        "resident-before-capsule TAP was accepted",
+    )
+
     expect_rejected(
         code,
         code_tap(code[:2]),
@@ -112,6 +154,14 @@ def main() -> int:
         tmp = Path(tmp_name)
         source = tmp / "source.c"
         source.write_text("first\n", encoding="ascii")
+        next_source = tmp / "next" / "screen.asm"
+        next_source.parent.mkdir()
+        next_source.write_text("first", encoding="ascii")
+        classic_binding = binding_digest([tmp], [], [next_source.parent])
+        next_binding = binding_digest([tmp], [])
+        next_source.write_text("second", encoding="ascii")
+        assert binding_digest([tmp], [], [next_source.parent]) == classic_binding
+        assert binding_digest([tmp], []) != next_binding
         binding = binding_digest([source], ["NET_BACKEND=spectranext"])
         fingerprint = atlas_fingerprint(entries, binding)
         header = build_header(entries, binding)

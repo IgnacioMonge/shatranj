@@ -43,6 +43,7 @@ PUBLIC _spectrum_info_line
 EXTERN _time_config_step_ovl_entry
 EXTERN _time_config_init_ovl_entry
 EXTERN _time_config_ui_ovl_entry
+EXTERN _time_config_commit_ovl_entry
 
 CTX_KEY    EQU 0x5fe0
 CTX_FORCE  EQU 0x5fe1
@@ -50,6 +51,9 @@ CTX_ACTION EQU 0x5fe4
 CTX_NOTICE EQU 0x5fe5
 CTX_FLAGS  EQU 0x5fe6
 ROW_TIME   EQU 4
+ROW_NAME   EQU 11
+
+INCLUDE "asm/app/player_name_layout.inc"
 
 test_start:
     ld sp, 0xff00
@@ -58,11 +62,51 @@ test_start:
 
     ; SAVE success reinitialises a complete menu as clean EDIT/START with
     ; START focused. The app restores visible_mask before invoking this UI.
+    ld a, 'X'
+    ld (PEER_NAME), a
+    ld (PLAYER_NAME_LINE), a
+    ld a, 3
+    ld (CTX_KEY), a
+    call _time_config_init_ovl_entry
+    ld a, (PEER_NAME)
+    or a
+    jp nz, test_bad_name_prefix
+    ld hl, PLAYER_NAME_LINE
+    ld de, test_name_prefix
+    ld b, 6
+test_check_name_prefix:
+    ld a, (de)
+    cp (hl)
+    jp nz, test_bad_name_prefix
+    inc hl
+    inc de
+    djnz test_check_name_prefix
+    ; Init keeps a valid saved name and drops a damaged one.
+    ld hl, test_name_valid
+    call test_init_with_name
+    ld a, (PLAYER_NAME)
+    cp 'A'
+    jp nz, test_bad_name_prefix
+    ld a, (PLAYER_NAME + 9)
+    cp 'Z'
+    jp nz, test_bad_name_prefix
+    ld hl, test_name_damaged
+    call test_init_with_name
+    ld a, (PLAYER_NAME)
+    or a
+    jp nz, test_bad_name_prefix
+    ; Eleven valid characters and no NUL: the tail lost its terminator, so
+    ; the name is dropped, not truncated, and the scan stops at the tail.
+    ld hl, test_name_unterminated
+    call test_init_with_name
+    ld a, (PLAYER_NAME)
+    or a
+    jp nz, test_bad_name_prefix
     ld a, 3
     ld (CTX_KEY), a
     call _time_config_init_ovl_entry
     ld hl, (_setup_defined_mask)
-    ld de, 0x07ff
+    ld de, 0x0fff
     or a
     sbc hl, de
     jp nz, test_bad_save_success
@@ -82,7 +126,7 @@ test_start:
     ld a, (CTX_FLAGS)
     cp 0x30
     jp nz, test_bad_save_success
-    ld hl, 0x07ff
+    ld hl, 0x0fff
     ld (_setup_visible_mask), hl
     ld a, 0x20
     ld (CTX_FLAGS), a
@@ -103,7 +147,7 @@ test_start:
     ld (CTX_KEY), a
     call _time_config_init_ovl_entry
     ld hl, (_setup_defined_mask)
-    ld de, 0x07ff
+    ld de, 0x0fff
     or a
     sbc hl, de
     jp nz, test_bad_save_failure
@@ -116,7 +160,7 @@ test_start:
     ld a, (_setup_action_focus)
     or a
     jp nz, test_bad_save_failure
-    ld hl, 0x07ff
+    ld hl, 0x0fff
     ld (_setup_visible_mask), hl
     ld a, 0x20
     ld (CTX_FLAGS), a
@@ -174,7 +218,7 @@ test_start:
     ldir
     ld a, ROW_TIME
     ld (_setup_cursor), a
-    ld hl, 0x07ff
+    ld hl, 0x0fff
     ld (_setup_visible_mask), hl
     ld a, 1
     ld (_netchesszx_rtc_available), a
@@ -208,6 +252,41 @@ test_start:
     ld a, (hl)
     cp 92
     jp nz, test_bad_time_marker
+
+    ; Accepting RTC paints TIME from the step itself, already without its
+    ; marker: the resident's timezone action reuses the overlay context
+    ; (RTC probe, clock sync) before it asks for the repaint.
+    ld a, ROW_TIME
+    ld (_setup_cursor), a
+    xor a
+    ld (_setup_time_focus), a
+    ld (_setup_room_editing), a
+    ld hl, 0
+    ld (last_time_line), hl
+    ld a, 13
+    ld (CTX_KEY), a
+    call _time_config_step_ovl_entry
+    ld a, (_setup_cursor)
+    cp ROW_NAME
+    jp nz, test_bad_rtc_accept
+    ld a, (CTX_ACTION)
+    cp 5
+    jp nz, test_bad_rtc_accept
+    ; The TIME line itself (not ACTION, drawn after it) has neither marker.
+    ld hl, (last_time_line)
+    ld a, h
+    or l
+    jp z, test_bad_rtc_accept
+    ld de, 6
+    add hl, de
+    ld a, (hl)
+    cp ' '
+    jp nz, test_bad_rtc_accept
+    ld de, 10
+    add hl, de
+    ld a, (hl)
+    cp ' '
+    jp nz, test_bad_rtc_accept
 
     ; ENTER on a valid displayed UTC value opens it for editing. This must
     ; work even when RTC is available and UTC is the selected fallback.
@@ -260,6 +339,13 @@ test_start:
     ld a, (CTX_ACTION)
     cp 5
     jp nz, test_bad_timezone_action
+    ; Accepting TIME hands focus to NAME, the next row on screen.
+    ld a, (_setup_cursor)
+    cp ROW_NAME
+    jp nz, test_bad_timezone_action
+    ld a, (_setup_defined_mask)
+    and 0x10
+    jp z, test_bad_timezone_action
 
     ; An invalid displayed UTC value still opens the editor.
     ld hl, test_timezone_invalid
@@ -326,7 +412,51 @@ test_start:
     or a
     jp nz, test_bad_rtc_typing
 
+    ; Committing Setup transfers the choices, without keeping a second copy.
+    ld a, 1
+    ld (_setup_choice), a
     xor a
+    ld (_setup_choice + 1), a
+    ld (_setup_choice + 2), a
+    call _time_config_commit_ovl_entry
+    ld a, (_netchesszx_session_role)
+    dec a
+    jp nz, test_bad_identity
+    ld a, (_netchesszx_transport)
+    or a
+    jp nz, test_bad_identity
+    ld a, (_netchesszx_local_color)
+    dec a
+    jp nz, test_bad_identity
+    ld a, (_netchesszx_host_color_ready)
+    or a
+    jp nz, test_bad_identity
+
+    xor a
+    ld (_setup_choice), a
+    ld a, 1
+    ld (_setup_choice + 1), a
+    ld (_setup_choice + 2), a
+    call _time_config_commit_ovl_entry
+    ld a, (_netchesszx_local_color)
+    dec a
+    jp nz, test_bad_identity
+    ld a, (_netchesszx_host_color_ready)
+    dec a
+    jp nz, test_bad_identity
+
+    ; Reused workspace rebuilds from the current identity, not old choices.
+    xor a
+    ld (_setup_choice + 2), a
+    ld (CTX_KEY), a
+    call _time_config_init_ovl_entry
+    ld a, (_setup_choice + 2)
+    dec a
+    jp nz, test_bad_identity
+    xor a
+    jr test_store_result
+
+test_bad_identity: ld a, 10
     jr test_store_result
 
 test_bad_accept:      ld a, 1
@@ -346,10 +476,23 @@ test_bad_save_action:  ld a, 7
 test_bad_timezone_action: ld a, 8
     jr test_store_result
 test_bad_time_marker: ld a, 9
+    jr test_store_result
+test_bad_name_prefix: ld a, 11
+    jr test_store_result
+test_bad_rtc_accept: ld a, 12
 test_store_result:
     ld (test_result), a
 test_done:
     jp test_done
+
+; HL = name to install before a SAVE-success init.
+test_init_with_name:
+    ld de, PLAYER_NAME
+    ld bc, 11
+    ldir
+    ld a, 3
+    ld (CTX_KEY), a
+    jp _time_config_init_ovl_entry
 
 _spectrum_gui_edit_bind:
     ld (_edit_buf), hl
@@ -370,19 +513,39 @@ _spectrum_append_u16:
     ret
 _spectrum_info_line:
     ld (last_info_line), hl
+    ; Also keep the last TIME line: ACTION is drawn after it in one UI call.
+    push hl
+    inc hl
+    ld a, (hl)
+    cp 'T'
+    jr nz, info_line_done
+    inc hl
+    ld a, (hl)
+    cp 'I'
+    jr nz, info_line_done
+    pop hl
+    ld (last_time_line), hl
+    ret
+info_line_done:
+    pop hl
     ret
 
+test_name_prefix:      DEFB "MNAME "
+test_name_valid:       DEFB "A0-9_MNZYZ",0
+test_name_damaged:     DEFB "IGn",0
+test_name_unterminated: DEFB "ABCDEFGHIJK"
 test_timezone_valid:   DEFB "+02",0
 test_timezone_invalid: DEFB "+14",0
 test_result: DEFB 0xff
 edit_key_seen: DEFB 0
 last_info_line: DEFW 0
+last_time_line: DEFW 0
 _setup_choice: DEFS 7,0
 _setup_focus_choice: DEFS 7,0
 _setup_focus_board_theme: DEFB 0
 _setup_game_focus: DEFB 0
 _setup_defined_mask: DEFW 0
-_setup_visible_mask: DEFW 0x07ff
+_setup_visible_mask: DEFW 0x0fff
 _setup_cursor: DEFB 0
 _setup_room_editing: DEFB 0
 _setup_edit_row: DEFB 0

@@ -33,8 +33,14 @@ static uint16_t uart_release_frame[2];
 static uint8_t uart_release_count;
 static uint8_t uart_release_index;
 static uint16_t frame_count;
+static uint16_t uart_read_count;
+static uint8_t uart_continuous;
+static uint8_t uart_continuous_byte;
+static uint16_t cancel_frame;
 static char uart_tx[96];
 static size_t uart_tx_len;
+#define UART_READ_GUARD 1024u
+#define EXPECTED_UART_DRAIN_BUDGET 255u
 
 void reset_line_buf(void)
 {
@@ -45,6 +51,9 @@ void reset_line_buf(void)
 void net_wait_frame(void) { ++frame_count; }
 uint8_t spectrum_uart_ready(void)
 {
+    if (uart_continuous) {
+        return (uint8_t)(uart_read_count < UART_READ_GUARD);
+    }
     if (uart_release_index < uart_release_count &&
         uart_feed_pos == uart_release_pos[uart_release_index]) {
         if (frame_count < uart_release_frame[uart_release_index]) {
@@ -54,7 +63,14 @@ uint8_t spectrum_uart_ready(void)
     }
     return uart_feed_pos < uart_feed_len;
 }
-uint8_t spectrum_uart_read(void) { return uart_feed[uart_feed_pos++]; }
+uint8_t spectrum_uart_read(void)
+{
+    ++uart_read_count;
+    if (uart_continuous) {
+        return uart_continuous_byte;
+    }
+    return uart_feed[uart_feed_pos++];
+}
 static uint8_t capture_tx(const uint8_t *data, size_t len)
 {
     if (uart_tx_len + len >= sizeof(uart_tx)) {
@@ -77,7 +93,11 @@ uint8_t spectrum_uart_send_crlf(void)
 {
     return capture_tx((const uint8_t *)"\r\n", 2u);
 }
-uint8_t spectrum_key_poll(void) { return 0u; }
+uint8_t spectrum_key_poll(void)
+{
+    return cancel_frame != 0u && frame_count >= cancel_frame
+        ? DIRECT_KEY_CANCEL : 0u;
+}
 void spectrum_net_guard_wait(uint16_t frames) { (void)frames; }
 uint8_t spectrum_net_at_cmd(const char *cmd, uint16_t frames)
 {
@@ -115,6 +135,9 @@ static void reset_state(void)
     uart_release_count = 0u;
     uart_release_index = 0u;
     frame_count = 0u;
+    uart_read_count = 0u;
+    uart_continuous = 0u;
+    cancel_frame = 0u;
     uart_tx_len = 0u;
     uart_tx[0] = '\0';
     reset_line_buf();
@@ -199,6 +222,93 @@ static void test_three_lines_during_send_wait(void)
           "send burst: second payload");
     check(dequeue(out, sizeof(out)) == 0u && strcmp(out, "THREE") == 0,
           "send burst: third payload");
+}
+
+/* Local TX or an intruder close may run after RX stopped inside +IPD. */
+static void test_commands_preserve_partial_header(void)
+{
+    static const uint8_t send_reply[] =
+        "12:MOVE 1 e2e4\n>\r\nSEND OK\r\n";
+    static const uint8_t close_reply[] = "12:MOVE 1 e2e4\nOK\r\n";
+    char out[SPECTRUM_NET_PAYLOAD_MAX];
+    uint8_t close;
+
+    for (close = 0u; close < 2u; ++close) {
+        reset_state();
+        feed_str("+IPD,0,");
+        uart_feed = close ? close_reply : send_reply;
+        uart_feed_len = strlen((const char *)uart_feed);
+        if (close) {
+            direct_intruder_link = 2u;
+            direct_reject_intruder_ovl();
+        } else {
+            strcpy(direct_tx_scratch, "PING");
+            check(direct_send_payload_ovl(direct_tx_scratch, active_link),
+                  "partial header: local send succeeds");
+        }
+        check(dequeue(out, sizeof(out)) == 0u &&
+                  strcmp(out, "MOVE 1 e2e4") == 0,
+              "partial header: command preserves incoming MOVE");
+        check(strcmp(uart_tx, close ? "AT+CIPCLOSE=2\r\n"
+                                   : "AT+CIPSEND=0,5\r\nPING\n") == 0,
+              "partial header: command bytes unchanged");
+    }
+}
+
+/* A guest that re-announced HELLO before this host answered leaves one HELLO
+   queued; its HELLO + MACH + MNAME answer then needed four slots and MNAME,
+   the last line, was dropped (Classic host vs Next guest). Identical HELLOs
+   from the same link share one slot; any other line still queues. */
+static void test_duplicate_hello_keeps_identity_burst(void)
+{
+    char out[SPECTRUM_NET_PAYLOAD_MAX];
+    uint8_t head;
+
+    for (head = 0u; head < SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT; ++head) {
+        reset_state();
+        direct_rx_head = head;
+        feed_str("+IPD,0,19:HELLO DIRECT GUEST\n");
+        /* The duplicate arrives split across blocks. */
+        feed_str("+IPD,0,7:HELLO D");
+        feed_str("+IPD,0,12:IRECT GUEST\n");
+        check(direct_rx_count == 1u, "dup hello: duplicate shares slot");
+        feed_str("+IPD,0,40:HELLO DIRECT GUEST\nMACH NXT\nMNAME NEXTY\n");
+        check(direct_rx_count == 3u, "dup hello: identity burst fits");
+        check(dequeue(out, sizeof(out)) == 0u &&
+                  strcmp(out, "HELLO DIRECT GUEST") == 0,
+              "dup hello: one HELLO kept");
+        check(dequeue(out, sizeof(out)) == 0u && strcmp(out, "MACH NXT") == 0,
+              "dup hello: MACH kept");
+        check(dequeue(out, sizeof(out)) == 0u &&
+                  strcmp(out, "MNAME NEXTY") == 0,
+              "dup hello: MNAME kept");
+        check(dequeue(out, sizeof(out)) == (uint8_t)SPECTRUM_NET_READ_TIMEOUT,
+              "dup hello: queue drained");
+    }
+}
+
+/* Only an identical HELLO is redundant: a conflicting HELLO must reach the
+   session (it answers BYE), and a HELLO after another frame still queues. */
+static void test_distinct_hello_still_queues(void)
+{
+    char out[SPECTRUM_NET_PAYLOAD_MAX];
+
+    reset_state();
+    feed_str("+IPD,0,29:HELLO DIRECT HOST WHITE=HOST\n");
+    feed_str("+IPD,0,30:HELLO DIRECT HOST WHITE=GUEST\n");
+    check(direct_rx_count == 2u, "distinct hello: conflicting HELLO queued");
+    check(dequeue(out, sizeof(out)) == 0u &&
+              strcmp(out, "HELLO DIRECT HOST WHITE=HOST") == 0,
+          "distinct hello: first HELLO");
+    check(dequeue(out, sizeof(out)) == 0u &&
+              strcmp(out, "HELLO DIRECT HOST WHITE=GUEST") == 0,
+          "distinct hello: conflicting HELLO kept");
+
+    reset_state();
+    feed_str("+IPD,0,19:HELLO DIRECT GUEST\n");
+    feed_str("+IPD,0,5:PING\n");
+    feed_str("+IPD,0,19:HELLO DIRECT GUEST\n");
+    check(direct_rx_count == 3u, "distinct hello: non-adjacent HELLO queued");
 }
 
 static void test_max_payload_in_spill(void)
@@ -396,6 +506,51 @@ static void test_two_frame_read_cadence(void)
           "two-frame read: next poll delivers queued payload");
 }
 
+static void test_bounded_uart_drain(void)
+{
+    static uint8_t split[250u + sizeof("+IPD,0,5:PING\n") - 1u];
+    static const uint8_t recovery[] = "\nOK\n";
+    char out[SPECTRUM_NET_PAYLOAD_MAX];
+
+    reset_state();
+    memset(split, '\r', 250u);
+    memcpy(split + 250u, "+IPD,0,5:PING\n",
+           sizeof("+IPD,0,5:PING\n") - 1u);
+    uart_feed = split;
+    uart_feed_len = sizeof(split);
+    check(direct_drain_uart_ovl() == 0u &&
+              uart_feed_pos == EXPECTED_UART_DRAIN_BUDGET,
+          "DIRECT drain stops at its byte budget");
+    check(direct_drain_uart_ovl() == 2u &&
+              dequeue(out, sizeof(out)) == 0u && strcmp(out, "PING") == 0,
+          "+IPD parser survives a drain-budget boundary");
+
+    reset_state();
+    uart_continuous = 1u;
+    uart_continuous_byte = 0u;
+    cancel_frame = 1u;
+    check(direct_wait_for_ok_ovl(4u, 1u) == SPECTRUM_LINK_CANCELLED,
+          "continuous NUL garbage cannot hide cancellation");
+    check(uart_read_count == EXPECTED_UART_DRAIN_BUDGET && frame_count == 1u,
+          "cancellation advances after one bounded UART pass");
+
+    uart_continuous = 0u;
+    uart_feed = recovery;
+    uart_feed_len = sizeof(recovery) - 1u;
+    uart_feed_pos = 0u;
+    check(direct_drain_uart_ovl() == 1u && strcmp(line_buf, "OK") == 0,
+          "overlong NUL garbage recovers on the following line");
+
+    reset_state();
+    uart_continuous = 1u;
+    uart_continuous_byte = (uint8_t)'X';
+    check(!direct_wait_for_prompt_ovl(2u),
+          "continuous garbage cannot hide DIRECT prompt timeout");
+    check(uart_read_count == (uint16_t)(2u * EXPECTED_UART_DRAIN_BUDGET) &&
+              frame_count == 2u,
+          "DIRECT prompt timeout advances once per bounded pass");
+}
+
 static void test_impossible_block_does_not_swallow_prompt(void)
 {
     static const uint8_t replies[] = "+IPD,0,2049:>\r\nSEND OK\r\n";
@@ -586,6 +741,9 @@ int main(void)
 {
     test_coalesced_lines();
     test_three_lines_during_send_wait();
+    test_commands_preserve_partial_header();
+    test_duplicate_hello_keeps_identity_burst();
+    test_distinct_hello_still_queues();
     test_max_payload_in_spill();
     test_split_line();
     test_split_line_different_link();
@@ -593,6 +751,7 @@ int main(void)
     test_invalid_line_state_crosses_ipd_blocks();
     test_large_block_header();
     test_two_frame_read_cadence();
+    test_bounded_uart_drain();
     test_impossible_block_does_not_swallow_prompt();
     test_dequeue_keeps_partial();
     test_intruder_gets_busy_before_close();

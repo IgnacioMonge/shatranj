@@ -1,7 +1,9 @@
 #include "spectrum/overlay/overlay_api.h"
 #include "spectrum/transport/mqtt_min.h"
 #include "spectrum/transport/net.h"
+#include "spectrum/config/session.h"
 #include "spectrum/lowram_map.h"
+#include "spectrum/platform/text.h"
 
 #ifdef NETCHESSZX_SPECTRANEXT
 
@@ -12,6 +14,7 @@
 
 #define WAIT_LONG 2000u
 #define DIRECT_KEY_CANCEL 0x8au
+#define DIRECT_REARM_FRAMES 50u
 #define DIRECT_LISTENER_ACTIVE 0xffu
 #define DIRECT_LISTENER_RETRY 0xfeu
 #define DIRECT_CTX_PTR_LO 0u
@@ -30,14 +33,40 @@ extern void net_wait_frame(void);
 
 #ifdef NETCHESSZX_HOST_TEST
 static char spxn_direct_spill[SPECTRUM_NET_PAYLOAD_MAX + 1u];
-static uint8_t spxn_direct_scratch[SPECTRUM_MQTT_PACKET_MAX];
+extern uint8_t spxn_direct_pending_cursor;
+extern uint8_t spxn_direct_pending_length;
+extern uint8_t spxn_direct_pending_scratch[];
 char *direct_host_test_ptr;
 #define SPXN_DIRECT_SPILL spxn_direct_spill
-#define SPXN_DIRECT_SCRATCH spxn_direct_scratch
+#define SPXN_DIRECT_PENDING_CURSOR spxn_direct_pending_cursor
+#define SPXN_DIRECT_PENDING_LENGTH spxn_direct_pending_length
+#define SPXN_DIRECT_SCRATCH spxn_direct_pending_scratch
 #define direct_ctx_ptr(ctx) ((void)(ctx), direct_host_test_ptr)
 #else
 #define SPXN_DIRECT_SPILL ((char *)SPECTRUM_MQTT_RUNTIME_ASSETS_END)
-#define SPXN_DIRECT_SCRATCH ((uint8_t *)SPECTRUM_MQTT_PACKET_SCRATCH)
+#define SPXN_DIRECT_SPILL_END \
+    (SPECTRUM_MQTT_RUNTIME_ASSETS_END + SPECTRUM_NET_PAYLOAD_MAX + 1u)
+#if SPXN_DIRECT_SPILL_END != \
+    NETCHESSZX_LOWRAM_SPXN_DIRECT_PENDING_CURSOR_ADDR
+#error "DIRECT pending cursor no longer follows spill"
+#endif
+#if NETCHESSZX_LOWRAM_SPXN_DIRECT_PENDING_DATA_ADDR != \
+    (NETCHESSZX_LOWRAM_SPXN_DIRECT_PENDING_LENGTH_ADDR + 1u)
+#error "DIRECT pending data no longer follows pending state"
+#endif
+/* The staged recv reuses the inactive MQTT stream, which the player identity
+   follows (and net.c keeps the identity below the MQTT packet scratch). */
+#if (NETCHESSZX_LOWRAM_SPXN_DIRECT_PENDING_DATA_ADDR + \
+     SPECTRUM_MQTT_PACKET_MAX) > \
+    NETCHESSZX_LOWRAM_PLAYER_NAME_LINE_ADDR
+#error "DIRECT pending data overlaps the player identity"
+#endif
+#define SPXN_DIRECT_PENDING_CURSOR \
+    (*(uint8_t *)NETCHESSZX_LOWRAM_SPXN_DIRECT_PENDING_CURSOR_ADDR)
+#define SPXN_DIRECT_PENDING_LENGTH \
+    (*(uint8_t *)NETCHESSZX_LOWRAM_SPXN_DIRECT_PENDING_LENGTH_ADDR)
+#define SPXN_DIRECT_SCRATCH \
+    ((uint8_t *)NETCHESSZX_LOWRAM_SPXN_DIRECT_PENDING_DATA_ADDR)
 #define direct_ctx_ptr(ctx) \
     ((char *)((uint16_t)(ctx)[DIRECT_CTX_PTR_LO] | \
               ((uint16_t)(ctx)[DIRECT_CTX_PTR_HI] << 8)))
@@ -99,13 +128,33 @@ static void spxn_direct_feed_ovl(uint8_t c)
     slot[direct_rx_payload_len++] = (char)c;
 }
 
+static uint8_t spxn_direct_drain_scratch_ovl(uint8_t cursor,
+                                             uint8_t length)
+{
+    while (length != 0u &&
+           direct_rx_count < SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT) {
+        spxn_direct_feed_ovl(SPXN_DIRECT_SCRATCH[cursor]);
+        ++cursor;
+        --length;
+    }
+    SPXN_DIRECT_PENDING_CURSOR = length != 0u ? cursor : 0u;
+    SPXN_DIRECT_PENDING_LENGTH = length;
+    return direct_rx_count != 0u;
+}
+
 /* One poll grants at most one recv. If both POLLIN and HUP are present, read
    first and leave the stream open until a later poll reports EOF; otherwise a
    short receive buffer would lose the final application bytes. */
 static uint8_t spxn_direct_drain_ovl(void)
 {
-    int16_t flags = spxn_poll();
+    int16_t flags;
 
+    if (SPXN_DIRECT_PENDING_LENGTH != 0u) {
+        return spxn_direct_drain_scratch_ovl(
+            SPXN_DIRECT_PENDING_CURSOR, SPXN_DIRECT_PENDING_LENGTH);
+    }
+
+    flags = spxn_poll();
     if (flags < 0) {
         direct_link_closed = 1u;
         return 0u;
@@ -119,18 +168,16 @@ static uint8_t spxn_direct_drain_ovl(void)
     if ((flags & SPXN_POLLIN) != 0) {
         int16_t got = spxn_recv(SPXN_DIRECT_SCRATCH,
                                 SPECTRUM_MQTT_PACKET_MAX);
-        uint16_t i;
 
         if (got < 0) {
             direct_link_closed = 1u;
             return 0u;
         }
-        for (i = 0u; i < (uint16_t)got; ++i) {
-            spxn_direct_feed_ovl(SPXN_DIRECT_SCRATCH[i]);
-        }
         if (got == 0) {
             direct_link_closed = 1u;
+            return 0u;
         }
+        (void)spxn_direct_drain_scratch_ovl(0u, (uint8_t)got);
         /* POLLIN|POLLHUP is intentionally not closed here: the next poll
            drains any bytes that did not fit in this receive. */
         return direct_rx_count != 0u;
@@ -144,6 +191,8 @@ static uint8_t spxn_direct_drain_ovl(void)
 static uint8_t spxn_direct_listen_ovl(void)
 {
     spxn_close();
+    SPXN_DIRECT_PENDING_CURSOR = 0u;
+    SPXN_DIRECT_PENDING_LENGTH = 0u;
     active_link = DIRECT_LISTENER_RETRY;
     direct_link_closed = 1u;
     if (spxn_listen(netchesszx_direct_port) != SPXN_OK) {
@@ -180,40 +229,54 @@ uint8_t direct_connect_ovl(void)
 uint8_t direct_wait_pc_connect_ovl(void)
 {
     uint16_t frames = WAIT_LONG;
+    uint8_t rearm = 0u;
 
-    if (active_link == DIRECT_LISTENER_RETRY &&
-        !spxn_direct_listen_ovl()) {
-        return 0u;
+    if (active_link != DIRECT_LISTENER_RETRY) {
+        active_link = DIRECT_LISTENER_ACTIVE;
     }
-    active_link = DIRECT_LISTENER_ACTIVE;
     while (frames-- != 0u) {
-        int16_t flags = spxn_poll();
+        int16_t flags;
 
         if (spectrum_key_poll() == DIRECT_KEY_CANCEL) {
             spxn_close();
             active_link = DIRECT_LISTENER_RETRY;
             return SPECTRUM_LINK_CANCELLED;
         }
+        if (active_link == DIRECT_LISTENER_RETRY) {
+            /* A refused LISTEN (for example no free cartridge socket) is
+               retried at a paced rate inside the batch. Returning at once made
+               the caller repaint the wait notice in a tight loop, with the
+               clock frozen and the cancel key never read. */
+            if (rearm != 0u) {
+                --rearm;
+            } else if (!spxn_direct_listen_ovl()) {
+                rearm = DIRECT_REARM_FRAMES;
+            }
+            net_wait_frame();
+            continue;
+        }
+        flags = spxn_poll();
         if (flags < 0 || (flags & (SPXN_POLLHUP | SPXN_POLLNVAL)) != 0) {
             if (!spxn_direct_listen_ovl()) {
-                return 0u;
+                rearm = DIRECT_REARM_FRAMES;
             }
             continue;
         }
         if ((flags & SPXN_POLLCON) != 0) {
-            if (spxn_accept() == SPXN_OK) {
+            if (spxn_accept_single() == SPXN_OK) {
                 active_link = 0u;
                 direct_link_closed = 0u;
                 return 1u;
             }
             if (!spxn_direct_listen_ovl()) {
-                return 0u;
+                rearm = DIRECT_REARM_FRAMES;
             }
         }
         net_wait_frame();
     }
     /* The caller polls in bounded batches. An idle batch is not a listener
-       failure: keep LISTEN alive so the next batch can accept a late peer. */
+       failure: keep LISTEN (or its paced re-arm) alive so the next batch can
+       accept a late peer. */
     return 0u;
 }
 
@@ -276,6 +339,7 @@ uint8_t direct_send_text_ovl(uint8_t *ctx) __z88dk_fastcall
 #define WAIT_DIRECT_PROMPT 50
 #define WAIT_DIRECT_SEND_OK 150
 #define DIRECT_SEND_GUARD_FRAMES 4u
+#define DIRECT_UART_DRAIN_BUDGET 255u
 #define DIRECT_KEY_CANCEL 0x8au
 #define DIRECT_CIPSTART_PREFIX "AT+CIPSTART=\"TCP\",\""
 #define DIRECT_CIPSTART_PREFIX_LEN 19u
@@ -286,9 +350,19 @@ uint8_t direct_send_text_ovl(uint8_t *ctx) __z88dk_fastcall
 #define DIRECT_CIPSTART_KEEPALIVE_LEN 3u
 #define DIRECT_PORT_MAX_LEN 5u
 #define DIRECT_CIPSTART_MAX_LEN (DIRECT_CIPSTART_PREFIX_LEN + NETCHESSZX_DIRECT_HOST_MAX + DIRECT_CIPSTART_SUFFIX_LEN + DIRECT_PORT_MAX_LEN + DIRECT_CIPSTART_KEEPALIVE_LEN + 1u)
-#if DIRECT_CIPSTART_MAX_LEN > SPECTRUM_NET_LINE_MAX
-#error "DIRECT CIPSTART command exceeds line_buf"
+#if (SPECTRUM_NET_DIRECT_TX_PAYLOAD_CAP + DIRECT_CIPSTART_MAX_LEN) > SPECTRUM_MQTT_PACKET_MAX
+#error "DIRECT command exceeds inactive MQTT packet scratch"
 #endif
+
+/* DIRECT lends the packet scratch prefix to the outgoing payload. Commands
+   use its free tail, leaving both that payload and partial RX lines intact. */
+#ifdef NETCHESSZX_HOST_TEST
+static char direct_tx_scratch[SPECTRUM_MQTT_PACKET_MAX];
+#else
+#define direct_tx_scratch ((char *)SPECTRUM_MQTT_PACKET_SCRATCH)
+#endif
+#define DIRECT_COMMAND_BUF \
+    (direct_tx_scratch + SPECTRUM_NET_DIRECT_TX_PAYLOAD_CAP)
 
 #ifdef NETCHESSZX_NEXT
 #ifdef NETCHESSZX_HOST_TEST
@@ -354,7 +428,7 @@ char *direct_host_test_ptr;
               ((uint16_t)(ctx)[DIRECT_CTX_PTR_HI] << 8)))
 #endif
 
-static char *direct_payload_slot_ovl(uint8_t slot)
+static char *direct_payload_slot_ovl(uint8_t slot) __z88dk_fastcall
 {
     return slot == 0u ? direct_rx_payload
                       : (slot == 1u ? direct_rx_payload2
@@ -367,6 +441,11 @@ static uint8_t direct_tail_slot_ovl(void)
 
     return slot < SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT
         ? slot : (uint8_t)(slot - SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT);
+}
+
+static char *direct_tail_payload_ovl(void)
+{
+    return direct_payload_slot_ovl(direct_tail_slot_ovl());
 }
 
 static uint8_t direct_head_link_ovl(void)
@@ -391,10 +470,25 @@ static uint8_t direct_queue_payload_ovl(void)
         return 0u;
     }
 
-    slot = direct_tail_slot_ovl();
-    slot_payload = direct_payload_slot_ovl(slot);
+    slot_payload = direct_tail_payload_ovl();
     slot_payload[direct_rx_payload_len] = '\0';
     direct_rx_payload_len = 0u;
+    /* A peer that re-announces HELLO before it is answered leaves identical
+       HELLOs queued, and its HELLO + MACH + MNAME answer then overflowed the
+       three slots, dropping MNAME. A HELLO equal to the newest queued frame
+       changes nothing the session does: it consumes duplicates, and a
+       conflicting HELLO differs and still queues. It keeps no slot. */
+    if (direct_rx_count != 0u && slot_payload[0] == 'H') {
+        char *newest;
+
+        --direct_rx_count;
+        newest = direct_tail_payload_ovl();
+        ++direct_rx_count;
+        if (spectrum_streq(newest, slot_payload)) {
+            return 1u;
+        }
+    }
+    slot = direct_tail_slot_ovl();
     if (slot == 0u) {
         direct_rx_link = direct_ipd_link;
     } else if (slot == 1u) {
@@ -497,7 +591,7 @@ static uint8_t direct_feed_payload_byte_ovl(uint8_t c)
             direct_rx_payload_len = 0u;
             direct_ipd_accept |= DIRECT_IPD_DISCARD_LINE;
         } else {
-            direct_payload_slot_ovl(direct_tail_slot_ovl())
+            direct_tail_payload_ovl()
                 [direct_rx_payload_len++] = (char)c;
         }
 
@@ -575,7 +669,9 @@ static uint8_t direct_feed_uart_byte_ovl(uint8_t c)
 
 static uint8_t direct_drain_uart_ovl(void)
 {
-    while (spectrum_uart_ready()) {
+    uint8_t budget = DIRECT_UART_DRAIN_BUDGET;
+
+    while (budget-- != 0u && spectrum_uart_ready()) {
         uint8_t rc = direct_feed_uart_byte_ovl(spectrum_uart_read());
 
         if (rc != 0u) {
@@ -630,11 +726,10 @@ static uint8_t direct_wait_for_prompt_ovl(uint16_t frames)
     return 0u;
 }
 
-static uint8_t direct_send_linebuf_ovl(void)
+static uint8_t direct_send_command_ovl(void)
 {
-    uint8_t ok = spectrum_uart_send_string(line_buf);
+    uint8_t ok = spectrum_uart_send_string(DIRECT_COMMAND_BUF);
 
-    reset_line_buf();
     if (!ok) {
         return 0u;
     }
@@ -647,12 +742,12 @@ static uint8_t direct_tcp_connect_ovl(void)
         spectrum_append_u16(
             spectrum_append_text(
                 spectrum_append_text(
-                    spectrum_append_text(line_buf, DIRECT_CIPSTART_PREFIX),
+                    spectrum_append_text(DIRECT_COMMAND_BUF, DIRECT_CIPSTART_PREFIX),
                     netchesszx_direct_host),
                 "\","),
             netchesszx_direct_port),
         DIRECT_CIPSTART_KEEPALIVE);
-    if (!direct_send_linebuf_ovl()) {
+    if (!direct_send_command_ovl()) {
         return 0u;
     }
     return direct_wait_for_ok_ovl(WAIT_LONG, 1u);
@@ -704,11 +799,11 @@ uint8_t direct_listen_ovl(void)
         return 0u;
     }
 
-    cmd = spectrum_append_text(line_buf, spectrum_net_at_cipserver_0);
+    cmd = spectrum_append_text(DIRECT_COMMAND_BUF, spectrum_net_at_cipserver_0);
     cmd[-1] = '1';
     *cmd++ = ',';
     (void)spectrum_append_u16(cmd, netchesszx_direct_port);
-    if (!direct_send_linebuf_ovl()) {
+    if (!direct_send_command_ovl()) {
         return 0u;
     }
     if (!direct_wait_for_ok_ovl(WAIT_MED, 0u)) {
@@ -781,10 +876,10 @@ static void direct_reject_intruder_ovl(void)
     if (direct_peer_valid) {
         (void)direct_send_payload_ovl("BUSY", link);
     }
-    cmd = spectrum_append_text(line_buf, spectrum_net_at_cipclose);
+    cmd = spectrum_append_text(DIRECT_COMMAND_BUF, spectrum_net_at_cipclose);
     *cmd++ = '=';
     (void)spectrum_append_u16(cmd, link);
-    (void)direct_send_linebuf_ovl();
+    (void)direct_send_command_ovl();
     /* CIPCLOSE answers in ms. Do not block the active peer for the full send
        timeout; any late id-specific response is safe for the next poll. */
     (void)direct_wait_for_ok_ovl(DIRECT_SEND_GUARD_FRAMES, 0u);
@@ -792,6 +887,13 @@ static void direct_reject_intruder_ovl(void)
 
 uint8_t direct_read_payload_ovl(uint8_t *ctx) __z88dk_fastcall
 {
+#ifdef NETCHESSZX_SDCC_IY
+    /* The dispatcher enters under DI. The sdcc_iy build keeps the shared
+       live-interrupt IY contract while UART drain and DIRECT parsing run. */
+#asm
+    ei
+#endasm
+#endif
     char *payload = direct_ctx_ptr(ctx);
     uint8_t payload_cap = ctx[DIRECT_CTX_PAYLOAD_CAP];
     uint8_t n;
@@ -821,7 +923,7 @@ uint8_t direct_read_payload_ovl(uint8_t *ctx) __z88dk_fastcall
         /* Only advance head: the accumulation slot is (head+count)%3, so
            resetting head on empty (or zeroing direct_rx_payload_len) here
            would clobber a partial line still gathering in the other slot. */
-        if (++direct_rx_head == SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT) {
+        if (++direct_rx_head >= SPECTRUM_NET_DIRECT_RX_QUEUE_COUNT) {
             direct_rx_head = 0u;
         }
         return n;
@@ -847,12 +949,12 @@ static uint8_t direct_send_payload_ovl(const char *text, uint8_t link)
 
     spectrum_net_guard_wait(DIRECT_SEND_GUARD_FRAMES);
 
-    cmd = spectrum_append_text(line_buf, "AT+CIPSEND=");
+    cmd = spectrum_append_text(DIRECT_COMMAND_BUF, "AT+CIPSEND=");
     if (link != 0xffu) {
         cmd = spectrum_append_text(spectrum_append_u16(cmd, link), ",");
     }
     (void)spectrum_append_u16(cmd, len);
-    if (!direct_send_linebuf_ovl()) {
+    if (!direct_send_command_ovl()) {
         return 0u;
     }
 
@@ -860,7 +962,6 @@ static uint8_t direct_send_payload_ovl(const char *text, uint8_t link)
         return 0u;
     }
 
-    reset_line_buf();
     if (!spectrum_uart_send_bytes((const uint8_t *)text, payload_len) ||
         !spectrum_uart_send_bytes((const uint8_t *)"\n", 1u)) {
         return 0u;

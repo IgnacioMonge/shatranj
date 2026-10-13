@@ -1,6 +1,13 @@
 ; Resident Spectranext XFS seam used only by the overlay/DAT loader.
 ; Product file operations link the complete driver adapter in their 4 KiB
 ; overlay pages, while both implementations share the fixed low-RAM state.
+;
+; The loader keeps SHATRANJ.DAT open for the whole session (_spxn_dat_id =
+; fd+1) so a direct HTTP(S) launch downloads it once. A read-only borrow of
+; that descriptor is an ordinary active FILE whose fd matches the id: the
+; close detaches it instead of issuing VCLOSE. Borrows live only between
+; _spxn_dat_bind and the caller's close, and no code that links the overlay
+; adapter runs in between; release (startup failure, fatal) is the only VCLOSE.
 
 SECTION code_user
 
@@ -8,6 +15,11 @@ PUBLIC _esx_fopen
 PUBLIC _esx_fread
 PUBLIC _esx_fclose
 PUBLIC _spxn_xfs_fseek
+PUBLIC _spxn_xfs_open_here
+PUBLIC _spxn_xfs_select_slot0
+PUBLIC _spxn_dat_bind
+PUBLIC _spxn_dat_release
+PUBLIC _spxn_xfs_firmware_probe
 PUBLIC _spxn_xfs_init
 PUBLIC _spxn_xfs_dir_scratch
 PUBLIC _spxn_xfs_state_end
@@ -20,12 +32,14 @@ EXTERN _spxn_regs
 EXTERN _spxn_rom_hlcall
 EXTERN _spxn_rom_ixcall
 EXTERN _spxn_rom_error_clear
+EXTERN _spxn_dat_id
 
 defc ROM_OPEN     = $3EB1
 defc ROM_READ     = $3EC9
 defc ROM_LSEEK    = $3ECF
 defc ROM_VCLOSE   = $3ED2
 defc ROM_SETMOUNTPOINT = $3EE7
+defc ROM_SPECTRANEXT = $3EF0
 defc XFS_RDONLY_DE = $0001
 defc KIND_FILE = 1
 
@@ -53,8 +67,16 @@ IF SPXN_XFS_DIR_SCRATCH < SPXN_XFS_STATE_BASE + 20
 ENDIF
 ENDIF
 
+; HL=path. Open on the current mount: the launch mount of a direct HTTP(S)
+; start, or slot 0 once the caller selected it.
+_spxn_xfs_open_here:
+    scf
+    jr xfs_open_args
+
 ; void esx_fopen(const char *path) __z88dk_fastcall
 _esx_fopen:
+    or a                        ; NC: pin slot 0 before the open
+xfs_open_args:
     ld a, 1
     ld de, XFS_RDONLY_DE
     ld bc, 0
@@ -79,7 +101,7 @@ xfs_open_restore_args:
     pop de
     pop hl
     ld (active_path), hl
-    call xfs_select_slot0
+    call nc, xfs_select_slot0   ; flags still hold the entry carry
     ld hl, (active_path)
     ld (_spxn_regs + 5), hl
     ld (_spxn_regs + 3), de
@@ -131,12 +153,16 @@ _esx_fclose:
     or a
     jr z, xfs_close_fail
     ld a, (active_fd)
-    ld (_spxn_regs), a
-    call _spxn_rom_error_clear
-    ld hl, ROM_VCLOSE
-    call _spxn_rom_hlcall
-    bit 0, l
-    jr nz, xfs_close_fail
+    inc a
+    jr z, xfs_close_phys        ; ROM fd $FF can never be the retained id
+    ld hl, _spxn_dat_id
+    cp (hl)
+    jr z, xfs_close_done        ; borrowed DAT: detach only
+xfs_close_phys:
+    ld a, (active_fd)
+    call xfs_vclose
+    ret nz
+xfs_close_done:
     call xfs_clear_state
     ld hl, 0
     ret
@@ -150,6 +176,59 @@ xfs_open_restore_fail:
     ret
 xfs_close_fail:
     ld hl, $00FF
+    ret
+
+; A=fd. Z with HL=0 when closed, NZ with HL=$00FF when the ROM refused.
+xfs_vclose:
+    ld (_spxn_regs), a
+    call _spxn_rom_error_clear
+    ld hl, ROM_VCLOSE
+    call _spxn_rom_hlcall
+    bit 0, l
+    ld hl, 0
+    ret z
+    ld l, $FF
+    ret
+
+; Physically close the retained DAT. Z when none or closed (id cleared), NZ
+; when the ROM refused (ownership kept for a retry).
+_spxn_dat_release:
+    ld a, (_spxn_dat_id)
+    or a
+    ret z
+    dec a
+    call xfs_vclose
+    ret nz
+    xor a
+    ld (_spxn_dat_id), a
+    ret
+
+; HL=absolute offset. Borrow the retained DAT as the active read handle and
+; seek; HL=1 on success, 0 on failure (a failed seek leaves the borrow active
+; for the caller's close). Returns the handle in _esx_handle.
+_spxn_dat_bind:
+    ld a, (active_kind)
+    or a
+    jr z, dat_bind_free
+    push hl
+    call _esx_fclose            ; detach or close the predecessor
+    ld a, l
+    pop hl
+    or a
+    jr nz, dat_bind_fail
+dat_bind_free:
+    ld a, (_spxn_dat_id)
+    or a
+    jr z, dat_bind_fail
+    ld (_esx_handle), a
+    dec a
+    ld (active_fd), a
+    ld a, KIND_FILE
+    ld (active_kind), a
+    ld (active_mode), a         ; mode 1 = read-only
+    jp _spxn_xfs_fseek
+dat_bind_fail:
+    ld hl, 0
     ret
 
 ; uint8_t spxn_xfs_fseek(uint16_t offset) __z88dk_fastcall
@@ -176,6 +255,17 @@ xfs_seek_fail:
     ld hl, 0
     ret
 
+; HL = reply buffer (128 free bytes above 0x3FFF). Firmware 1.0 added
+; SPECTRANEXT operation 15 (build version) and fixed seeking in files read
+; over HTTPS; older firmware returns carry. L bit 0 set: older than 1.0.
+_spxn_xfs_firmware_probe:
+    ld (_spxn_regs + 5), hl
+    ld a, 15
+    ld (_spxn_regs), a
+    ld hl, ROM_SPECTRANEXT
+    jp _spxn_rom_ixcall
+
+_spxn_xfs_select_slot0:
 xfs_select_slot0:
     push hl
     push bc

@@ -16,7 +16,9 @@
     "FILEUI": 1598,
     "CONTROL": 962,
     "CONFIG": 1652,
-    "TIME_CONFIG": 1913
+    "TIME_CONFIG": 1913,
+    "JOURNAL": 1024,
+    "RECOVERY": 1024
   },
   "next": {
     "RULES": 1796,
@@ -35,7 +37,8 @@
     "FILEUI": 1598,
     "CONTROL": 962,
     "CONFIG": 1652,
-    "TIME_CONFIG": 1913
+    "TIME_CONFIG": 1913,
+    "RECOVERY": 1024
   },
   "next-tap": {
     "RULES": 1796,
@@ -54,7 +57,8 @@
     "FILEUI": 1598,
     "CONTROL": 962,
     "CONFIG": 0,
-    "TIME_CONFIG": 0
+    "TIME_CONFIG": 0,
+    "RECOVERY": 1024
   },
   "spectranext": {
     "RULES": 1796,
@@ -74,6 +78,7 @@
     "CONTROL": 962,
     "CONFIG": 1652,
     "TIME_CONFIG": 1913,
-    "TIME": 1800
+    "TIME": 1800,
+    "RECOVERY": 2600
   }
 }

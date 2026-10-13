@@ -163,8 +163,8 @@ void spectrum_board_snapshot_save(spectrum_board_snapshot_t *out) NETCHESSZX_FAS
 #ifndef NETCHESSZX_HOST_TEST
     uint16_t addr = (uint16_t)out;
 
-    spectrum_overlay_context[SPECTRUM_OVL_CTX_PTR_LO] = (uint8_t)addr;
-    spectrum_overlay_context[SPECTRUM_OVL_CTX_PTR_HI] = (uint8_t)(addr >> 8);
+    SPECTRUM_OVL_CTX_SET16(SPECTRUM_OVL_CTX_PTR_LO,
+                           SPECTRUM_OVL_CTX_PTR_HI, addr);
     (void)spectrum_overlay_exec_cached(SPECTRUM_OVL_BOARD,
                                        SPECTRUM_OVL_BOARD_SNAPSHOT_SAVE);
 #else
@@ -175,18 +175,26 @@ void spectrum_board_snapshot_save(spectrum_board_snapshot_t *out) NETCHESSZX_FAS
 #endif
 }
 
-void spectrum_board_snapshot_restore(const spectrum_board_snapshot_t *snapshot) NETCHESSZX_FASTCALL
+#ifdef NETCHESSZX_HOST_TEST
+/* Host tests set this to make both restores fail as an unloadable BOARD. */
+uint8_t spectrum_board_host_fail;
+#endif
+
+uint8_t spectrum_board_snapshot_restore(const spectrum_board_snapshot_t *snapshot) NETCHESSZX_FASTCALL
 {
 #ifndef NETCHESSZX_HOST_TEST
     uint16_t addr = (uint16_t)snapshot;
 
-    spectrum_overlay_context[SPECTRUM_OVL_CTX_PTR_LO] = (uint8_t)addr;
-    spectrum_overlay_context[SPECTRUM_OVL_CTX_PTR_HI] = (uint8_t)(addr >> 8);
-    (void)spectrum_overlay_exec_cached(SPECTRUM_OVL_BOARD,
-                                       SPECTRUM_OVL_BOARD_SNAPSHOT_RESTORE);
+    SPECTRUM_OVL_CTX_SET16(SPECTRUM_OVL_CTX_PTR_LO,
+                           SPECTRUM_OVL_CTX_PTR_HI, addr);
+    return spectrum_overlay_exec_cached(SPECTRUM_OVL_BOARD,
+                                        SPECTRUM_OVL_BOARD_SNAPSHOT_RESTORE);
 #else
     uint8_t i;
 
+    if (spectrum_board_host_fail) {
+        return 0u;
+    }
     memcpy(chess_board, snapshot->cells, 64u);
     for (i = 0u; i < 64u; ++i) {
         rules_board[i] = rules_piece_from_char(chess_board[i]);
@@ -194,6 +202,7 @@ void spectrum_board_snapshot_restore(const spectrum_board_snapshot_t *snapshot) 
     side_to_move = snapshot->side;
     castle_rights = snapshot->castle;
     ep_square = snapshot->ep;
+    return 1u;
 #endif
 }
 
@@ -356,7 +365,7 @@ uint8_t spectrum_board_apply_trusted_move_with_undo(
     return board_apply_trusted(move, undo);
 }
 
-void spectrum_board_undo_restore(const spectrum_board_undo_t *undo)
+uint8_t spectrum_board_undo_restore(const spectrum_board_undo_t *undo)
     NETCHESSZX_FASTCALL
 {
 #ifndef NETCHESSZX_HOST_TEST
@@ -364,10 +373,14 @@ void spectrum_board_undo_restore(const spectrum_board_undo_t *undo)
 
     spectrum_overlay_context[0] = (uint8_t)undo_addr;
     spectrum_overlay_context[1] = (uint8_t)(undo_addr >> 8);
-    (void)spectrum_overlay_exec(SPECTRUM_OVL_BOARD,
-                                SPECTRUM_OVL_BOARD_UNDO_RESTORE);
+    return spectrum_overlay_exec(SPECTRUM_OVL_BOARD,
+                                 SPECTRUM_OVL_BOARD_UNDO_RESTORE);
 #else
+    if (spectrum_board_host_fail) {
+        return 0u;
+    }
     board_apply_undo_restore(undo);
+    return 1u;
 #endif
 }
 

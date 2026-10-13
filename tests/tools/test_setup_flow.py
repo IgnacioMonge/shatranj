@@ -6,6 +6,9 @@ build is attempted.
 """
 
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+from asm_source import read_asm
 import re
 
 
@@ -15,6 +18,8 @@ MENU = (ROOT / "asm/overlay/menu_config/entry_menu_config.asm").read_text(
 )
 SETUP = (ROOT / "asm/overlay/setup/entry_setup.asm").read_text(encoding="utf-8")
 GUI = (ROOT / "src/spectrum/ui/gui.c").read_text(encoding="utf-8")
+SCREEN_ZX = (ROOT / "asm/spectrum/screen.asm").read_text(encoding="utf-8")
+SCREEN_NEXT = (ROOT / "asm/next/screen.asm").read_text(encoding="utf-8")
 
 
 def _equates(source: str, names: tuple[str, ...]) -> dict[str, int]:
@@ -24,6 +29,30 @@ def _equates(source: str, names: tuple[str, ...]) -> dict[str, int]:
         assert match, f"missing {name}"
         values[name] = int(match.group(1))
     return values
+
+
+def test_board_swatch_source_tracks_runtime_asset_layout() -> None:
+    def asset_layout(screen: str) -> tuple[int, int]:
+        base = re.search(
+            r"^NETCHESSZX_ASSET_BASE EQU (0x[0-9a-f]+)$", screen, re.MULTILINE
+        )
+        offset = re.search(
+            r"^board_theme_light_attrs EQU NETCHESSZX_ASSET_BASE \+ (\d+)$",
+            screen,
+            re.MULTILINE,
+        )
+        assert base and offset
+        return int(base.group(1), 16), int(offset.group(1))
+
+    sources = [
+        (int(base, 16), int(offset))
+        for base, offset in re.findall(
+            r"^menu_config_dat_light_attrs EQU (0x[0-9a-f]+) \+ (\d+)$",
+            MENU,
+            re.MULTILINE,
+        )
+    ]
+    assert sources == [asset_layout(SCREEN_NEXT), asset_layout(SCREEN_ZX)]
 
 
 def test_single_screen_uses_approved_eleven_row_order() -> None:
@@ -75,7 +104,7 @@ def test_physical_layout_preserves_game_and_endpoint_alias() -> None:
     }
     for label, text in expected.items():
         assert re.search(
-            rf"^{label}:\s*DEFB\s+\d+,\s*{re.escape(text)}", MENU, re.MULTILINE
+            rf"^{label}:\s*DEFB\s+NETCHESSZX_SETUP_SCREEN_ROW_\w+,\s*{re.escape(text)}", MENU, re.MULTILINE
         ), label
     assert "menu_config_game_create_mqtt" not in MENU
     assert "menu_config_game_create_direct" not in MENU
@@ -84,8 +113,10 @@ def test_physical_layout_preserves_game_and_endpoint_alias() -> None:
     assert "menu_config_setup_screen_row" in MENU
     helper = MENU[MENU.index("menu_config_setup_screen_row:") :]
     assert "ROW_TIME" in helper and "ROW_ACTION" in helper
-    assert "cp 3" in helper and "dec a" in helper and "add a, 7" in helper
-    assert "ld a, 10" in helper and "ld a, 20" in helper
+    assert "cp 3" in helper and "dec a" in helper
+    assert "add a, NETCHESSZX_SETUP_SCREEN_ROW_BASE" in helper
+    assert "ld a, NETCHESSZX_SETUP_SCREEN_ROW_TIME" in helper
+    assert "ld a, NETCHESSZX_SETUP_SCREEN_ROW_ACTION" in helper
 
 
 def test_game_is_preserved_when_incrementally_painting_non_game_rows() -> None:
@@ -105,7 +136,7 @@ def test_game_is_preserved_when_incrementally_painting_non_game_rows() -> None:
 def test_persistence_dirty_mask_excludes_per_game_choices() -> None:
     # Setup may dirty connection rows, but game-only choices must carry a zero
     # force mask.  Keep this as a source contract until a target harness exists.
-    app = (ROOT / "src/spectrum/app/app.c").read_text(encoding="utf-8")
+    app = (ROOT / "src/spectrum/ui/setup.h").read_text(encoding="utf-8")
     assert "SETUP_CHOICE_COLOR 2u" in app
     assert "SETUP_CHOICE_NOTATION 3u" in app
     assert "SETUP_CHOICE_TIME 6u" in app
@@ -113,7 +144,7 @@ def test_persistence_dirty_mask_excludes_per_game_choices() -> None:
 
 
 def test_time_and_action_repaints_are_independently_routed() -> None:
-    app = (ROOT / "src/spectrum/app/app.c").read_text(encoding="utf-8")
+    app = (ROOT / "src/spectrum/ui/setup.c").read_text(encoding="utf-8")
     edit = app[
         app.index("if (flags & NETCHESSZX_SETUP_FLAG_EDIT)") : app.index(
             "session_setup_sync_board_view();"
@@ -124,7 +155,7 @@ def test_time_and_action_repaints_are_independently_routed() -> None:
     )
     assert "NETCHESSZX_SETUP_FLAG_TIME_UI |" in edit
     assert "NETCHESSZX_SETUP_FLAG_ACTION_UI" in edit
-    assert edit.count("session_setup_config_ui();") == 1
+    assert edit.count("netchesszx_setup_time_ui();") == 1
     assert "FLAG_TIME_UI    EQU 0x10" in time
     assert "FLAG_ACTION_UI  EQU 0x20" in time
     ui = time[time.index("_time_config_ui_ovl_entry:") : time.index("tc_ui_time:")]
@@ -146,7 +177,7 @@ def test_rtc_is_probed_by_default_with_utc_available() -> None:
     time = (ROOT / "asm/overlay/time_config/entry_time_config.asm").read_text(
         encoding="utf-8"
     )
-    assert 'DEFB 10, "TIME  RTC       UTC "' in time
+    assert 'DEFB NETCHESSZX_SETUP_SCREEN_ROW_TIME, "TIME  RTC       UTC "' in time
     select = time[time.index("tc_time_select:") : time.index("tc_begin_edit:")]
     assert select.count("tc_begin_edit") == 2
     assert "tc_parse_timezone" not in select
@@ -161,27 +192,31 @@ def test_rtc_probe_does_not_patch_its_own_code() -> None:
     assert "and d" in time
 
 
-def test_time_change_commits_and_shifts_the_ready_clock_without_network_io() -> None:
+def test_time_change_uses_local_shift_or_resyncs_the_selected_source() -> None:
     app = (ROOT / "src/spectrum/app/app.c").read_text(encoding="utf-8")
     time = (ROOT / "asm/overlay/time_config/entry_time_config.asm").read_text(
         encoding="utf-8"
     )
-    define = time[time.index("tc_define_time:") : time.index("tc_time_next:")]
+    define = time[time.index("tc_define_time:") : time.index("tc_action_key:")]
     handler = app[
-        app.index("if (action == NETCHESSZX_SETUP_ACTION_TIMEZONE") :
-        app.index("if (force_dirty & SETUP_MASK_BOARD)")
+        app.index("void spectrum_setup_apply_timezone(") :
+        app.index("static uint8_t session_setup_run(")
     ]
     assert "IFDEF NETCHESSZX_NEXT" not in define
     assert "ld (CTX_ACTION), a" in define
-    assert "session_setup_time_commit()" in handler
-    assert "spectrum_gui_shift_clock(" in handler
+    # NAME follows TIME on screen; it is valid for both CREATE and JOIN.
+    assert "ld a, ROW_NAME" in define
+    assert "netchesszx_setup_time_commit()" in handler
+    assert "spectrum_app_shift_clock(" in handler
+    assert "(void)clock_sync_run();" in handler
     assert "spectrum_link_clock_retry_start();" in handler
+    assert "else {\n                spectrum_link_clock_retry_start();\n            }" in handler
     assert "preflight_clock_run" not in handler
 
     setup_call = app.rindex("config_state = session_setup_run(config_state);")
     before_setup = app[app.rindex("while (!connection_preflight_run", 0,
                                    setup_call) : setup_call]
-    after_setup = app[setup_call : app.rindex("if (netchesszx_host_color_ready)")]
+    after_setup = app[setup_call : app.rindex("if (netchesszx_session_identity_host_color_ready())")]
     assert "netchesszx_timezone != warm_restart" not in after_setup
     assert "preflight_clock_run" not in after_setup
     assert "spectrum_link_clock_retry_start();" in before_setup
@@ -213,25 +248,24 @@ def test_clock_preflight_messages_are_classic_and_next_only() -> None:
 
 
 def test_board_preview_skips_only_the_unchanged_theme() -> None:
-    app = (ROOT / "src/spectrum/app/app.c").read_text(encoding="utf-8")
+    app = (ROOT / "src/spectrum/ui/setup.c").read_text(encoding="utf-8")
     handler = app[
         app.index("if (force_dirty & SETUP_MASK_BOARD)") :
         app.index("if (action == NETCHESSZX_SETUP_ACTION_SET)")
     ]
     assert "volatile uint8_t board_theme = setup_focus_board_theme;" in handler
     assert "netchesszx_board_theme_index != board_theme" in handler
-    assert "netchesszx_board_theme_apply(board_theme);" in handler
-    assert (
-        "#ifdef NETCHESSZX_NEXT\n"
-        "            spectrum_gui_restore_board_area();\n"
-        "#endif"
-    ) in handler
+    assert "spectrum_presentation_apply_theme(board_theme);" in handler
+    assert "NETCHESSZX_NEXT" not in handler
 
 
 def test_classic_theme_switch_repaints_only_attributes() -> None:
     app = (ROOT / "src/spectrum/app/app.c").read_text(encoding="utf-8")
-    screen = (ROOT / "asm/spectrum/screen.asm").read_text(encoding="utf-8")
-    handler_start = app.index("if (key == SPECTRUM_GUI_KEY_MENU_THEME)")
+    screen = read_asm(ROOT / "asm/spectrum/screen.asm")
+    handler_start = app.index(
+        "if (key == SPECTRUM_GUI_KEY_MENU_THEME ||\n"
+        "        key == SPECTRUM_GUI_KEY_MENU_ASSET)"
+    )
     handler = app[
         handler_start : app.index("key = nav_key_alias(key)", handler_start)
     ]
@@ -240,20 +274,16 @@ def test_classic_theme_switch_repaints_only_attributes() -> None:
         screen.index("clear_square_pixels_2x2:")
     ]
     theme_start = screen.index("_netchesszx_board_theme_apply:")
-    apply_theme = screen[theme_start : screen.index("; Theme 1 uses", theme_start)]
-    classic_apply = apply_theme[apply_theme.index("ELSE") :]
+    classic_apply = (ROOT / "asm/spectrum/board_theme.inc").read_text()
 
     assert handler.index("movement_hints_clear();") < handler.index(
-        "netchesszx_board_theme_apply("
+        "spectrum_presentation_apply_theme("
     )
-    assert handler.index("netchesszx_board_theme_apply(") < handler.index(
-        "movement_hints_show();"
+    assert handler.index("spectrum_presentation_apply_theme(") < handler.index(
+        "cursor_request_hints();"
     )
-    assert (
-        "#ifdef NETCHESSZX_NEXT\n"
-        "        spectrum_gui_restore_board_area();\n"
-        "#endif"
-    ) in handler
+    policy = (ROOT / "src/spectrum/ui/presentation_zx.h").read_text()
+    assert "#define spectrum_presentation_apply_theme(theme) netchesszx_board_theme_apply(theme)" in policy
     assert "call z, clear_square_pixels_2x2" not in draw_square
     assert draw_square.index("call set_square_attr_2x2") < draw_square.index(
         "cp RENDER_ATTRS_ONLY"
@@ -282,7 +312,7 @@ def test_mirrorshift_loader_cache_guard_precedes_io() -> None:
         assert "ovl_read" in source[load:] or "next_copy_bundle_ei" in source[load:]
 
 
-def test_file_erase_requires_confirmation_and_closes_browser() -> None:
+def test_file_erase_requires_confirmation_and_refreshes_browser() -> None:
     app = (ROOT / "src/spectrum/app/app.c").read_text(encoding="utf-8")
     pick = app[
         app.index("static uint8_t fileui_process_key") :
@@ -291,20 +321,49 @@ def test_file_erase_requires_confirmation_and_closes_browser() -> None:
     key_handler = app.index("static uint8_t process_local_key")
     confirm_start = app.index("if (confirm_action != CONFIRM_NONE)", key_handler)
     confirm = app[
-        confirm_start : app.index("if (!netchesszx_session_peer_ready_state)",
+        confirm_start : app.index("SESSION_PEER_GATE(",
                                   confirm_start)
     ]
 
     assert "confirm_action = CONFIRM_FILE_ERASE;" in pick
     assert "spectrum_saveload_erase" not in pick
     assert "confirm_action == CONFIRM_FILE_ERASE" in confirm
-    assert confirm.index("spectrum_saveload_erase") < confirm.index(
-        "about_restore_game()"
-    )
+    normalize = confirm.index("if (confirm_action == CONFIRM_FILE_ERASE)")
+    accept = confirm.index("if (key == 'y')")
+    reject = confirm.index("else if (key == 'n')")
+    assert normalize < accept < reject
+    assert "key = netchesszx_confirm_key_alias(key);" in confirm[normalize:accept]
+    host_alias = app[
+        app.index("static uint8_t netchesszx_confirm_key_alias") :
+        app.index("#else", app.index("static uint8_t netchesszx_confirm_key_alias"))
+    ]
+    assert "key == 13u || key == ' '" in host_alias
+    assert "key == 0x8au" in host_alias
+    erase = confirm[
+        confirm.index("if (confirm_action == CONFIRM_FILE_ERASE)", accept) :
+        confirm.index("if (confirm_action == CONFIRM_DISCONNECT)", accept)
+    ]
+    assert "spectrum_saveload_erase" in erase
+    assert "spectrum_fileui_rerender" in erase
+    assert "goto reject_confirm;" in erase
+    assert "about_restore_game" not in erase
 
 
-def test_file_browser_suppresses_transient_board_rendering() -> None:
+def test_file_browser_allows_notice_row_rendering() -> None:
     gui = (ROOT / "src/spectrum/ui/gui.c").read_text(encoding="utf-8")
+    notify = gui[
+        gui.index("static void notify_internal") :
+        gui.index("void spectrum_gui_notify(")
+    ]
+    tick = gui[
+        gui.index("void spectrum_gui_present_tick") :
+        gui.index("void spectrum_gui_reset_moves")
+    ]
 
-    assert "about_visible == 1u" not in gui
-    assert "about_visible != 1u" not in gui
+    assert "if (about_visible == 1u)" in notify
+    assert "if (about_visible != 0u)" not in notify
+    assert "if (about_visible != 1u)" in tick
+    assert "if (about_visible == 0u)" not in tick
+    assert gui.count("about_visible == 1u") == 1
+    # The second use keeps the turn label off the About band (row 3).
+    assert gui.count("about_visible != 1u") == 2

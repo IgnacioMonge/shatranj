@@ -1,6 +1,8 @@
 #include "common/savegame/savegame_format.h"
 #include "spectrum/config/session.h"
+#include "spectrum/session/mqtt_wire.h"
 #include "spectrum/session/poll.h"
+#include "spectrum/session/state.h"
 #include "spectrum/transport/link.h"
 
 #include <stdio.h>
@@ -16,7 +18,6 @@ static int16_t stub_read_result;
 static const char *stub_payload;
 static uint8_t stub_payload_flags;
 static uint8_t stub_background_drain_count;
-static uint8_t stub_link_activity;
 static uint8_t stub_partial_copy;
 static uint8_t stub_send_ping_count;
 static uint8_t stub_send_ping_ok = 1u;
@@ -24,6 +25,10 @@ static uint8_t stub_send_ack_ping_count;
 static uint8_t stub_send_ack_ping_ok = 1u;
 static uint8_t stub_publish_offline_count;
 static uint8_t stub_publish_offline_ok = 1u;
+static uint8_t stub_publish_offline_route;
+
+static void require_u8(const char *label, uint8_t got, uint8_t want);
+static void seed_ping(netchesszx_session_ping_t *ping, uint8_t misses);
 
 static void reset_stubs(void)
 {
@@ -31,7 +36,6 @@ static void reset_stubs(void)
     stub_payload = "";
     stub_payload_flags = 0u;
     stub_background_drain_count = 0u;
-    stub_link_activity = 0u;
     stub_partial_copy = 0u;
     stub_send_ping_count = 0u;
     stub_send_ping_ok = 1u;
@@ -39,6 +43,7 @@ static void reset_stubs(void)
     stub_send_ack_ping_ok = 1u;
     stub_publish_offline_count = 0u;
     stub_publish_offline_ok = 1u;
+    stub_publish_offline_route = 0xffu;
 }
 
 int16_t spectrum_net_read_payload(char *payload, uint8_t payload_cap)
@@ -69,14 +74,6 @@ void spectrum_net_background_drain_clock(void)
     ++stub_background_drain_count;
 }
 
-uint8_t spectrum_net_link_activity(void)
-{
-    uint8_t activity = stub_link_activity;
-
-    stub_link_activity = 0u;
-    return activity;
-}
-
 uint8_t spectrum_net_payload_flags(void)
 {
     return stub_payload_flags;
@@ -94,11 +91,42 @@ uint8_t netchesszx_session_send_ack_ping(void)
     return stub_send_ack_ping_ok;
 }
 
-uint8_t spectrum_net_mqtt_publish_offline(uint8_t route)
+uint8_t netchesszx_session_mqtt_publish_offline(uint8_t route)
 {
-    (void)route;
+    stub_publish_offline_route = route;
     ++stub_publish_offline_count;
     return stub_publish_offline_ok;
+}
+
+static void check_mqtt_failed_ping_cleans_own_presence(uint8_t role)
+{
+    char payload[SPECTRUM_LINK_PAYLOAD_MAX];
+    netchesszx_session_ping_t ping;
+    netchesszx_session_poll_result_t out;
+
+    reset_stubs();
+    netchesszx_session_configure(role, NETCHESSZX_TRANSPORT_MQTT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    netchesszx_session_ping_reset(&ping);
+    ping.idle_ticks = (uint8_t)(NETCHESSZX_SESSION_MQTT_4_8S_POLLS - 1u);
+    stub_send_ping_ok = 0u;
+
+    require_u8("failed mqtt ping disconnect", netchesszx_session_poll(
+                   &ping, payload, sizeof(payload), &out),
+               NETCHESSZX_SESSION_POLL_DISCONNECTED);
+    require_u8("failed mqtt ping send", stub_send_ping_count, 1u);
+    require_u8("failed mqtt ping offline cleanup",
+               stub_publish_offline_count, 1u);
+    require_u8("failed mqtt ping offline route",
+               stub_publish_offline_route,
+               NETCHESSZX_SESSION_ROUTE_PRESENCE);
+}
+
+static void test_mqtt_failed_ping_cleans_own_presence(void)
+{
+    check_mqtt_failed_ping_cleans_own_presence(NETCHESSZX_SESSION_ROLE_JOIN);
+    check_mqtt_failed_ping_cleans_own_presence(NETCHESSZX_SESSION_ROLE_HOST);
 }
 
 static void require_u8(const char *label, uint8_t got, uint8_t want)
@@ -306,9 +334,9 @@ static void test_mqtt_broker_activity_does_not_mask_peer_loss(void)
     netchesszx_session_ping_t ping;
     netchesszx_session_poll_result_t out;
 
-    /* Broker PINGRESP (link activity) proves the broker is alive, not the
-       peer: it must NOT reset the session miss counter. With the miss
-       counter at the limit, the next idle tick declares the peer lost. */
+    /* A broker PINGRESP is consumed as a transport timeout: it proves the
+       broker is alive, not the peer, and must not reset the session miss
+       counter. At the limit, the next idle tick declares the peer lost. */
     reset_stubs();
     netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
                                  NETCHESSZX_TRANSPORT_MQTT,
@@ -318,7 +346,6 @@ static void test_mqtt_broker_activity_does_not_mask_peer_loss(void)
     ping.idle_ticks = (uint8_t)(NETCHESSZX_SESSION_MQTT_4_8S_POLLS - 1u);
     ping.misses = 4u;
     stub_read_result = SPECTRUM_LINK_READ_TIMEOUT;
-    stub_link_activity = 1u;
 
     require_u8("mqtt activity poll",
                netchesszx_session_poll(&ping, payload, sizeof(payload), &out),
@@ -437,11 +464,76 @@ static void test_mqtt_only_live_peer_payload_resets_liveness(void)
     require_u8("live peer misses reset", ping.misses, 0u);
 }
 
+static void check_ack_reset_liveness_requires_pending_reset(uint8_t transport)
+{
+    char payload[SPECTRUM_LINK_PAYLOAD_MAX];
+    netchesszx_session_ping_t ping;
+    netchesszx_session_poll_result_t out;
+
+    reset_stubs();
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
+                                 transport,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_session_peer_mark_ready();
+    netchesszx_session_set_control_pending(0u);
+    stub_read_result = 0;
+    stub_payload = "ACK RESET";
+
+    seed_ping(&ping, 3u);
+    require_u8("unsolicited reset ack poll", netchesszx_session_poll(
+                   &ping, payload, sizeof(payload), &out),
+               NETCHESSZX_SESSION_POLL_EVENT);
+    require_u8("unsolicited reset ack event", out.event,
+               NETCHESSZX_SESSION_EVENT_ACK_RESET);
+    require_u8("unsolicited reset ack idle kept", ping.idle_ticks, 42u);
+    require_u8("unsolicited reset ack misses kept", ping.misses, 3u);
+
+    netchesszx_session_set_control_pending(CONTROL_PENDING_RESET);
+    require_u8("matched reset ack poll", netchesszx_session_poll(
+                   &ping, payload, sizeof(payload), &out),
+               NETCHESSZX_SESSION_POLL_EVENT);
+    require_u8("matched reset ack idle reset", ping.idle_ticks, 0u);
+    require_u8("matched reset ack misses reset", ping.misses, 0u);
+}
+
+static void test_ack_reset_liveness_requires_pending_reset(void)
+{
+    check_ack_reset_liveness_requires_pending_reset(NETCHESSZX_TRANSPORT_DIRECT);
+    check_ack_reset_liveness_requires_pending_reset(NETCHESSZX_TRANSPORT_MQTT);
+}
+
 static void seed_ping(netchesszx_session_ping_t *ping, uint8_t misses)
 {
     netchesszx_session_ping_reset(ping);
     ping->idle_ticks = 42u;
     ping->misses = misses;
+}
+
+static void test_invalid_direct_replies_preserve_liveness(void)
+{
+    static const char *const invalid[] = {
+        "NACK RESETX", "ACK DRAWjunk", "NACK RESIGN", "ACK 12X", "NACK "
+    };
+    char payload[SPECTRUM_LINK_PAYLOAD_MAX];
+    netchesszx_session_ping_t ping;
+    netchesszx_session_poll_result_t out;
+    unsigned i;
+
+    reset_stubs();
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    stub_read_result = 0;
+    for (i = 0u; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        seed_ping(&ping, 3u);
+        stub_payload = invalid[i];
+        require_u8("invalid reply poll",
+                   netchesszx_session_poll(&ping, payload, sizeof(payload), &out),
+                   NETCHESSZX_SESSION_POLL_EVENT);
+        require_u8("invalid reply event", out.event, NETCHESSZX_SESSION_EVENT_UNKNOWN);
+        require_u8("invalid reply idle kept", ping.idle_ticks, 42u);
+        require_u8("invalid reply misses kept", ping.misses, 3u);
+    }
 }
 
 static void test_mqtt_ping_liveness_guards(void)
@@ -648,16 +740,19 @@ static void test_read_disconnect(void)
 int main(void)
 {
     test_move_event_defers_liveness();
+    test_invalid_direct_replies_preserve_liveness();
     test_retained_side_effect_event_ignored();
     test_short_restore_frame_does_not_use_stale_tail();
     test_direct_guest_timeout_sends_ping();
     test_direct_failed_ping_disconnects();
     test_direct_host_timeout_is_passive();
     test_mqtt_waiting_peer_does_not_run_liveness();
+    test_mqtt_failed_ping_cleans_own_presence();
     test_mqtt_broker_activity_does_not_mask_peer_loss();
     test_mqtt_guest_loss_is_logical_bye();
     test_mqtt_host_release_failure_disconnects();
     test_mqtt_only_live_peer_payload_resets_liveness();
+    test_ack_reset_liveness_requires_pending_reset();
     test_mqtt_ping_liveness_guards();
     test_mqtt_setup_liveness_guards();
     test_direct_ping_is_consumed_and_acked_each_time();

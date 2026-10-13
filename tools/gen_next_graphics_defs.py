@@ -68,6 +68,7 @@ REQUIRED_SYMBOLS = (
     "_spectrum_gui_board_pieces_visible",
     "_spectrum_gui_edit_tick",
     "_spectrum_gui_redraw_square",
+    "_spectrum_moves_header_shown",
     "_spectrum_overlay_exec",
     "_spectrum_overlay_exec_cached",
 )

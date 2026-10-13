@@ -1,4 +1,5 @@
 #include "spectrum/transport/esp_at.h"
+#include "spectrum/transport/link.h"
 #include "spectrum/transport/next_baud_recovery.h"
 
 #include <stdio.h>
@@ -14,12 +15,19 @@ static uint16_t fat_time;
 static const uint8_t *uart_feed;
 static uint16_t uart_feed_len;
 static uint16_t uart_feed_pos;
+static uint16_t uart_read_count;
+static uint16_t frame_count;
+static uint8_t uart_continuous;
+static uint8_t uart_continuous_byte;
 static uint8_t uart_string_ok = 1u;
 static uint8_t uart_crlf_ok = 1u;
+#define UART_READ_GUARD 1024u
+#define EXPECTED_UART_DRAIN_BUDGET 255u
 #ifdef NETCHESSZX_NEXT
 #define TEST_BAUD_115200 115200ul
 #define TEST_BAUD_230400 230400ul
 
+static uint8_t uart_fault, inject_uart_fault;
 static uint8_t hard_reset_count;
 static uint8_t hard_reset_replies;
 static uint8_t soft_recovery_replies;
@@ -43,6 +51,7 @@ extern char last_ip[];
 
 void spectrum_net_runtime_wait_frame(void)
 {
+    ++frame_count;
 }
 
 void spectrum_net_runtime_wait_frame_plain(void)
@@ -83,9 +92,19 @@ void spectrum_net_runtime_publish_ip_status(const char *ip)
     (void)ip;
 }
 
+uint8_t spectrum_uart_error(void)
+{
+#ifdef NETCHESSZX_NEXT
+    return uart_fault;
+#else
+    return 0u;
+#endif
+}
+
 void spectrum_uart_init(void)
 {
 #ifdef NETCHESSZX_NEXT
+    uart_fault = 0u;
     uart_baud = TEST_BAUD_115200;
     ++baud_115200_count;
 #endif
@@ -94,6 +113,7 @@ void spectrum_uart_init(void)
 #ifdef NETCHESSZX_NEXT
 void spectrum_uart_set_baud_230400(void)
 {
+    uart_fault = 0u;
     uart_baud = TEST_BAUD_230400;
     ++baud_230400_count;
 }
@@ -160,11 +180,21 @@ uint8_t spectrum_uart_send_crlf(void)
 
 uint8_t spectrum_uart_ready(void)
 {
+    if (uart_continuous) {
+        return (uint8_t)(uart_read_count < UART_READ_GUARD);
+    }
     return (uint8_t)(uart_feed_pos < uart_feed_len);
 }
 
 uint8_t spectrum_uart_read(void)
 {
+#ifdef NETCHESSZX_NEXT
+    uart_fault |= inject_uart_fault;
+#endif
+    ++uart_read_count;
+    if (uart_continuous) {
+        return uart_continuous_byte;
+    }
     if (uart_feed_pos >= uart_feed_len) {
         return 0u;
     }
@@ -194,6 +224,9 @@ static void feed_uart(const char *text)
     uart_feed = (const uint8_t *)text;
     uart_feed_len = (uint16_t)strlen(text);
     uart_feed_pos = 0u;
+    uart_read_count = 0u;
+    frame_count = 0u;
+    uart_continuous = 0u;
     reset_line_buf();
 }
 
@@ -219,6 +252,34 @@ static void test_read_line(void)
     feed_uart("\n\nA\n");
     check(read_line(1u), "empty lines skipped before payload");
     check(strcmp(line_buf, "A") == 0, "payload after empty lines");
+}
+
+static void test_continuous_rx_budget(void)
+{
+    static const uint8_t recovery[] = "\nOK\n";
+
+    feed_uart("");
+    uart_continuous = 1u;
+    uart_continuous_byte = 0u;
+    check(!read_line(0u), "zero-frame continuous RX remains nonblocking");
+    check(uart_read_count == EXPECTED_UART_DRAIN_BUDGET && frame_count == 0u,
+          "zero-frame read has a finite byte budget without waiting");
+
+    uart_continuous = 0u;
+    uart_feed = recovery;
+    uart_feed_len = sizeof(recovery) - 1u;
+    uart_feed_pos = 0u;
+    check(read_line(1u) && strcmp(line_buf, "OK") == 0,
+          "overlong NUL garbage recovers across the budget boundary");
+
+    feed_uart("");
+    uart_continuous = 1u;
+    uart_continuous_byte = (uint8_t)'X';
+    check(!wait_for_prompt(2u), "continuous garbage cannot hide prompt timeout");
+    check(uart_read_count == (uint16_t)(2u * EXPECTED_UART_DRAIN_BUDGET) &&
+              frame_count == 2u,
+          "prompt timeout advances once per bounded UART pass");
+    uart_continuous = 0u;
 }
 
 static void test_capture_ip(void)
@@ -410,9 +471,24 @@ static void test_next_hard_reset_fallback(void)
 }
 #endif
 
+#ifdef NETCHESSZX_NEXT
+static void test_uart_fault_rejects_reply(void)
+{
+    feed_uart("OK\n");
+    inject_uart_fault = 4u;
+    check(!read_line(1u), "fault rejects complete AT reply");
+    feed_uart(">");
+    check(!wait_for_prompt(1u), "fault rejects prompt");
+    inject_uart_fault = uart_fault = 0u;
+    feed_uart("OK\n");
+    check(read_line(1u), "clean boundary accepts AT reply");
+}
+#endif
+
 int main(void)
 {
     test_read_line();
+    test_continuous_rx_budget();
     test_capture_ip();
 #ifndef NETCHESSZX_NEXT
     test_capture_msdos_time();
@@ -420,6 +496,7 @@ int main(void)
     test_capture_rtc_year_bounds();
     test_at_tx_failure();
 #ifdef NETCHESSZX_NEXT
+    test_uart_fault_rejects_reply();
     test_next_bridgezx_baud_recovery();
     test_next_hard_reset_fallback();
 #endif

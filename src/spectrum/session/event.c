@@ -1,16 +1,17 @@
 #include "spectrum/session/event.h"
 
 #include "common/protocol/direct_session_protocol.h"
+#include "common/protocol/game_protocol.h"
 #include "common/protocol/mqtt_session_protocol.h"
 #include "spectrum/config/session.h"
 #include "spectrum/session/mqtt.h"
-#include "spectrum/transport/keepalive_protocol.h"
 
 uint8_t netchesszx_session_peer_ready_state;
 
 void netchesszx_session_peer_reset(void)
 {
     netchesszx_session_peer_ready_state = 0u;
+    netchesszx_peer_name[0] = '\0';
 }
 
 void netchesszx_session_peer_mark_ready(void)
@@ -40,7 +41,9 @@ uint8_t netchesszx_session_event_ignores_retained(netchesszx_session_event_t eve
           e <= (uint8_t)NETCHESSZX_SESSION_EVENT_HOST_BUSY) ||
          e == (uint8_t)NETCHESSZX_SESSION_EVENT_MQTT_PEER_OFFLINE ||
          e == (uint8_t)NETCHESSZX_SESSION_EVENT_MQTT_FOREIGN_HOST ||
-         e == (uint8_t)NETCHESSZX_SESSION_EVENT_MQTT_TEXT));
+         e == (uint8_t)NETCHESSZX_SESSION_EVENT_MQTT_TEXT ||
+         e == (uint8_t)NETCHESSZX_SESSION_EVENT_CANCEL_TAKEBACK ||
+         e == (uint8_t)NETCHESSZX_SESSION_EVENT_PEER_NAME));
 }
 
 
@@ -109,12 +112,36 @@ netchesszx_session_event_t netchesszx_session_classify_event(
     if (!is_mqtt && netchess_direct_is_hello(payload)) {
         return NETCHESSZX_SESSION_EVENT_DIRECT_HELLO;
     }
-    if (spectrum_keepalive_is_ack_ping(payload)) {
+    if (netchess_text_is(payload, NETCHESS_PROTO_ACK_PING)) {
         return NETCHESSZX_SESSION_EVENT_ACK_PING;
     }
-    if (spectrum_keepalive_is_ping(payload)) {
+    if (netchess_text_is(payload, NETCHESS_PROTO_PING)) {
         return NETCHESSZX_SESSION_EVENT_PING;
     }
+    /* CHAT is rendered by GUI_LOG immediately after classification. Keep this
+       hot prefix out of CONTROL so a receive burst can retain GUI_LOG. */
+    if (netchess_after_prefix(payload, NETCHESS_PROTO_CHAT_PREFIX) != 0) {
+        return NETCHESSZX_SESSION_EVENT_CHAT;
+    }
+#if !defined(NETCHESSZX_NEXT_BANKING) && !defined(NETCHESSZX_SPECTRANEXT)
+    /* Only here does a switch read the overlay from SD (~30 ms on a real
+       Classic), so only here do the per-ply MOVE and ACK skip CONTROL. */
+    /* Every remote ply starts with a MOVE: name it here too, so the ply does
+       not load CONTROL just to classify it. */
+    if (netchess_after_prefix(payload, NETCHESS_PROTO_MOVE_PREFIX) != 0) {
+        return NETCHESSZX_SESSION_EVENT_MOVE;
+    }
+    {
+        char ply[6];
+
+        /* CONTROL's rule: 1-5 ply digits, then end or a space. */
+        if (netchess_proto_parse_ply_tail(
+                netchess_after_prefix(payload, NETCHESS_PROTO_ACK_PREFIX),
+                ply, sizeof(ply), 0, 0u)) {
+            return NETCHESSZX_SESSION_EVENT_ACK_MOVE;
+        }
+    }
+#endif
 
     {
         netchesszx_session_event_t event =
