@@ -96,6 +96,8 @@ PUBLIC _recovery_write_ovl_entry, _spectrum_time_snapshot
 PUBLIC _side_to_move, _castle_rights, _ep_square
 PUBLIC _netchesszx_session_state, _netchesszx_host_color
 PUBLIC _spectrum_board_view_flipped
+PUBLIC _netchesszx_asm_push_frame_arg, _netchesszx_asm_leave_ix
+PUBLIC _netchesszx_asm_enter_ix_hl
 
 test_start:
     ld sp, 0xff00
@@ -335,7 +337,14 @@ def run_target(label: str, scratch: int, defines: tuple[str, ...]) -> None:
         add_size_markers(recovery_asm, "capture")
         add_size_markers(restore_asm, "restore")
         harness = tmp / "recovery_capture_vector.asm"
-        harness.write_text(HARNESS, encoding="ascii")
+        # The overlay COPT calls the resident SDCC frame helpers; link the
+        # production ones.
+        kernels = (ROOT / "asm/spectrum/shrink_kernels.asm").read_text(encoding="ascii")
+        frame_helpers = kernels[
+            kernels.index("_netchesszx_asm_push_frame_arg:")
+            : kernels.index("; Fixed RESTORE RS state kernel.")
+        ]
+        harness.write_text(HARNESS + "\n" + frame_helpers, encoding="ascii")
         binary = tmp / "recovery_capture_vector.bin"
         symbols = assemble_vector(
             assembler,
