@@ -15,6 +15,7 @@ uint16_t esx_buf;
 uint16_t esx_count;
 uint16_t esx_result;
 uint8_t setup_config_record[NETCHESSZX_APP_CONFIG_READ_SIZE];
+uint8_t netchesszx_link_match;
 
 static int failures;
 
@@ -201,6 +202,48 @@ int main(void)
     mock_dir_present = 0u;
     CHECK(config_save_record(record) == SPECTRUM_OVL_SAVELOAD_ERR_OPEN);
     CHECK(mock_replace_count == 3u);
+
+    /* MATCH persists as flags bit 2 beside DIRECT and needs no IP. */
+    set_valid_runtime();
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_JOIN,
+                                 NETCHESSZX_TRANSPORT_DIRECT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_link_match = 1u;
+    config_pack(record);
+    CHECK(record[NETCHESSZX_APP_CONFIG_FLAGS_OFF] ==
+          (NETCHESSZX_APP_CONFIG_FLAG_ROLE | NETCHESSZX_APP_CONFIG_FLAG_MATCH));
+    CHECK(netchesszx_app_config_validate(record));
+    netchesszx_link_match = 0u;
+    config_apply(record);
+    CHECK(netchesszx_link_match == 1u);
+    CHECK(netchesszx_transport_is_match());
+    /* Never with MQTT; plain JOIN DIRECT still needs its IP. */
+    record[NETCHESSZX_APP_CONFIG_FLAGS_OFF] |=
+        NETCHESSZX_APP_CONFIG_FLAG_TRANSPORT;
+    record[NETCHESSZX_APP_CONFIG_CRC_OFF] = netchesszx_app_config_crc8(record);
+    CHECK(!netchesszx_app_config_validate(record));
+    record[NETCHESSZX_APP_CONFIG_FLAGS_OFF] = NETCHESSZX_APP_CONFIG_FLAG_ROLE;
+    record[NETCHESSZX_APP_CONFIG_CRC_OFF] = netchesszx_app_config_crc8(record);
+    CHECK(!netchesszx_app_config_validate(record));
+    record[NETCHESSZX_APP_CONFIG_FLAGS_OFF] = 0x08u;
+    record[NETCHESSZX_APP_CONFIG_CRC_OFF] = netchesszx_app_config_crc8(record);
+    CHECK(!netchesszx_app_config_validate(record));
+    /* A stale flag under MQTT is never written. */
+    netchesszx_session_configure(NETCHESSZX_SESSION_ROLE_HOST,
+                                 NETCHESSZX_TRANSPORT_MQTT,
+                                 NETCHESSZX_COLOR_WHITE);
+    netchesszx_link_match = 1u;
+    config_pack(record);
+    CHECK((record[NETCHESSZX_APP_CONFIG_FLAGS_OFF] &
+           NETCHESSZX_APP_CONFIG_FLAG_MATCH) == 0u);
+    CHECK(config_defaults_ovl(NULL) == 1u);
+    CHECK(netchesszx_link_match == 0u);
+    /* The flag is low RAM the TAP never zeroes: a boot without a stored
+       record must clear whatever the byte held. */
+    netchesszx_link_match = 0xa5u;
+    mock_rom_error = 2u;
+    CHECK(config_load_ovl(ctx) == 0u);
+    CHECK(netchesszx_link_match == 0u);
 
     if (failures != 0) {
         return 1;

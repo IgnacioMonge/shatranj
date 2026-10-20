@@ -38,14 +38,28 @@ static uint16_t parse_u16(const char *text)
 
 static void disconnect_to_setup(void)
 {
+#ifdef NETCHESSZX_SPECTRANEXT
+    uint8_t sent;
+#endif
+
     SESSION_APP_BEGIN_SETUP_EXIT();
+#ifdef NETCHESSZX_SPECTRANEXT
+    sent = netchesszx_session_send_text(msg_bye);
+#else
     (void)netchesszx_session_send_text(msg_bye);
+#endif
     if (netchesszx_transport_is_mqtt()) {
         /* Only an activated seat has retained presence to release. */
         if (netchesszx_session_identity_mqtt_session_id() != 0u) {
             session_mqtt_failure_cleanup();
         }
         spectrum_net_mqtt_stop();
+#ifdef NETCHESSZX_SPECTRANEXT
+    } else {
+        /* Warm Setup preflight does not close the cartridge stream. */
+        SESSION_APP_CLOSE_DIRECT(sent ? 150u : 0u);
+        spectrum_net_start_uart();
+#endif
     }
     SESSION_APP_FINISH_SETUP_EXIT();
 }
@@ -1613,6 +1627,9 @@ static uint8_t session_presence_handle_event(netchesszx_session_event_t event,
             }
             goto dispatch_handled;
         }
+#ifdef NETCHESSZX_SPECTRANEXT
+        SESSION_APP_CLOSE_DIRECT(0u);
+#endif
         SESSION_APP_DISCONNECT();
         goto dispatch_exit;
     }

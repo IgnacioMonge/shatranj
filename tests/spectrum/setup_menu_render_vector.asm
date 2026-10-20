@@ -4,8 +4,16 @@ PUBLIC test_start
 PUBLIC test_done
 PUBLIC test_result
 PUBLIC _spectrum_info_line
+IFDEF NETCHESSZX_CLASSIC_BOOT
+PUBLIC clear_right_panel_rows
+PUBLIC draw_ikkle_inline
+PUBLIC draw_right_hline
+PUBLIC game_setup_msg
+PUBLIC session_setup_msg
+ELSE
 PUBLIC _spectrum_info_show_setup
 PUBLIC _spectrum_info_show_game_setup
+ENDIF
 PUBLIC _setup_focus_choice
 PUBLIC _setup_focus_board_theme
 PUBLIC _setup_visible_mask
@@ -35,6 +43,11 @@ EXTERN _spectrum_gui_edit_show
 
 INCLUDE "ui_layout.inc"
 INCLUDE "asm/app/player_name_layout.inc"
+IFDEF NETCHESSZX_SPECTRANEXT
+PUBLIC _spectrum_gui_notify_persistent
+INCLUDE "asm/app/link_match_layout.inc"
+EXTERN _menu_config_run_ovl_entry
+ENDIF
 
 test_start:
     jp test_current_contract
@@ -43,6 +56,11 @@ test_current_contract:
     ld sp, 0xff00
     ld a, 0xff
     ld (test_result), a
+IFDEF NETCHESSZX_SPECTRANEXT
+    ; Matchmaking firmware unless a case says otherwise.
+    ld a, 1
+    ld (LINK_MATCH_OK), a
+ENDIF
     ld hl, 0x03ff
     ld (_setup_visible_mask), hl
     ld (_spectrum_overlay_context), hl
@@ -673,6 +691,164 @@ test_name_line_cmp:
     call test_attr_run
     jp nz, test_bad_name_attrs
 
+IFDEF NETCHESSZX_SPECTRANEXT
+    ; Spectranext MATCH: the endpoint row is a fixed line with no cursor.
+    ld a, 1
+    ld (LINK_MATCH), a
+    xor a
+    ld (_setup_choice), a
+    ld (_setup_choice + 1), a
+    ld (_setup_room_editing), a
+    ld (last_edit_col), a
+    ld a, 2
+    ld (edit_line_row), a
+    ld de, edit_line_row
+    call _input_edit_setup_line_ovl
+    ld a, (last_edit_col)
+    or a
+    jp nz, test_bad_match_line
+    ld a, (last_line_row)
+    cp NETCHESSZX_SETUP_SCREEN_ROW_LINK + 1
+    jp nz, test_bad_match_line
+    ld hl, (last_line_ptr)
+    inc hl
+    ld de, test_lobby_line
+test_match_line_text:
+    ld a, (de)
+    cp (hl)
+    jp nz, test_bad_match_line
+    inc de
+    inc hl
+    or a
+    jr nz, test_match_line_text
+    ; JOIN picks the host in the application list.
+    ld a, 1
+    ld (_setup_choice), a
+    ld de, edit_line_row
+    call _input_edit_setup_line_ovl
+    ld hl, (last_line_ptr)
+    inc hl
+    ld de, test_match_line
+test_match_join_text:
+    ld a, (de)
+    cp (hl)
+    jp nz, test_bad_match_line
+    inc de
+    inc hl
+    or a
+    jr nz, test_match_join_text
+    xor a
+    ld (_setup_choice), a
+
+    ; LINK paints MQTT, DIRECT and MATCH; MATCH is selected and focused.
+    ; The endpoint span runs to the row end and PORT's ':' marker stays off.
+    ld hl, 0x03ff
+    ld (_setup_visible_mask), hl
+    ld (_setup_defined_mask), hl
+    ld a, 1
+    ld (_setup_cursor), a
+    ld a, LINK_FOCUS_MATCH
+    ld (LINK_FOCUS), a
+    xor a
+    ld (0x5fe1), a
+    ld (0x5fe2), a
+    ld a, 0x5a
+    ld (NETCHESSZX_SETUP_PORT_MARKER_TOP), a
+    ld hl, 0x58f2
+    ld b, 14
+    call test_poison_attrs
+    ld hl, 0x5912
+    ld b, 14
+    call test_poison_attrs
+    call _menu_config_paint_attrs_ovl_entry
+    ld hl, 0x58f2
+    ld b, 3
+    ld c, 0x03
+    call test_attr_run
+    jp nz, test_bad_match_link_attrs
+    ld b, 7
+    ld c, 0x07
+    call test_attr_run
+    jp nz, test_bad_match_link_attrs
+    ld b, 3
+    ld c, 0x46
+    call test_attr_run
+    jp nz, test_bad_match_link_attrs
+    ld a, (hl)
+    cp 0xa5
+    jp nz, test_bad_match_link_attrs
+    ld hl, 0x5915
+    ld b, 11
+    ld c, 0x05
+    call test_attr_run
+    jp nz, test_bad_match_endpoint_attrs
+    ld a, (NETCHESSZX_SETUP_PORT_MARKER_TOP)
+    cp 0x5a
+    jp nz, test_bad_match_endpoint_attrs
+
+    ; Off LINK the selected MATCH keeps its colour; DIRECT is selectable.
+    ld a, 4
+    ld (_setup_cursor), a
+    call _menu_config_paint_attrs_ovl_entry
+    ld hl, 0x58fc
+    ld b, 3
+    ld c, 0x05
+    call test_attr_run
+    jp nz, test_bad_match_link_attrs
+    xor a
+    ld (LINK_MATCH), a
+    call _menu_config_paint_attrs_ovl_entry
+    ld hl, 0x58f8
+    ld b, 4
+    ld c, 0x05
+    call test_attr_run
+    jp nz, test_bad_match_link_attrs
+    ld hl, 0x58fc
+    ld b, 3
+    ld c, 0x07
+    call test_attr_run
+    jp nz, test_bad_match_link_attrs
+
+    ; Firmware without matchmaking: LINK paints MQTT and DIRECT only, leaves
+    ; MATCH's cells alone, and its line has no MATCH.
+    xor a
+    ld (LINK_MATCH_OK), a
+    inc a
+    ld (_setup_cursor), a
+    ld a, LINK_FOCUS_DIRECT
+    ld (LINK_FOCUS), a
+    ld hl, 0x58f2
+    ld b, 14
+    call test_poison_attrs
+    call _menu_config_paint_attrs_ovl_entry
+    ld hl, 0x58f2
+    ld b, 3
+    ld c, 0x03
+    call test_attr_run
+    jp nz, test_bad_no_match_link
+    ld b, 3
+    ld c, 0x07
+    call test_attr_run
+    jp nz, test_bad_no_match_link
+    ld b, 4
+    ld c, 0x46
+    call test_attr_run
+    jp nz, test_bad_no_match_link
+    ld b, 3
+    ld c, 0xa5
+    call test_attr_run
+    jp nz, test_bad_no_match_link
+    ld hl, test_link2_line
+    call test_link_line
+    jp nz, test_bad_no_match_link
+    ld a, 1
+    ld (LINK_MATCH_OK), a
+    ld hl, test_link3_line
+    call test_link_line
+    jp nz, test_bad_no_match_link
+    call test_link_notice_contract
+ENDIF
+
     ; Leave the worst-case DIRECT line in the shared buffer for the runner.
     ld a, 2
     ld (edit_line_row), a
@@ -691,6 +867,49 @@ test_poison_name_loop:
     inc hl
     djnz test_poison_name_loop
     ret
+
+IFDEF NETCHESSZX_SPECTRANEXT
+; HL = first cell, B = count.
+test_poison_attrs:
+    ld (hl), 0xa5
+    inc hl
+    djnz test_poison_attrs
+    ret
+
+test_bad_match_line:         ld a, 41
+    jp test_store_result
+test_bad_match_link_attrs:   ld a, 42
+    jp test_store_result
+test_bad_match_endpoint_attrs: ld a, 43
+    jp test_store_result
+test_bad_no_match_link:      ld a, 44
+    jp test_store_result
+
+; HL = expected LINK line text after its row byte. Z when a LINK-only dirty
+; run draws exactly that line.
+test_link_line:
+    push hl
+    ld de, test_link_ctx
+    call _menu_config_run_ovl_entry
+    pop de
+    ld hl, (last_line_ptr)
+    inc hl
+test_link_line_cmp:
+    ld a, (de)
+    cp (hl)
+    ret nz
+    inc de
+    inc hl
+    or a
+    jr nz, test_link_line_cmp
+    ret
+
+test_match_line: DEFB "PEER  SELECT HOST", 0
+test_lobby_line: DEFB "PEER  SPECTRANEXT LOBBY", 0
+test_link2_line: DEFB "LINK  MQTT  DIRECT", 0
+test_link3_line: DEFB "LINK  MQTT  DIRECT  MATCH", 0
+test_link_ctx:   DEFB 0, 0, 0x02, 0
+ENDIF
 
 ; HL = first cell, B = count, C = expected. Z on match; HL after the run.
 test_attr_run:
@@ -1160,6 +1379,82 @@ test_save_focus_span:
     xor a
     jp test_store_result
 
+IFDEF NETCHESSZX_SPECTRANEXT
+test_link_notice_contract:
+    ; Old/unknown firmware: GAME down enters LINK, UP restores the normal hint.
+    ; Supported firmware keeps navigation silent.
+    ld hl, 0x03ff
+    ld (_setup_visible_mask), hl
+    xor a
+    ld (LINK_MATCH_OK), a
+    ld (_setup_cursor), a
+    ld (test_notice_calls), a
+    ld a, 0x82
+    call test_link_notice_nav
+    ld a, (_setup_cursor)
+    cp 1
+    jp nz, test_bad_nav
+    ld a, (0x5fe5)
+    or a
+    jp nz, test_bad_nav
+    call _menu_config_paint_attrs_ovl_entry
+    ld a, (test_notice_calls)
+    cp 1
+    jp nz, test_bad_nav
+    ld a, LINK_FOCUS_MQTT
+    ld (LINK_FOCUS), a
+    call _menu_config_paint_attrs_ovl_entry
+    ld a, (test_notice_calls)
+    cp 2
+    jp nz, test_bad_nav
+    ld a, 0x81
+    call test_link_notice_nav
+    ld a, (_setup_cursor)
+    or a
+    jp nz, test_bad_nav
+    ld a, (0x5fe5)
+    cp 1
+    jp nz, test_bad_nav
+    call _menu_config_paint_attrs_ovl_entry
+    ld a, (test_notice_calls)
+    cp 2
+    jp nz, test_bad_nav
+    ld a, 1
+    ld (LINK_MATCH_OK), a
+    ld a, 0x82
+    call test_link_notice_nav
+    ld a, (0x5fe5)
+    or a
+    jp nz, test_bad_nav
+    call _menu_config_paint_attrs_ovl_entry
+    ld a, (test_notice_calls)
+    cp 2
+    jp nz, test_bad_nav
+    ret
+
+test_link_notice_nav:
+    ld (0x5fe0), a
+    ld de, 0x5fe0
+    jp _menu_config_nav_ovl_entry
+
+_spectrum_gui_notify_persistent:
+    ld de, test_firmware_notice
+test_notice_text:
+    ld a, (de)
+    cp (hl)
+    jp nz, test_bad_no_match_link
+    inc de
+    inc hl
+    or a
+    jr nz, test_notice_text
+    ld hl, test_notice_calls
+    inc (hl)
+    ret
+
+test_notice_calls: DEFB 0
+test_firmware_notice: DEFB "MATCH NEEDS FIRMWARE 1.2+", 0
+ENDIF
+
 test_bad_label:          ld a, 1
     jp test_store_result
 test_bad_game:           ld a, 2
@@ -1225,6 +1520,61 @@ _spectrum_info_line:
     inc (hl)
     ret
 
+IFDEF NETCHESSZX_CLASSIC_BOOT
+; Execute the production headers, checking each inline descriptor and hline.
+clear_right_panel_rows:
+    ld hl, setup_calls
+    inc (hl)
+    ret
+
+draw_ikkle_inline:
+    pop hl
+    ld a, (hl)
+    inc hl
+    cp NETCHESSZX_INFO_SETUP_GAME_HEADER_ROW
+    jr z, test_header_game
+    cp NETCHESSZX_INFO_SETUP_HEADER_ROW
+    jp nz, test_bad_current_full
+    ld de, session_setup_msg
+    ld a, NETCHESSZX_INFO_SETUP_HLINE_ROW
+    jr test_header_descriptor
+test_header_game:
+    push hl
+    ld hl, game_setup_calls
+    inc (hl)
+    pop hl
+    ld de, game_setup_msg
+    ld a, NETCHESSZX_INFO_SETUP_GAME_HLINE_ROW
+test_header_descriptor:
+    ld (test_header_hline), a
+    ld a, (hl)
+    cp NETCHESSZX_INFO_TEXT_COL
+    jp nz, test_bad_current_full
+    inc hl
+    ld a, (hl)
+    cp NETCHESSZX_ATTR_MOVES_TITLE
+    jp nz, test_bad_current_full
+    inc hl
+    ld a, (hl)
+    cp e
+    jp nz, test_bad_current_full
+    inc hl
+    ld a, (hl)
+    cp d
+    jp nz, test_bad_current_full
+    inc hl
+    jp (hl)
+
+draw_right_hline:
+    ld hl, test_header_hline
+    cp (hl)
+    jp nz, test_bad_current_full
+    ret
+
+test_header_hline: DEFB 0
+game_setup_msg: DEFB 0
+session_setup_msg: DEFB 0
+ELSE
 _spectrum_info_show_setup:
     ld hl, setup_calls
     inc (hl)
@@ -1234,6 +1584,7 @@ _spectrum_info_show_game_setup:
     ld hl, game_setup_calls
     inc (hl)
     ret
+ENDIF
 
 test_marker_left_on:
     ld de, test_marker_left_pixels

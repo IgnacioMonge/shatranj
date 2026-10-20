@@ -465,7 +465,7 @@ def run_shrink_helpers_vector() -> None:
     kernel_text = kernels.read_text(encoding="utf-8")
     dispatch_text = dispatch.read_text(encoding="utf-8")
     panel_draw_text = panel_draw.read_text(encoding="utf-8")
-    panel_entries_text = panel_entries.read_text(encoding="utf-8")
+    panel_entries_text = read_asm(panel_entries)
 
     assert kernel_text.count("call netchesszx_load_stack_args2") == 8
     assert dispatch_text.count("call netchesszx_load_stack_args2") == 2
@@ -757,6 +757,47 @@ def run_setup_visible_vector() -> None:
         )
 
 
+def run_setup_match_vector() -> None:
+    """Spectranext Setup: LINK cycles MQTT/DIRECT/MATCH and MATCH answers the
+    endpoint rows without an IP and never focuses them."""
+    assembler = required_tool("z80asm")
+    emulator = required_tool("z88dk-ticks")
+
+    source = ROOT / "asm/overlay/setup/entry_setup.asm"
+    harness = ROOT / "tests/spectrum/setup_match_vector.asm"
+    with tempfile.TemporaryDirectory() as tmp_name:
+        tmp = Path(tmp_name)
+        exported = tmp / "entry_setup_match.asm"
+        exported.write_text(
+            source.read_text(encoding="utf-8").replace(
+                "PUBLIC _setup_step_ovl_entry",
+                "PUBLIC _setup_step_ovl_entry\n"
+                "PUBLIC _setup_compute_visible_ovl_entry",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        binary = tmp / "setup_match.bin"
+        map_text = assemble_vector(
+            assembler,
+            harness,
+            [
+                exported,
+                ROOT / "asm/spectrum/text.asm",
+                ROOT / "asm/spectrum/shrink_kernels.asm",
+            ],
+            binary,
+            defines=["NETCHESSZX_SPECTRANEXT"],
+        )
+        result, ticks, pc, reg_a, near = execute_vector(
+            emulator, binary, map_text, counter=500000
+        )
+        assert result == 0, (
+            "Spectranext setup MATCH vector failed: "
+            f"result={result}, ticks={ticks}, pc={pc:04x}, a={reg_a:02x}, near={near.hex()}"
+        )
+
+
 def run_time_config_vector() -> None:
     assembler = required_tool("z80asm")
     emulator = required_tool("z88dk-ticks")
@@ -765,15 +806,18 @@ def run_time_config_vector() -> None:
     harness = ROOT / "tests/spectrum/time_config_vector.asm"
     with tempfile.TemporaryDirectory() as tmp_name:
         tmp = Path(tmp_name)
-        binary = tmp / "time_config.bin"
-        map_text = assemble_vector(assembler, harness, [source], binary)
-        result, ticks, pc, reg_a, near = execute_vector(
-            emulator, binary, map_text, counter=200000
-        )
-        assert result == 0, (
-            "time config target vector failed: "
-            f"result={result}, ticks={ticks}, pc={pc:04x}, a={reg_a:02x}, near={near.hex()}"
-        )
+        for defines in ([], ["NETCHESSZX_SPECTRANEXT"]):
+            binary = tmp / f"time_config{len(defines)}.bin"
+            map_text = assemble_vector(
+                assembler, harness, [source], binary, defines=defines
+            )
+            result, ticks, pc, reg_a, near = execute_vector(
+                emulator, binary, map_text, counter=200000
+            )
+            assert result == 0, (
+                f"time config target vector failed {defines}: "
+                f"result={result}, ticks={ticks}, pc={pc:04x}, a={reg_a:02x}, near={near.hex()}"
+            )
 
 
 def run_setup_navigation_cursor_source_guard() -> None:
@@ -1177,7 +1221,10 @@ def run_setup_menu_render_vector() -> None:
     with tempfile.TemporaryDirectory() as tmp_name:
         tmp = Path(tmp_name)
         binary = tmp / "setup_menu_render.bin"
-        map_text = assemble_vector(assembler, harness, sources, binary)
+        map_text = assemble_vector(
+            assembler, harness, sources, binary,
+            defines=["NETCHESSZX_CLASSIC_BOOT"],
+        )
         result, ticks, pc, reg_a, near = execute_vector(
             emulator, binary, map_text, counter=800000
         )
@@ -1207,6 +1254,25 @@ def run_setup_menu_render_vector() -> None:
         )
         assert_edit_line_within_buffer(
             next_map, next_binary.with_suffix(".ram").read_bytes(), "Next"
+        )
+        spx_binary = tmp / "setup_menu_render_spectranext.bin"
+        spx_map = assemble_vector(
+            assembler,
+            harness,
+            sources,
+            spx_binary,
+            defines=["NETCHESSZX_SPECTRANEXT"],
+        )
+        spx_result, spx_ticks, spx_pc, spx_a, spx_near = execute_vector(
+            emulator, spx_binary, spx_map, counter=800000
+        )
+        assert spx_result == 0, (
+            "Spectranext setup menu render target vector failed: "
+            f"result={spx_result}, ticks={spx_ticks}, pc={spx_pc:04x}, "
+            f"a={spx_a:02x}, near={spx_near.hex()}"
+        )
+        assert_edit_line_within_buffer(
+            spx_map, spx_binary.with_suffix(".ram").read_bytes(), "Spectranext"
         )
 
 
@@ -3750,6 +3816,7 @@ def main() -> int:
     run_timer_roll_vector()
     run_mqtt_connect_vector()
     run_setup_visible_vector()
+    run_setup_match_vector()
     run_setup_state_vector()
     run_time_config_vector()
     run_setup_menu_render_vector()

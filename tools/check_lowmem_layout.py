@@ -118,12 +118,23 @@ def classic_frame_clock_end(text, bss_end, defines=frozenset()):
                                   "SPECTRUM_LINK_PAYLOAD_MAX", defines)
         slots = [parse_symbol(text, name) for name in (
             "_direct_rx_payload", "_direct_rx_payload2",
-            "_spectrum_moves_header_shown")]
+            "_direct_rx_payload_end")]
         if slots != [high_head + n * payload_max for n in range(3)]:
             raise SystemExit("[ERR] Classic DIRECT receive slots must hold "
                              "SPECTRUM_LINK_PAYLOAD_MAX (%d) bytes each"
                              % payload_max)
-        return parse_symbol(text, "__bss_high_scratch_tail")
+        high_tail = parse_symbol(text, "__bss_high_scratch_tail")
+        if high_tail != slots[-1]:
+            raise SystemExit("[ERR] Classic high scratch must contain only DIRECT slots")
+        name_max = parse_const(Path("src/common/protocol/platform_protocol.h"),
+                               "NETCHESS_PLAYER_NAME_MAX")
+        cache = parse_symbol(text, "_spectrum_moves_header_shown")
+        cache_end = parse_symbol(text, "spectrum_moves_header_shown_end")
+        if (cache_end - cache != 2 * (name_max + 1) or
+                not (parse_symbol(text, "__data_user_head") <= cache < cache_end <=
+                     parse_symbol(text, "__data_user_tail") <= vector_head)):
+            raise SystemExit("[ERR] Classic MOVES cache requires two exact names in resident DATA")
+        return high_tail
     return vector_end
 
 

@@ -1,3 +1,5 @@
+INCLUDE "asm/app/player_name_layout.inc"
+
 clear_screen:
     xor a
     out (0xfe), a
@@ -195,19 +197,11 @@ draw_static_panels:
     jp draw_right_hline_full_left
 
 draw_moves_header:
-    ld hl, ula_screen_info_header
-    ld a, NETCHESSZX_INFO_PANEL_COL
-    add a, l
-    ld l, a
-    ld d, h
-    ld e, l
+    ld de, ula_screen_info_header + NETCHESSZX_INFO_PANEL_COL
     ld c, 13
     call clear_pixels_8
 
-    ld hl, ula_attr_info_header
-    ld a, NETCHESSZX_INFO_PANEL_COL
-    add a, l
-    ld l, a
+    ld hl, ula_attr_info_header + NETCHESSZX_INFO_PANEL_COL
     ld b, NETCHESSZX_INFO_PANEL_WIDTH_BYTES
 dmh_attr_loop:
     ld (hl), ATTR_STATUS
@@ -216,6 +210,7 @@ dmh_attr_loop:
     ; Discs, divider and player labels: STATUS overlay (moves header entry),
     ; painted by spectrum_gui_moves_header() once the panels are visible.
     ; The row is blank now, so both labels must be drawn again.
-    ld hl, 0
-    ld (_spectrum_moves_header_shown), hl
+    xor a
+    ld (_spectrum_moves_header_shown), a
+    ld (_spectrum_moves_header_shown + PLAYER_NAME_MAX + 1), a
     ret

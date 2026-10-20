@@ -2079,9 +2079,12 @@ connection_setup:
         }
     } else if (netchesszx_session_is_host()) {
         while (1) {
+            uint8_t listen_rc;
+
             status_show_connecting();
             notify_wait_msg(SPECTRUM_GUI_MSG_CONNECTING);
-            if (spectrum_link_listen()) {
+            listen_rc = spectrum_link_listen();
+            if (listen_rc) {
                 status_show_endpoint();
                 notify_info_msg(SPECTRUM_GUI_MSG_CONNECTED);
                 while (1) {
@@ -2093,6 +2096,16 @@ connection_setup:
                     if (wait_rc == SPECTRUM_LINK_CANCELLED) {
                         goto cancel_to_setup;
                     }
+#ifdef NETCHESSZX_SPECTRANEXT
+                    /* MATCH lobby or pairing failure: say so; the next wait
+                       registers again. */
+                    if (wait_rc == SPECTRUM_LINK_FAILED) {
+                        if (retry_after_error(msg_connect_failed)) {
+                            goto cancel_to_setup;
+                        }
+                        continue;
+                    }
+#endif
                     if (wait_rc) {
                         game_message_loop();
                         if (setup_restart_requested) {
@@ -2117,10 +2130,36 @@ connection_setup:
 
             status_show_connecting();
             notify_wait_msg(SPECTRUM_GUI_MSG_CONNECTING);
+#ifdef NETCHESSZX_SPECTRANEXT
+            if (netchesszx_link_match) {
+                connect_rc = spectrum_net_select_host();
+                if (connect_rc == 1u) {
+                    spectrum_gui_restore_side_panels();
+                    status_show_connecting();
+                    notify_wait_msg(SPECTRUM_GUI_MSG_CONNECTING);
+                    connect_rc = spectrum_net_join_host();
+                }
+            } else {
+                connect_rc = spectrum_link_connect_host();
+            }
+#else
             connect_rc = spectrum_link_connect_host();
+#endif
             if (connect_rc == SPECTRUM_LINK_CANCELLED) {
                 goto cancel_to_setup;
             }
+#ifdef NETCHESSZX_SPECTRANEXT
+            /* Another guest picked this MATCH guest from its own menu. Setup
+               clears the notice, so hold it before returning there. */
+            if (connect_rc == SPECTRUM_LINK_NOT_HOST) {
+                retry_after_error(NETCHESSZX_UI_ERROR_RIVAL_NOT_HOST);
+                goto cancel_to_setup;
+            }
+            if (netchesszx_link_match && connect_rc != 1u) {
+                retry_after_error(msg_connect_failed);
+                goto cancel_to_setup;
+            }
+#endif
             if (connect_rc) {
                 status_show_endpoint();
                 notify_info_msg(SPECTRUM_GUI_MSG_CONNECTED);

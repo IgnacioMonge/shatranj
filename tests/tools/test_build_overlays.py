@@ -96,6 +96,60 @@ def test_spectranext_adds_time_overlay() -> None:
         assert "_esx_fopen" in spec.local_symbols
 
 
+def test_spectranext_match_info_string_only_is_direct_local() -> None:
+    env = {
+        **CLASSIC_ENV,
+        "ZX_OVL_CFLAGS": "-DNETCHESSZX_SPECTRANEXT",
+        "MQTT_CONNECT_OVL_CFLAGS": "-DMQTT_KEEP",
+        "SPXN_RESOLVE_C": "/driver/spxresolve.c",
+        "SPXN_MATCH_C": "/driver/spxmatch.c /driver/spxinfo.c",
+    }
+    specs = overlay_specs(env)
+    direct = next(spec for spec in specs if spec.name == "DIRECT")
+    assert direct == OverlaySpec(
+        "DIRECT",
+        ("asm/overlay/direct/entry_direct_spectranext.asm",
+         "asm/overlay/direct/match_picker.asm"),
+        (
+            ("src/spectrum/overlay/direct_ovl.c", ()),
+            ("/driver/spxresolve.c", ()),
+            ("/driver/spxmatch.c", ()),
+            ("/driver/spxinfo.c", ("-DSPXINFO_STRING_ONLY",)),
+        ),
+        ("src/spectrum/overlay/match_picker.inc",
+         str(Path("/driver/spxmatch.h")), str(Path("/driver/spxinfo.h"))),
+    )
+    assert [(spec.name, source) for spec in specs
+            for source, flags in spec.c_sources
+            if "-DSPXINFO_STRING_ONLY" in flags] == [("DIRECT", "/driver/spxinfo.c")]
+    without_match = overlay_specs({**env, "SPXN_MATCH_C": ""})
+    assert [spec for spec in specs if spec.name != "DIRECT"] == [
+        spec for spec in without_match if spec.name != "DIRECT"
+    ]
+    for flags in ("", "-DNETCHESSZX_NEXT"):
+        direct = next(spec for spec in overlay_specs({**CLASSIC_ENV, "ZX_OVL_CFLAGS": flags})
+                      if spec.name == "DIRECT")
+        assert direct.c_sources == (("src/spectrum/overlay/direct_ovl.c", ()),)
+        assert direct.asm == ("asm/overlay/direct/entry_direct.asm",)
+
+
+def test_spectranext_match_stream_mapping_is_exported() -> None:
+    from gen_overlay_defs import REQUIRED_SYMBOLS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "resident.map"
+        source.write_text("".join(
+            f"{name} = $7000 ; test\n"
+            for name in [*REQUIRED_SYMBOLS, "_spxn_detect", "_spxn_internal_stream_fd"]
+        ), encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tools/gen_overlay_defs.py"), str(source)],
+            text=True, capture_output=True, check=True,
+        )
+        assert "PUBLIC _spxn_internal_stream_fd\n" in result.stdout
+        assert "DEFC _spxn_internal_stream_fd = $7000\n" in result.stdout
+
+
 def test_local_overlay_symbols_are_removed_from_resident_defs() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -688,6 +742,8 @@ def main() -> int:
         test_setup_imports_are_private_to_setup_overlays,
         test_local_overlay_symbols_are_removed_from_resident_defs,
         test_spectranext_adds_time_overlay,
+        test_spectranext_match_info_string_only_is_direct_local,
+        test_spectranext_match_stream_mapping_is_exported,
         test_normalize_overlay_name,
         test_is_stale_compares_mtimes,
         test_size_check_same_and_growth,

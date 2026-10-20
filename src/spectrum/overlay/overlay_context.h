@@ -12,6 +12,14 @@
 #define SPECTRUM_OVL_CTX_PTR_LO 0u
 #define SPECTRUM_OVL_CTX_PTR_HI 1u
 
+/* Spectranext DIRECT CONNECT: unmark an old host name, show the picker,
+   or (zero) validate the paired initiator. No nested overlay calls. */
+#define SPECTRUM_OVL_CTX_DIRECT_UNMARK 0u
+#define SPECTRUM_OVL_CTX_DIRECT_CLOSE_WAIT 0u
+#define SPECTRUM_OVL_DIRECT_MATCH_UNMARK 1u
+#define SPECTRUM_OVL_DIRECT_MATCH_PICK 2u
+#define SPECTRUM_OVL_DIRECT_MATCH_JOIN 3u
+
 /* MQTT TX consumes the payload during the synchronous overlay call. Route and
    retain share one byte so no mutable request state outlives that call. */
 #define NETCHESSZX_MQTT_TX_CTX_PAYLOAD_LO 0u

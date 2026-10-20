@@ -51,6 +51,9 @@
 #define SESSION_APP_BUILD_LOADED(meta) \
     spectrum_restore_build_b64(&restore_snapshot, (meta), restore_b64_pending)
 #define SESSION_APP_BEGIN_SETUP_EXIT() (setup_restart_requested = 1u)
+#ifdef NETCHESSZX_SPECTRANEXT
+#define SESSION_APP_CLOSE_DIRECT(wait_frames) spectrum_net_close_direct(wait_frames)
+#endif
 #define SESSION_APP_FINISH_SETUP_EXIT() do { \
     clear_disconnected_session_state(); \
     edit_stop_clear(); \

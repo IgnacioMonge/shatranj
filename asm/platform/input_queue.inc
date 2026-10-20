@@ -19,6 +19,8 @@ EXTERN spectrum_input_queue_clear
 EXTERN spectrum_input_queue_latch
 ELSE
 SECTION bss_user
+PUBLIC _spectrum_input_pending_event
+_spectrum_input_pending_event:
 key_event_0: DEFS 1
 key_event_1: DEFS 1
 SECTION code_user

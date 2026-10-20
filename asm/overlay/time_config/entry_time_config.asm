@@ -83,6 +83,13 @@ INIT_COMPLETE   EQU 0x02
 TIME_RTC        EQU 127
 TC_PROBE_KEY       EQU 0xff
 INCLUDE "asm/app/player_name_layout.inc"
+IFDEF NETCHESSZX_SPECTRANEXT
+INCLUDE "asm/app/link_match_layout.inc"
+EXTERN _spxn_xfs_firmware_probe
+; Firmware build version reply, in the overlay scratch
+; (NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR).
+TC_FW_VERSION   EQU 0x672b
+ENDIF
 ZXUNOADDR       EQU 0xfc3b
 M_GETDATE       EQU 0x8e
 M_DRVAPI        EQU 0x92
@@ -178,6 +185,54 @@ tc_init_source:
     ld de, _setup_focus_choice
     ld bc, 7
     ldir
+IFDEF NETCHESSZX_SPECTRANEXT
+    ; MATCH needs matchmaking firmware, build 1.2 or later: 1.0 and 1.1
+    ; resolve no @match.spx name (FuseX 0.4 reports "1.2-6e04d77b"). The
+    ; reply buffer must lie outside the overlay page.
+    ld hl, TC_FW_VERSION
+    call _spxn_xfs_firmware_probe
+    ld de, 0
+    bit 0, l
+    jr nz, tc_fw_compare            ; no operation 15: older than 1.0
+    ld hl, TC_FW_VERSION
+    call tc_fw_number
+    ld d, c
+    ld a, (hl)
+    cp '.'
+    jr nz, tc_fw_minor
+    inc hl
+tc_fw_minor:
+    call tc_fw_number
+    ld e, c
+tc_fw_compare:
+    ld hl, 0x0101
+    or a
+    sbc hl, de
+    sbc a, a                        ; 0xff when DE (major.minor) > 1.1
+    and 1
+    ld (LINK_MATCH_OK), a
+    jr nz, tc_init_link
+    ; A saved MATCH link opens as DIRECT, incomplete and unsaved: JOIN needs
+    ; an address the MATCH record never had to hold.
+    ld hl, LINK_MATCH
+    cp (hl)
+    jr z, tc_init_link
+    ld (hl), a
+    ld (tc_init_flags), a
+tc_init_link:
+    ; LINK focus in screen order: MQTT, DIRECT, then MATCH (DIRECT + flag).
+    ld a, (_setup_choice + 1)
+    or a
+    ld a, LINK_FOCUS_MQTT
+    jr nz, tc_init_link_focus
+    ld a, (LINK_MATCH)
+    or a
+    ld a, LINK_FOCUS_DIRECT
+    jr z, tc_init_link_focus
+    inc a
+tc_init_link_focus:
+    ld (LINK_FOCUS), a
+ENDIF
     ld a, (_netchesszx_board_theme_index)
     ld (_setup_focus_board_theme), a
     ld (_setup_game_focus), a
@@ -761,6 +816,28 @@ tc_key:
     DEFB 0
 tc_init_flags:
     DEFB 0
+
+IFDEF NETCHESSZX_SPECTRANEXT
+; HL = decimal digits. Returns C = their value (mod 256) and HL at the
+; first non-digit. Clobbers AF and B.
+tc_fw_number:
+    ld c, 0
+tc_fw_digit:
+    ld a, (hl)
+    sub '0'
+    cp 10
+    ret nc
+    ld b, a
+    ld a, c
+    add a, a
+    add a, a
+    add a, c
+    add a, a
+    add a, b
+    ld c, a
+    inc hl
+    jr tc_fw_digit
+ENDIF
 
 IFDEF NETCHESSZX_SPECTRANEXT
 ; Spectranext has no esxDOS/NextZXOS RTC. Answer before any ROM call.

@@ -74,6 +74,9 @@ ROW_ACTION      EQU 10
 ROW_NAME        EQU 11
 
 INCLUDE "asm/app/player_name_layout.inc"
+IFDEF NETCHESSZX_SPECTRANEXT
+INCLUDE "asm/app/link_match_layout.inc"
+ENDIF
 
     DEFB 2
     DW _setup_step_ovl_entry
@@ -165,12 +168,29 @@ su_nav_paint:
 su_nav_next_mark:
     ld a, (_setup_cursor)
     call su_mark_paint_row
+IFDEF NETCHESSZX_SPECTRANEXT
+    jp su_nav_notice
+ELSE
     jr su_ret1
+ENDIF
 
 su_focus:
     ld a, (_setup_cursor)
     cp 2
     jr nc, su_focus_later
+IFDEF NETCHESSZX_SPECTRANEXT
+    ; LINK cycles MQTT, DIRECT and MATCH (only MQTT and DIRECT when the
+    ; firmware has no matchmaking); GAME still toggles.
+    or a
+    jr z, su_focus_game
+    ld a, (LINK_MATCH_OK)
+    add a, 2
+    ld b, a
+    ld hl, LINK_FOCUS
+    call su_cycle_choice
+    jr su_focus_paint
+su_focus_game:
+ENDIF
     ld e, a
     ld d, 0
     ld hl, _setup_focus_choice
@@ -252,6 +272,25 @@ su_mark_paint_row:
 su_mark_ui:
     ld a, d
     jp su_or_flags
+
+IFDEF NETCHESSZX_SPECTRANEXT
+su_nav_notice:
+    ; The LINK painter owns its warning; restore SELECT only on leaving.
+    ld l, 1
+    ld a, (LINK_MATCH_OK)
+    or a
+    ret nz
+    ld a, (_setup_cursor)
+    dec a
+    jr z, su_nav_notice_store
+    ld a, (CTX_FORCE_LO)
+    and 2
+    ret z
+    ld a, NOTICE_SELECT
+su_nav_notice_store:
+    ld (CTX_NOTICE), a
+    ret
+ENDIF
 
 su_cycle_choice:
     ld a, (CTX_KEY)
@@ -347,6 +386,10 @@ su_endpoint_define:
 
 ; A = cursor: 0 GAME, 1 LINK. Its defined bit is cursor + 1.
 su_select_conn:
+IFDEF NETCHESSZX_SPECTRANEXT
+    or a
+    jp nz, su_select_link
+ENDIF
     ld e, a
     ld d, 0
     ld hl, _setup_focus_choice
@@ -357,6 +400,7 @@ su_select_conn:
     inc e
     ld d, e
     call su_select_primary
+su_select_conn_result:
     jr z, su_select_unchanged
     ld a, b
     or a
@@ -380,6 +424,11 @@ su_conn_kept:
     or a
     jr z, su_after_select
 su_link_auto_room:
+IFDEF NETCHESSZX_SPECTRANEXT
+    ld a, (LINK_MATCH)
+    or a
+    jp nz, su_link_auto_match
+ENDIF
     ld hl, (_setup_choice)
     ld a, h
     or l
@@ -532,7 +581,12 @@ su_as_flags:
     jr z, su_as_ui
     ld a, FLAG_TIME_UI | FLAG_ACTION_UI | FLAG_RENDER | FLAG_SUPPRESS
 su_as_ui:
+IFDEF NETCHESSZX_SPECTRANEXT
+    call su_or_flags
+    jp su_nav_notice
+ELSE
     jp su_or_flags
+ENDIF
 
 su_mark_dirty:
     ld a, 1
@@ -810,6 +864,11 @@ su_endpoint_valid:
     ld a, (_setup_choice + 1)
     or a
     jr nz, su_validate_room
+IFDEF NETCHESSZX_SPECTRANEXT
+    ld a, (LINK_MATCH)
+    or a
+    ret nz
+ENDIF
     ld hl, (_netchesszx_direct_port)
     ld a, h
     or l
@@ -982,6 +1041,11 @@ su_cv_required:
     ld a, h
     or a
     jr nz, su_cv_action
+IFDEF NETCHESSZX_SPECTRANEXT
+    ld a, (LINK_MATCH)
+    or a
+    jr nz, su_cv_action
+ENDIF
     ld a, (_netchesszx_direct_host)
     or a
     jr z, su_cv_done
@@ -1040,6 +1104,20 @@ su_order_time:
 
 su_visible_a:
     ld e, a
+su_va_match:
+IFDEF NETCHESSZX_SPECTRANEXT
+    ; MATCH's endpoint line is fixed and takes no focus.
+    ld a, e
+    sub 2
+    cp 2
+    jr nc, su_va_mask
+    ld a, (_setup_choice + 1)
+    or a
+    jr nz, su_va_mask
+    ld a, (LINK_MATCH)
+    or a
+    jp nz, su_re_false
+ENDIF
 su_va_mask:
     ld a, e
     cp 2
@@ -1216,6 +1294,43 @@ su_parse_port:
 su_pp_fail:
     xor a
     ret
+
+IFDEF NETCHESSZX_SPECTRANEXT
+; LINK focus 0 MQTT, 1 DIRECT, 2 MATCH. MATCH stores DIRECT plus the flag,
+; so a flag change alone must still count as a changed LINK value.
+su_select_link:
+    ld hl, LINK_MATCH
+    ld a, (LINK_FOCUS)
+    ld c, a
+    cp LINK_FOCUS_MATCH
+    ld a, 0
+    jr nz, su_sl_flag
+    inc a
+su_sl_flag:
+    cp (hl)
+    ld (hl), a
+    jr z, su_sl_value
+    ld a, 0xff
+    ld (_setup_choice + 1), a
+su_sl_value:
+    ld a, c
+    or a
+    ld a, 1
+    jr z, su_sl_store
+    xor a
+su_sl_store:
+    ld hl, _setup_choice + 1
+    ld d, 2
+    call su_select_primary
+    jp su_select_conn_result
+
+; MATCH has no endpoint to enter: its fixed line answers rows 2-3.
+su_link_auto_match:
+    call su_set_defined_rows_2_3
+    ld a, 2
+    ld (CTX_CLEAR_FROM), a
+    jp su_after_select
+ENDIF
 
 ; Mutually exclusive visible-mask, IP-digit and parsed-port scratch.
 su_scratch: DEFW 0

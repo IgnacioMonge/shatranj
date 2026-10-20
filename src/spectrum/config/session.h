@@ -83,6 +83,19 @@ extern char netchesszx_mqtt_code[NETCHESSZX_MQTT_CODE_MAX + 1u];
 extern const uint16_t netchesszx_mqtt_port;
 extern char netchesszx_direct_host[NETCHESSZX_DIRECT_HOST_MAX + 1u];
 extern uint16_t netchesszx_direct_port;
+#ifdef NETCHESSZX_SPECTRANEXT
+/* MATCH: the DIRECT wire protocol over a peer chosen in the firmware
+   matchmaking menu. Both roles connect to the service; neither listens. */
+#define NETCHESSZX_MATCH_HOST "shatranj@match.spx"
+#if defined(NETCHESSZX_FIXED_LOW_RAM)
+#define netchesszx_link_match \
+    (*(uint8_t *)NETCHESSZX_LOWRAM_SPXN_LINK_MATCH_ADDR)
+#else
+extern uint8_t netchesszx_link_match;
+#endif
+#define netchesszx_transport_is_match() \
+    (!netchesszx_transport_is_mqtt() && netchesszx_link_match != 0u)
+#endif
 /* "MNAME " followed by the configured player name (empty when unset): the
    advisory line is sent as-is and the name is read in place. The peer name
    is the last valid MNAME accepted from the current peer, or empty. */

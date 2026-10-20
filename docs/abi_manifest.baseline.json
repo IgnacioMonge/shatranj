@@ -1561,6 +1561,31 @@
       "name": "SPECTRUM_OVL_SETUP_NOTICE_BAD_TIMEZONE",
       "raw_value": "6u",
       "value": 6
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_DIRECT_UNMARK",
+      "raw_value": "0u",
+      "value": 0
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_DIRECT_CLOSE_WAIT",
+      "raw_value": "0u",
+      "value": 0
+    },
+    {
+      "name": "SPECTRUM_OVL_DIRECT_MATCH_UNMARK",
+      "raw_value": "1u",
+      "value": 1
+    },
+    {
+      "name": "SPECTRUM_OVL_DIRECT_MATCH_PICK",
+      "raw_value": "2u",
+      "value": 2
+    },
+    {
+      "name": "SPECTRUM_OVL_DIRECT_MATCH_JOIN",
+      "raw_value": "3u",
+      "value": 3
     }
   ],
   "resident_symbols": [
@@ -2244,7 +2269,7 @@
       "required": true
     },
     {
-      "address": "0xD9A9",
+      "address": null,
       "api": {
         "args": [],
         "asm_name": "_spectrum_info_show_setup",
@@ -2254,11 +2279,11 @@
         "return": "void"
       },
       "name": "_spectrum_info_show_setup",
-      "present": true,
-      "required": true
+      "present": false,
+      "required": false
     },
     {
-      "address": "0xD9AE",
+      "address": null,
       "api": {
         "args": [],
         "asm_name": "_spectrum_info_show_game_setup",
@@ -2268,8 +2293,8 @@
         "return": "void"
       },
       "name": "_spectrum_info_show_game_setup",
-      "present": true,
-      "required": true
+      "present": false,
+      "required": false
     },
     {
       "address": "0xDA82",
@@ -3822,6 +3847,66 @@
       "address": null,
       "name": "l_gt",
       "present": false,
+      "required": false
+    },
+    {
+      "address": "0xDAB1",
+      "name": "clear_right_panel_rows",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xD9F8",
+      "name": "draw_ikkle_inline",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xE5C9",
+      "name": "draw_right_hline",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0x624E",
+      "name": "game_setup_msg",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0x623D",
+      "name": "session_setup_msg",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xE7F8",
+      "name": "clear_right_pixel_band_abs",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xE367",
+      "name": "draw_text64_line_attr_fast",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xF60B",
+      "name": "current_attr",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xE747",
+      "name": "_spectrum_input_suppress_until_release",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xF61E",
+      "name": "_spectrum_input_pending_event",
+      "present": true,
       "required": false
     }
   ],

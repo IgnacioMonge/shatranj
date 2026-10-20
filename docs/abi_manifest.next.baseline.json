@@ -1561,6 +1561,31 @@
       "name": "SPECTRUM_OVL_SETUP_NOTICE_BAD_TIMEZONE",
       "raw_value": "6u",
       "value": 6
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_DIRECT_UNMARK",
+      "raw_value": "0u",
+      "value": 0
+    },
+    {
+      "name": "SPECTRUM_OVL_CTX_DIRECT_CLOSE_WAIT",
+      "raw_value": "0u",
+      "value": 0
+    },
+    {
+      "name": "SPECTRUM_OVL_DIRECT_MATCH_UNMARK",
+      "raw_value": "1u",
+      "value": 1
+    },
+    {
+      "name": "SPECTRUM_OVL_DIRECT_MATCH_PICK",
+      "raw_value": "2u",
+      "value": 2
+    },
+    {
+      "name": "SPECTRUM_OVL_DIRECT_MATCH_JOIN",
+      "raw_value": "3u",
+      "value": 3
     }
   ],
   "resident_symbols": [
@@ -2255,7 +2280,7 @@
       },
       "name": "_spectrum_info_show_setup",
       "present": true,
-      "required": true
+      "required": false
     },
     {
       "address": "0xD917",
@@ -2269,7 +2294,7 @@
       },
       "name": "_spectrum_info_show_game_setup",
       "present": true,
-      "required": true
+      "required": false
     },
     {
       "address": "0xD935",
@@ -3822,6 +3847,66 @@
       "address": null,
       "name": "l_gt",
       "present": false,
+      "required": false
+    },
+    {
+      "address": null,
+      "name": "clear_right_panel_rows",
+      "present": false,
+      "required": false
+    },
+    {
+      "address": null,
+      "name": "draw_ikkle_inline",
+      "present": false,
+      "required": false
+    },
+    {
+      "address": null,
+      "name": "draw_right_hline",
+      "present": false,
+      "required": false
+    },
+    {
+      "address": null,
+      "name": "game_setup_msg",
+      "present": false,
+      "required": false
+    },
+    {
+      "address": null,
+      "name": "session_setup_msg",
+      "present": false,
+      "required": false
+    },
+    {
+      "address": "0xDE63",
+      "name": "clear_right_pixel_band_abs",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xDE81",
+      "name": "draw_text64_line_attr_fast",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xED5A",
+      "name": "current_attr",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xDE27",
+      "name": "_spectrum_input_suppress_until_release",
+      "present": true,
+      "required": false
+    },
+    {
+      "address": "0xEDCD",
+      "name": "_spectrum_input_pending_event",
+      "present": true,
       "required": false
     }
   ],

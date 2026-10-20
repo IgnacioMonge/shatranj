@@ -91,6 +91,9 @@ uint8_t config_defaults_ovl(uint8_t *ctx) __z88dk_fastcall
     netchesszx_mqtt_code[NETCHESSZX_MQTT_CODE_MAX] = '\0';
     netchesszx_direct_host[0] = '\0';
     netchesszx_player_name[0] = '\0';
+#ifdef NETCHESSZX_SPECTRANEXT
+    netchesszx_link_match = 0u;
+#endif
     return 1u;
 }
 
@@ -111,6 +114,11 @@ static void config_pack(uint8_t *record)
     if (netchesszx_session_identity_transport() == NETCHESSZX_TRANSPORT_MQTT) {
         flags |= NETCHESSZX_APP_CONFIG_FLAG_TRANSPORT;
     }
+#ifdef NETCHESSZX_SPECTRANEXT
+    if (netchesszx_transport_is_match()) {
+        flags |= NETCHESSZX_APP_CONFIG_FLAG_MATCH;
+    }
+#endif
     record[NETCHESSZX_APP_CONFIG_FLAGS_OFF] = flags;
     record[NETCHESSZX_APP_CONFIG_GAME_OFF] = (uint8_t)(
         (netchesszx_session_identity_host_color() == NETCHESSZX_COLOR_BLACK
@@ -167,6 +175,11 @@ static void config_apply(const uint8_t *record)
         (uint8_t)(flags & NETCHESSZX_APP_CONFIG_FLAG_ROLE),
         (uint8_t)((flags & NETCHESSZX_APP_CONFIG_FLAG_TRANSPORT) != 0u),
         host_color);
+#ifdef NETCHESSZX_SPECTRANEXT
+    /* Validation keeps MATCH off MQTT records. */
+    netchesszx_link_match =
+        (uint8_t)((flags & NETCHESSZX_APP_CONFIG_FLAG_MATCH) != 0u);
+#endif
     netchesszx_timezone = (int8_t)record[NETCHESSZX_APP_CONFIG_TZ_OFF];
     netchesszx_timezone_last =
         (int8_t)record[NETCHESSZX_APP_CONFIG_TZ_LAST_OFF];

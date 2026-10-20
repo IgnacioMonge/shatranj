@@ -9,6 +9,7 @@ Layout, as SpecTalkZX publishes it:
 Writes build/spectranext-pages/.
 """
 
+import argparse
 import html
 import json
 import re
@@ -34,12 +35,16 @@ SHOTS = (
 )
 
 
-def release_name():
-    """Version and codename of the newest CHANGELOG release heading."""
+def release_name(preview_codename=None):
+    """Use a dated release, or an explicit local preview before publication."""
+    version = (ROOT / "VERSION").read_text(encoding="ascii").strip()
+    if preview_codename is not None:
+        if not re.fullmatch(r"\d+\.\d+(?:\.\d+)?", version) or not preview_codename.strip():
+            raise SystemExit("preview needs a numeric VERSION and a non-empty codename")
+        return version, preview_codename.strip()
     for line in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8").splitlines():
         match = re.fullmatch(r"## \[([0-9.]+)\] - [0-9-]+ - (.+)", line)
         if match:
-            version = (ROOT / "VERSION").read_text(encoding="ascii").strip()
             if match[1] != version:
                 raise SystemExit(f"CHANGELOG release {match[1]} != VERSION {version}")
             return match[1], match[2]
@@ -74,7 +79,11 @@ def landing(version, codename):
 
 
 def main():
-    version, codename = release_name()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--preview-codename",
+                        help="stage an unpublished version without dating the changelog")
+    args = parser.parse_args()
+    version, codename = release_name(args.preview_codename)
     direct = BUILD / "spectranext-direct"
     installer = BUILD / "spectranext-resource"
     for folder, target in ((direct, "make spectranext-direct"),

@@ -70,7 +70,9 @@ jobs:
               throw "Unexpected packaged board count"
           }
 
-          $process = Start-Process "$app/shatranj-client.exe" -PassThru
+          $env:QT_QPA_PLATFORM = "windows"
+          $env:QT_PLUGIN_PATH = $app
+          $process = Start-Process "$app/shatranj-client.exe" -WindowStyle Hidden -PassThru
           Start-Sleep -Seconds 5
           if ($process.HasExited) {
               if ($process.ExitCode -ne 0) {

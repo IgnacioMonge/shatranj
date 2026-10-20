@@ -89,20 +89,33 @@ def check_fixed_reservation(temp: Path) -> None:
     # Classic links the DIRECT receive slots above the vector; a slot whose
     # DEFS width drifts from SPECTRUM_LINK_PAYLOAD_MAX must be rejected.
     harness = temp / "layout_high.asm"
-    harness.write_text("SECTION code_user\ndefs 1\n" + state, encoding="ascii")
+    # Match the CRT ordering: initialized DATA precedes ordinary/fixed BSS.
+    harness.write_text("SECTION code_user\ndefs 1\nSECTION data_user\n" + state,
+                       encoding="ascii")
     symbols = assemble_vector(required_tool("z80asm"), harness, [],
                               harness.with_suffix(".bin"),
                               ["NETCHESSZX_HIGH_SCRATCH"])
     normal_end = symbol_address(symbols, "__bss_user_tail")
-    assert classic_frame_clock_end(symbols, normal_end) == 0xFD63
-    narrow = re.sub(r"^(_direct_rx_payload2\s*=\s*)\$[0-9A-Fa-f]+",
-                    lambda match: f"{match[1]}$FD30", symbols, flags=re.M)
-    try:
-        classic_frame_clock_end(narrow, normal_end)
-    except SystemExit:
-        pass
-    else:
-        raise AssertionError("narrow DIRECT receive slot accepted")
+    cache_size = 2 * (symbol_address(symbols, "PLAYER_NAME_MAX") + 1)
+    assert classic_frame_clock_end(symbols, normal_end) == 0xFD61
+    cache = symbol_address(symbols, "_spectrum_moves_header_shown")
+    assert symbol_address(symbols, "spectrum_moves_header_shown_end") == cache + cache_size
+    assert harness.with_suffix(".bin").read_bytes()[cache - 0x8000:cache - 0x8000 + cache_size] == bytes(cache_size)
+    for name, value in (
+        ("_direct_rx_payload2", 0xFD30),
+        ("_direct_rx_payload_end", 0xFD60),
+        ("__bss_high_scratch_tail", 0xFD77),
+        ("_spectrum_moves_header_shown", 0xFD61),
+        ("spectrum_moves_header_shown_end", cache + cache_size - 1),
+    ):
+        bad_map = re.sub(rf"^({re.escape(name)}\s*=\s*)\$[0-9A-Fa-f]+",
+                         lambda match: f"{match[1]}${value:04X}", symbols, flags=re.M)
+        try:
+            classic_frame_clock_end(bad_map, normal_end)
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError(f"unsafe DIRECT/cache layout accepted: {name}")
 
 
 def main() -> None:

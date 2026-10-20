@@ -41,6 +41,13 @@ Cuando el rival está listo, la barra inferior termina en `VS ZX`, `VS NXT`,
 `VS SPCX`, `VS PC`, `VS MAC` o `VS LNX`, que indica contra qué máquina juegas.
 Pulsa **Disconnect** para salir.
 
+### MATCH de Spectranext
+
+Shatranj 1.4 incorpora MATCH en cartuchos Spectranext con firmware 1.2 o
+posterior. Empareja dos cartuchos mediante el servicio de su firmware.
+El cliente de escritorio sigue usando Direct o MQTT; elige uno de esos
+modos en ambos lados para jugar entre escritorio y Spectranext.
+
 ## Jugar
 
 - En tu turno, pulsa la pieza y después la casilla de destino. Si las ayudas

@@ -15,8 +15,13 @@ PUBLIC _spectrum_render_connection
 PUBLIC _spectrum_render_menu
 PUBLIC _spectrum_info_show_game
 PUBLIC _spectrum_render_board_coord_mark
+IFNDEF NETCHESSZX_CLASSIC_BOOT
 PUBLIC _spectrum_info_show_setup
 PUBLIC _spectrum_info_show_game_setup
+ELSE
+PUBLIC game_setup_msg
+PUBLIC session_setup_msg
+ENDIF
 PUBLIC _spectrum_info_show_preflight
 PUBLIC _spectrum_info_clear_tail
 PUBLIC _spectrum_info_line

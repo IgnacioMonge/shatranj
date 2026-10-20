@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.3-blue" alt="Version 1.3">
+  <img src="https://img.shields.io/badge/version-1.4-blue" alt="Version 1.4">
   <img src="https://img.shields.io/badge/protocols-Direct%20TCP%20%7C%20MQTT-2ea44f" alt="Protocols: Direct TCP and MQTT">
   <img src="https://img.shields.io/badge/desktop-Windows%20%7C%20macOS%20%7C%20Linux-41cd52" alt="Desktop: Windows, macOS, and Linux">
   <img src="https://img.shields.io/badge/Spectrum-Classic%20%7C%20Next%20%7C%20Spectranext-d52b1e" alt="Spectrum: Classic, Next, and Spectranext">
@@ -39,7 +39,7 @@ required.
 |  |  |
 | --- | --- |
 | **Play** | Spectrum ↔ Spectrum, Spectrum ↔ desktop, or desktop ↔ desktop |
-| **Connect** | Direct TCP without a broker, or MQTT through a shared broker and room |
+| **Connect** | Direct TCP, MQTT through a shared broker and room, or MATCH on Spectranext |
 | **Platforms** | ZX Spectrum Classic, Spectrum Next, Spectranext, Windows, macOS, and Linux |
 | **In game** | Legal-move hints, clocks, history, chat, draw, resign, takeback, save/restore, and end-of-game statistics |
 | **Stockfish** | The desktop client can let Stockfish play your side against any opponent |
@@ -47,31 +47,29 @@ required.
 | **Consistent play** | The same rules, protocol, and session behavior on every client |
 | **Native retro builds** | TAP + OVL + DAT for Classic and Spectranext; one self-contained NEX for Next |
 
-## What's new in 1.3
+## What's new in 1.4 — Open Match
 
-- **Stockfish joins the game:** the desktop client installs the official
-  Stockfish engine and can let it play your side, from level 0 to 20, against
-  any Spectrum or desktop opponent.
-- **Interrupted games come back:** Classic, Next, and Spectranext resume a
-  game after a crash, reset, or power cut, with the board, clocks, and move
-  list.
-- **Know who you are playing:** each player can set a name of up to ten
-  characters, shown in both players' move lists.
-- **End-of-game statistics:** time per move, longest and fastest moves, and
-  every captured piece, on Spectrum and desktop.
-- **Spectranext straight from the web:** start Shatranj from its web address
-  without installing it, or keep using the guided installer.
-- **A friendlier desktop client:** a Preferences dialog, an English and Spanish
-  manual, and clearer status messages.
-- **Faster, steadier play:** quicker move replies, fewer disk loads on Classic,
-  clocks that keep time during disk access, and requests that expire cleanly
-  after 60 seconds.
+- **Find a Spectranext opponent with MATCH:** CREATE advertises your name
+  and colour; JOIN opens Shatranj's own list of up to nine hosts. No address,
+  port forwarding or MQTT room to exchange.
+- **Responsive host selection:** UP/DOWN moves the cursor while the lobby
+  refreshes; ENTER or SPACE connects, and BREAK returns to Setup.
+- **Clear connection and exit feedback:** CONNECTING appears before pairing;
+  failed connections return the guest to Setup, and intentional disconnects
+  let the peer receive BYE before closing the tunnel.
+- **Correct player names:** Spectrum MOVES headers distinguish names such as
+  `AD` and `A_X`.
 
-See the [release notes](CHANGELOG.md) for the complete 1.3 overview.
+MATCH needs **Spectranext firmware 1.2 or later** and players on different
+public IP addresses. Older supported firmware keeps DIRECT and MQTT.
+Stockfish, recovery, statistics and existing saved games remain available.
+
+See the [changelog](CHANGELOG.md) for the complete changes. This checkout
+prepares 1.4; the download link serves the latest published stable release.
 
 ## Contents
 
-- [What's new in 1.3](#whats-new-in-13)
+- [What's new in 1.4 — Open Match](#whats-new-in-14--open-match)
 - [Platforms and protocols](#platforms-and-protocols)
 - [Download](#download)
 - [Installation](#installation)
@@ -90,7 +88,7 @@ See the [release notes](CHANGELOG.md) for the complete 1.3 overview.
 | Qt desktop | Windows, macOS, Linux | Direct TCP, MQTT | Platform package or executable |
 | ZX Spectrum Classic | 48K ZX Spectrum | Direct TCP, MQTT | `SHATRANJ.tap` + `SHATRANJ.OVL` + `SHATRANJ.DAT` |
 | Spectrum Next | ZX Spectrum Next | Direct TCP, MQTT | `SHATRANJ.nex` |
-| Spectranext | ZX Spectrum with Spectranext cartridge | Direct TCP, MQTT | Direct launch or guided installer from the web |
+| Spectranext | ZX Spectrum with Spectranext cartridge | Direct TCP, MQTT, MATCH (firmware 1.2+) | Direct launch or guided installer from the web |
 
 Direct TCP is a peer connection: the guest must be able to reach the host's
 address and port. MQTT avoids requiring a direct inbound connection; both
@@ -104,8 +102,8 @@ DAT companions. A ZX-Uno-compatible UART requires ESP transmit flow control
 via CTS; [NetManZX](https://github.com/IgnacioMonge/NetManZX) configures the
 required setting. The Next release is self-contained, so only its NEX file
 needs to be copied. The Spectranext edition uses the cartridge's own
-networking, requires cartridge firmware 1.0 or later, and starts from its web
-address, either directly or through a guided installer.
+networking, requires cartridge firmware 1.0 or later (1.2+ for MATCH), and
+starts from its web address, either directly or through a guided installer.
 
 ## Download
 
@@ -149,6 +147,9 @@ Copy `SHATRANJ.nex` to the Next SD card and launch it from the NextZXOS browser.
      load the address again.
 3. Either way, your configuration and saved games stay in the cartridge's
    local storage. Both ways of starting share them, and updates preserve them.
+4. To use **MATCH**, update to firmware **1.2 or later**. With older supported
+   firmware, LINK offers DIRECT and MQTT and shows `MATCH NEEDS FIRMWARE 1.2+`
+   when focused. A previously saved MATCH setup opens as DIRECT.
 
 <p align="center">
   <img src="docs/screenshots/shatranj-1.2-spectranext-installer.png" alt="Shatranj 1.2 guided installer on Spectranext" width="400"><br>
@@ -168,6 +169,18 @@ HTTPS addresses above instead.
 5. The host chooses the game color and starts the game. The guest waits for the
    connection and then plays when the turn indicator allows it.
 6. Use the chat panel or the Spectrum text input to communicate during the game.
+
+### MATCH (Spectranext)
+
+Both players need a Spectranext cartridge with firmware 1.2 or later, on
+different public IP addresses. In Setup, select **LINK MATCH**. The host
+chooses **CREATE**, a name and a colour, then starts; its lobby entry shows
+`NAME (W)` or `NAME (B)`. The other player chooses **JOIN**, starts, selects
+that host with UP/DOWN and presses ENTER or SPACE. BREAK cancels.
+
+MATCH pairs the cartridges through the firmware service, then uses Shatranj's
+DIRECT game protocol. To play against Classic, Next or Qt, select DIRECT or
+MQTT on both clients.
 
 ### Direct TCP
 

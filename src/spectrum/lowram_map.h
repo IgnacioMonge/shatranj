@@ -67,6 +67,28 @@
     (NETCHESSZX_LOWRAM_SPXN_MQTT_KEEPALIVE_ADDR + 2u)
 #define NETCHESSZX_LOWRAM_SPXN_NET_STATE_END \
     (NETCHESSZX_LOWRAM_SPXN_DIRECT_3S_POLLS_ADDR + 1u)
+/* Spectranext MATCH link: the selection (DIRECT transport through the
+   firmware matchmaking menu), Setup's three-way LINK focus and whether the
+   firmware offers matchmaking at all, in the free printer-buffer tail after
+   the transport state. Literal addresses so the ASM mirror in
+   asm/app/link_match_layout.inc can be checked. */
+#define NETCHESSZX_LOWRAM_SPXN_LINK_MATCH_ADDR 0x5bd7u
+#define NETCHESSZX_LOWRAM_SPXN_LINK_FOCUS_ADDR 0x5bd8u
+#define NETCHESSZX_LOWRAM_SPXN_LINK_MATCH_OK_ADDR 0x5bd9u
+/* MATCH host lobby (DIRECT overlay, kept across its wait batches): the
+   mailbox phase (PAIRED after a game asks for MATCH leave on the next
+   listen), the pause before the next poll, the socket's hardware index and
+   the cartridge name to restore on cancel (empty restores a blank name; the
+   KEEP marker skips SET_NAME). The name is a ROM (operation 21) argument, so
+   it lives outside the overlay page. */
+#define NETCHESSZX_LOWRAM_SPXN_MATCH_PHASE_ADDR 0x5bdau
+#define NETCHESSZX_LOWRAM_SPXN_MATCH_TICKS_ADDR 0x5bdbu
+#define NETCHESSZX_LOWRAM_SPXN_MATCH_SOCKET_ADDR 0x5bdcu
+#define NETCHESSZX_LOWRAM_SPXN_MATCH_SAVED_NAME_ADDR 0x5bddu
+#define NETCHESSZX_LOWRAM_SPXN_MATCH_SAVED_NAME_SIZE 24u
+#define NETCHESSZX_LOWRAM_SPXN_LINK_END \
+    (NETCHESSZX_LOWRAM_SPXN_MATCH_SAVED_NAME_ADDR + \
+     NETCHESSZX_LOWRAM_SPXN_MATCH_SAVED_NAME_SIZE)
 #ifdef NETCHESSZX_NEXT_BANKING
 #define NETCHESSZX_LOWRAM_XFS_DIR_SCRATCH_ADDR 0x3b78u
 #else
@@ -246,6 +268,19 @@
 #endif
 #if NETCHESSZX_LOWRAM_SPXN_NET_STATE_END > 0x5c00u
 #error "low-RAM Spectranext state overlaps ROM sysvars"
+#endif
+#if NETCHESSZX_LOWRAM_SPXN_LINK_MATCH_ADDR != \
+    NETCHESSZX_LOWRAM_SPXN_NET_STATE_END || \
+    NETCHESSZX_LOWRAM_SPXN_MATCH_PHASE_ADDR != \
+    (NETCHESSZX_LOWRAM_SPXN_LINK_MATCH_OK_ADDR + 1u) || \
+    NETCHESSZX_LOWRAM_SPXN_MATCH_TICKS_ADDR != \
+    (NETCHESSZX_LOWRAM_SPXN_MATCH_PHASE_ADDR + 1u) || \
+    NETCHESSZX_LOWRAM_SPXN_MATCH_SOCKET_ADDR != \
+    (NETCHESSZX_LOWRAM_SPXN_MATCH_TICKS_ADDR + 1u) || \
+    NETCHESSZX_LOWRAM_SPXN_MATCH_SAVED_NAME_ADDR != \
+    (NETCHESSZX_LOWRAM_SPXN_MATCH_SOCKET_ADDR + 1u) || \
+    NETCHESSZX_LOWRAM_SPXN_LINK_END > 0x5c00u
+#error "low-RAM Spectranext MATCH link state must follow the transport state"
 #endif
 #if NETCHESSZX_LOWRAM_XFS_DIR_SCRATCH_END != \
     NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR

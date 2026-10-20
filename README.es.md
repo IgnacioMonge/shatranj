@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/versi%C3%B3n-1.3-blue" alt="Versión 1.3">
+  <img src="https://img.shields.io/badge/versi%C3%B3n-1.4-blue" alt="Versión 1.4">
   <img src="https://img.shields.io/badge/protocolos-Direct%20TCP%20%7C%20MQTT-2ea44f" alt="Protocolos: Direct TCP y MQTT">
   <img src="https://img.shields.io/badge/escritorio-Windows%20%7C%20macOS%20%7C%20Linux-41cd52" alt="Escritorio: Windows, macOS y Linux">
   <img src="https://img.shields.io/badge/Spectrum-cl%C3%A1sico%20%7C%20Next%20%7C%20Spectranext-d52b1e" alt="Spectrum: clásico, Next y Spectranext">
@@ -40,7 +40,7 @@ necesitan cuentas ni un servidor central de partidas.
 |  |  |
 | --- | --- |
 | **Juego** | Spectrum ↔ Spectrum, Spectrum ↔ escritorio o escritorio ↔ escritorio |
-| **Conexión** | Direct TCP sin broker, o MQTT mediante un broker y una sala compartidos |
+| **Conexión** | Direct TCP, MQTT mediante un broker y una sala compartidos, o MATCH en Spectranext |
 | **Plataformas** | ZX Spectrum clásico, Spectrum Next, Spectranext, Windows, macOS y Linux |
 | **Partida** | Ayudas legales, relojes, historial, chat, tablas, abandono, deshacer jugadas, partidas guardadas y estadísticas de fin de partida |
 | **Stockfish** | El cliente de escritorio puede dejar que Stockfish juegue por ti contra cualquier rival |
@@ -48,32 +48,30 @@ necesitan cuentas ni un servidor central de partidas.
 | **Partidas coherentes** | Las mismas reglas, protocolo y comportamiento de sesión en todos los clientes |
 | **Versiones retro nativas** | TAP + OVL + DAT para Classic y Spectranext; un NEX autocontenido para Next |
 
-## Novedades de la versión 1.3
+## Novedades de la versión 1.4 — Open Match
 
-- **Stockfish entra en juego:** el cliente de escritorio instala el motor
-  oficial Stockfish y puede dejar que juegue por ti, del nivel 0 al 20, contra
-  cualquier rival Spectrum o de escritorio.
-- **Las partidas interrumpidas vuelven:** Classic, Next y Spectranext reanudan
-  una partida tras un cuelgue, un reset o un corte de corriente, con el
-  tablero, los relojes y la lista de jugadas.
-- **Sabes contra quién juegas:** cada jugador puede poner un nombre de hasta
-  diez caracteres, que aparece en la lista de jugadas de ambos.
-- **Estadísticas de fin de partida:** tiempo por jugada, jugadas más largas y
-  más rápidas, y todas las piezas capturadas, en Spectrum y en escritorio.
-- **Spectranext directamente desde la web:** inicia Shatranj desde su
-  dirección web sin instalarlo, o sigue usando el instalador guiado.
-- **Un cliente de escritorio más cómodo:** ventana de preferencias, manual en
-  inglés y español, y mensajes de estado más claros.
-- **Juego más rápido y estable:** respuestas a las jugadas más rápidas, menos
-  lecturas de disco en Classic, relojes que no se paran durante el acceso al
-  disco y peticiones que caducan limpiamente a los 60 segundos.
+- **Encuentra rival en Spectranext con MATCH:** CREATE anuncia tu nombre y
+  color; JOIN abre la lista propia de Shatranj con hasta nueve anfitriones.
+  Sin intercambiar direcciones, abrir puertos ni acordar una sala MQTT.
+- **Selector fluido:** ARRIBA/ABAJO mueve el cursor mientras se actualiza la
+  sala; ENTER o SPACE conecta y BREAK vuelve a Setup.
+- **Conexión y salida claras:** CONNECTING aparece antes del emparejamiento;
+  un fallo devuelve al invitado a Setup y una desconexión intencional deja
+  recibir BYE al rival antes de cerrar el túnel.
+- **Nombres correctos:** las cabeceras MOVES del Spectrum distinguen nombres
+  como `AD` y `A_X`.
 
-Consulta las [notas de la versión](CHANGELOG.md) para ver el resumen completo
-de Shatranj 1.3.
+MATCH necesita **firmware de Spectranext 1.2 o posterior** y jugadores con
+distintas IP públicas. Los firmwares anteriores compatibles conservan DIRECT
+y MQTT. Siguen disponibles Stockfish, recuperación, estadísticas y partidas
+guardadas.
+
+Consulta el [changelog](CHANGELOG.md) para ver todos los cambios. Este árbol
+prepara la 1.4; el enlace de descarga ofrece la última versión estable publicada.
 
 ## Índice
 
-- [Novedades de la versión 1.3](#novedades-de-la-versión-13)
+- [Novedades de la versión 1.4 — Open Match](#novedades-de-la-versión-14--open-match)
 - [Plataformas y protocolos](#plataformas-y-protocolos)
 - [Descarga](#descarga)
 - [Instalación](#instalación)
@@ -92,7 +90,7 @@ de Shatranj 1.3.
 | Escritorio Qt | Windows, macOS, Linux | Direct TCP, MQTT | Paquete o ejecutable de la plataforma |
 | ZX Spectrum clásico | ZX Spectrum de 48K | Direct TCP, MQTT | `SHATRANJ.tap` + `SHATRANJ.OVL` + `SHATRANJ.DAT` |
 | Spectrum Next | ZX Spectrum Next | Direct TCP, MQTT | `SHATRANJ.nex` |
-| Spectranext | ZX Spectrum con cartucho Spectranext | Direct TCP, MQTT | Arranque directo o instalador guiado desde la web |
+| Spectranext | ZX Spectrum con cartucho Spectranext | Direct TCP, MQTT, MATCH (firmware 1.2+) | Arranque directo o instalador guiado desde la web |
 
 Direct TCP es una conexión entre pares: el invitado debe poder alcanzar la
 dirección y el puerto del anfitrión. MQTT evita exigir una conexión entrante
@@ -108,7 +106,7 @@ de flujo CTS en la transmisión del ESP;
 necesario.
 La versión de Next es autocontenida, por lo que solo hay que copiar el fichero
 NEX. La edición Spectranext usa la red del propio cartucho, requiere el firmware
-1.0 o posterior y se inicia desde su dirección web,
+1.0 o posterior (1.2+ para MATCH) y se inicia desde su dirección web,
 directamente o mediante un instalador guiado.
 
 ## Descarga
@@ -156,6 +154,10 @@ NextZXOS.
 3. En ambos casos, la configuración y las partidas guardadas se quedan en el
    almacenamiento local del cartucho. Las dos formas de arranque las
    comparten y las actualizaciones las conservan.
+4. Para usar **MATCH**, actualiza al firmware **1.2 o posterior**. Con un
+   firmware anterior compatible, LINK ofrece DIRECT y MQTT y muestra
+   `MATCH NEEDS FIRMWARE 1.2+` al enfocarlo. Una configuración MATCH guardada
+   se abre como DIRECT.
 
 <p align="center">
   <img src="docs/screenshots/shatranj-1.2-spectranext-installer.png" alt="Instalador guiado de Shatranj 1.2 en Spectranext" width="400"><br>
@@ -177,6 +179,18 @@ una de las direcciones HTTPS anteriores.
    permite.
 6. Usa el panel de chat o la entrada de texto del Spectrum para comunicarte
    durante la partida.
+
+### MATCH (Spectranext)
+
+Ambos jugadores necesitan un cartucho Spectranext con firmware 1.2 o posterior
+y distintas IP públicas. En Setup, elige **LINK MATCH**. El anfitrión elige
+**CREATE**, nombre y color, e inicia; aparece en la sala como `NAME (W)` o
+`NAME (B)`. El rival elige **JOIN**, inicia, selecciona ese anfitrión con
+ARRIBA/ABAJO y pulsa ENTER o SPACE. BREAK cancela.
+
+MATCH empareja los cartuchos mediante el servicio del firmware y después usa
+el protocolo de juego DIRECT de Shatranj. Para jugar contra Classic, Next o
+Qt, selecciona DIRECT o MQTT en ambos clientes.
 
 ### Direct TCP
 

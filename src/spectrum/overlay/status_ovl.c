@@ -58,6 +58,11 @@ static char *status_append_endpoint(char *p, char *end)
     if (netchesszx_transport_is_mqtt()) {
         return status_append_mqtt_room(p, end);
     }
+#ifdef NETCHESSZX_SPECTRANEXT
+    if (netchesszx_link_match) {
+        return status_append(p, "MATCH", end);
+    }
+#endif
     p = status_append(p, "DIRECT ", end);
     host = netchesszx_session_is_host() ? spectrum_net_last_ip() :
                                          netchesszx_direct_host;
@@ -101,6 +106,9 @@ static void status_build_phase(uint8_t status)
         p = status_append_role(p, end);
         if (phase == STATUS_PHASE_CONNECTING) {
             if (!netchesszx_transport_is_mqtt() &&
+#ifdef NETCHESSZX_SPECTRANEXT
+                !netchesszx_link_match &&
+#endif
                 netchesszx_session_is_host()) {
                 tail = " - LISTENING";
             } else {
@@ -167,28 +175,23 @@ static const uint8_t moves_header_rows[8][4] = {
     { 0x00u, 0x00u, 0x80u, 0x00u }
 };
 
-/* A resident key per label (white, black) records the text it last showed,
+/* A resident cache per label (white, black) records the text it last showed,
    zero after the header row is blanked. An unchanged label is not repainted,
    so a peer name arriving only rewrites that one label. */
 #ifdef NETCHESSZX_HOST_TEST
 /* Host model of the firmware pair in entry_menu_logic.asm; the including
-   test owns the two key bytes. */
-static uint8_t moves_header_new(const char *text, uint8_t *shown)
+   test owns the two text buffers. */
+static uint8_t moves_header_new(const char *text, char *shown)
 {
-    uint8_t key = 0u;
-    uint8_t old = *shown;
+    uint8_t changed = (uint8_t)(strcmp(text, shown) != 0);
 
-    for (; *text != '\0'; ++text) {
-        key = (uint8_t)(key + (uint8_t)*text);
-        key = (uint8_t)((key << 1) | (key >> 7));
-    }
-    *shown = (uint8_t)(key | 0x80u);
-    return (uint8_t)(old != *shown);
+    strcpy(shown, text);
+    return changed;
 }
 #define moves_header_white_new(text) \
-    moves_header_new((text), &spectrum_moves_header_shown[0])
+    moves_header_new((text), spectrum_moves_header_shown[0])
 #define moves_header_black_new(text) \
-    moves_header_new((text), &spectrum_moves_header_shown[1])
+    moves_header_new((text), spectrum_moves_header_shown[1])
 #else
 extern uint8_t moves_header_white_new(const char *text) __z88dk_fastcall;
 extern uint8_t moves_header_black_new(const char *text) __z88dk_fastcall;

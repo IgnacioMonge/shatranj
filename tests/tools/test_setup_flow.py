@@ -100,12 +100,22 @@ def test_physical_layout_preserves_game_and_endpoint_alias() -> None:
     # row; TIME remains the physical row 10 despite its logical row shift.
     expected = {
         "menu_config_line_game": '"GAME  CREATE    JOIN"',
-        "menu_config_line_link": '"LINK  MQTT      DIRECT"',
     }
     for label, text in expected.items():
         assert re.search(
             rf"^{label}:\s*DEFB\s+NETCHESSZX_SETUP_SCREEN_ROW_\w+,\s*{re.escape(text)}", MENU, re.MULTILINE
         ), label
+    # Spectranext adds MATCH as a third LINK option, dropped again when the
+    # firmware has no matchmaking; Classic and Next keep two.
+    assert re.search(
+        r"^menu_config_line_link:\s*IFDEF NETCHESSZX_SPECTRANEXT\s*"
+        r'DEFB\s+NETCHESSZX_SETUP_SCREEN_ROW_LINK,\s*"LINK  MQTT  DIRECT  MATCH", 0\s*'
+        r'menu_config_line_link2:\s*'
+        r'DEFB\s+NETCHESSZX_SETUP_SCREEN_ROW_LINK,\s*"LINK  MQTT  DIRECT", 0\s*'
+        r'ELSE\s*DEFB\s+NETCHESSZX_SETUP_SCREEN_ROW_LINK,\s*"LINK  MQTT      DIRECT", 0\s*ENDIF',
+        MENU,
+        re.MULTILINE,
+    ), "menu_config_line_link"
     assert "menu_config_game_create_mqtt" not in MENU
     assert "menu_config_game_create_direct" not in MENU
     assert "menu_config_game_join_mqtt" not in MENU

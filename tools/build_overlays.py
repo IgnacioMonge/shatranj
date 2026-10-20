@@ -103,6 +103,7 @@ def overlay_size_limit(env: dict[str, str], block_size: int) -> int:
 
 def overlay_specs(env: dict[str, str]) -> list[OverlaySpec]:
     next_ui = "-DNETCHESSZX_NEXT" in shlex.split(env_value(env, "ZX_OVL_CFLAGS"))
+    spectranext = "-DNETCHESSZX_SPECTRANEXT" in shlex.split(env_value(env, "ZX_OVL_CFLAGS"))
     layout_inputs = (
         (Path(env_value(env, "BUILD_DIR") or "build") / "ui_layout.inc").as_posix(),
         f"src/spectrum/ui/layout_{'next' if next_ui else 'zx'}.h",
@@ -142,6 +143,7 @@ def overlay_specs(env: dict[str, str]) -> list[OverlaySpec]:
     )
     atomic = env_paths(env, "SPXN_ATOMIC_SRC")
     resolve_c = env_paths(env, "SPXN_RESOLVE_C")
+    match_c = env_paths(env, "SPXN_MATCH_C")
     xfs_overlay = env_paths(env, "SPXN_XFS_OVERLAY_ASM")
     if stj_saveload:
         saveload_stj = (
@@ -233,11 +235,17 @@ def overlay_specs(env: dict[str, str]) -> list[OverlaySpec]:
         ),
         OverlaySpec(
             "DIRECT",
-            ("asm/overlay/direct/entry_direct.asm",),
+            ("asm/overlay/direct/entry_direct_spectranext.asm" if spectranext
+             else "asm/overlay/direct/entry_direct.asm",)
+            + (("asm/overlay/direct/match_picker.asm",) if spectranext else ()),
             (
                 ("src/spectrum/overlay/direct_ovl.c", ()),
                 *((src, ()) for src in resolve_c),
+                *((src, ("-DSPXINFO_STRING_ONLY",) if Path(src).name == "spxinfo.c" else ())
+                  for src in match_c),
             ),
+            (("src/spectrum/overlay/match_picker.inc",)
+             + tuple(str(Path(src).with_suffix(".h")) for src in match_c)) if spectranext else (),
         ),
         OverlaySpec(
             "MENU_CONFIG",

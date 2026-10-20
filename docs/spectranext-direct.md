@@ -44,6 +44,20 @@ update a start may combine cached and new files. The OVL atlas fingerprint
 rejects an OVL that does not match the TAP; a stale DAT beside a new TAP is
 not detected. This residual risk is accepted, as in SpecTalkZX.
 
+Before a release date is known, keep the changes under `Unreleased`, set
+`VERSION` to the candidate version, and stage locally without a dated entry:
+
+```sh
+make spectranext-port-build spectranext-direct SPXN_DIR=/path/to/SpectraNext/driver
+python3 tools/build_spectranext_pages.py --preview-codename "Open Match"
+python3 tests/tools/test_spectranext_pages.py
+```
+
+This only creates local files. Once publication is approved, date the release
+in the changelog and run the Pages builder without `--preview-codename`;
+it checks that the release heading matches `VERSION`. Existing matching
+TAP/OVL/DAT and installer resources need no rebuild for that metadata change.
+
 ## Firmware
 
 Startup asks the cartridge for its build version (`$3EF0` operation 15, added
@@ -51,6 +65,9 @@ by firmware 1.0, which also fixes seeking in files read over HTTPS). Older
 firmware returns carry: startup stops with a red border and
 `FIRMWARE OUTDATED: SEE README`. Both manifests declare
 `minimum_firmware` 1.0.
+
+MATCH additionally needs firmware 1.2 or later. On older supported firmware,
+the game offers DIRECT and MQTT; the resource minimum remains 1.0.
 
 ## Launch
 

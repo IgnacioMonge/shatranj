@@ -1,40 +1,40 @@
 {
   "artifacts": {
-    "code_bin": 34382,
+    "code_bin": 34351,
     "dat": 4899,
-    "ovl": 35293,
-    "tap": 34640
+    "ovl": 35331,
+    "tap": 34609
   },
   "code": {
     "bss_trim_saved_bytes": 317,
-    "full_bytes": 34382,
-    "resident_bytes": 34065,
-    "trimmed_bytes": 34065
+    "full_bytes": 34351,
+    "resident_bytes": 34034,
+    "trimmed_bytes": 34034
   },
   "markers": {
     "TAR__register_sp": "0xFF58",
-    "__BSS_END_tail": "0xF64E",
-    "__BSS_head": "0xF511",
+    "__BSS_END_tail": "0xF62F",
+    "__BSS_head": "0xF4F2",
     "__CODE_head": "0x7000",
     "__CODE_tail": "0x700B",
-    "__DATA_END_tail": "0xF511",
-    "__DATA_head": "0xF4DA",
-    "__bss_compiler_tail": "0xF60D",
-    "__bss_user_head": "0xF60D",
-    "__bss_user_tail": "0xF64C",
-    "__data_compiler_tail": "0xF507",
+    "__DATA_END_tail": "0xF4F2",
+    "__DATA_head": "0xF4BB",
+    "__bss_compiler_tail": "0xF5EE",
+    "__bss_user_head": "0xF5EE",
+    "__bss_user_tail": "0xF62D",
+    "__data_compiler_tail": "0xF4E8",
     "__register_sp": "0x0000",
     "_overlay_code_slot": "0x6800"
   },
   "memory": {
     "bss_bytes": 417,
     "bss_end": "0xFD63",
-    "bss_head": "0xF511",
+    "bss_head": "0xF4F2",
     "bss_regions": [
       {
         "bytes": 317,
-        "head": "0xF511",
-        "tail": "0xF64E"
+        "head": "0xF4F2",
+        "tail": "0xF62F"
       },
       {
         "bytes": 100,
@@ -60,8 +60,8 @@
     "HINTS": 0,
     "INPUT_EDIT": 1601,
     "JOURNAL": 1923,
-    "MENU_CONFIG": 1954,
-    "MENU_LOGIC": 1949,
+    "MENU_CONFIG": 1985,
+    "MENU_LOGIC": 1956,
     "MQTT_CONNECT": 1982,
     "MQTT_TX": 1776,
     "RECOVERY": 1824,
@@ -71,7 +71,7 @@
     "SETUP": 1899,
     "STATUS": 0,
     "TIME_CONFIG": 1893,
-    "total": 35293
+    "total": 35331
   },
   "version": 1
 }

@@ -136,7 +136,7 @@ INCLUDE_PORTS = {
 
 CONFIG_OPTIONS = frozenset("""notation movement_hints board_theme_index
     piece_set_index mqtt_code direct_host direct_port timezone timezone_last
-    player_name_line""".split())
+    player_name_line link_match""".split())
 # These share config storage but are runtime/render state, not saved options.
 CONFIG_RUNTIME_STATE = frozenset(
     "rtc_available board_light_attr board_dark_attr hinted_rows peer_name".split())
@@ -166,8 +166,10 @@ CONFIG_WRITERS = {
 # can hide writes. These existing consumers borrow addresses for reading only.
 CONFIG_READ_BORROWERS = {
     "src/spectrum/overlay/direct_ovl.c": {"direct_host"},
-    # netchesszx_player_name is the name inside the advisory line.
-    "src/spectrum/config/session.h": {"player_name_line", "peer_name"},
+    # netchesszx_player_name is the name inside the advisory line; the MATCH
+    # flag is a fixed low-RAM byte on Spectranext.
+    "src/spectrum/config/session.h": {"player_name_line", "peer_name",
+                                      "link_match"},
     "src/spectrum/session/transitions.inc": {"player_name_line"},
     "src/spectrum/overlay/mqtt_connect_ovl.c": {"mqtt_code"},
     "src/spectrum/overlay/mqtt_tx_ovl.c": {"mqtt_code"},
@@ -627,6 +629,19 @@ def find_violations(
             pass
         violations.append(("asm-lowram-map-match", name_layout, 0,
                            f"PLAYER_NAME_LINE ({target})"))
+    # Spectranext MATCH link state: Setup ASM mirrors the three low-RAM bytes.
+    match_layout = "asm/app/link_match_layout.inc"
+    for equ, owner in (("LINK_MATCH", "NETCHESSZX_LOWRAM_SPXN_LINK_MATCH_ADDR"),
+                       ("LINK_FOCUS", "NETCHESSZX_LOWRAM_SPXN_LINK_FOCUS_ADDR"),
+                       ("LINK_MATCH_OK",
+                        "NETCHESSZX_LOWRAM_SPXN_LINK_MATCH_OK_ADDR")):
+        try:
+            if (parse_const(root / match_layout, equ) ==
+                    parse_const(root / LOWRAM_MAP_OWNER, owner)):
+                continue
+        except (SystemExit, OSError):
+            pass
+        violations.append(("asm-lowram-map-match", match_layout, 0, equ))
     # The MNAME protocol fixes the rest of the identity shape: the local name
     # follows the "MNAME " prefix, holds the protocol maximum plus NUL, and the
     # peer name follows the whole advisory line. A capacity that drifts from

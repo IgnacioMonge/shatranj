@@ -39,6 +39,9 @@ PUBLIC _spectrum_gui_edit_hide
 PUBLIC _spectrum_gui_edit_show
 PUBLIC _spectrum_append_u16
 PUBLIC _spectrum_info_line
+IFDEF NETCHESSZX_SPECTRANEXT
+PUBLIC _spxn_xfs_firmware_probe
+ENDIF
 
 EXTERN _time_config_step_ovl_entry
 EXTERN _time_config_init_ovl_entry
@@ -54,6 +57,9 @@ ROW_TIME   EQU 4
 ROW_NAME   EQU 11
 
 INCLUDE "asm/app/player_name_layout.inc"
+IFDEF NETCHESSZX_SPECTRANEXT
+INCLUDE "asm/app/link_match_layout.inc"
+ENDIF
 
 test_start:
     ld sp, 0xff00
@@ -453,8 +459,115 @@ test_check_name_prefix:
     ld a, (_setup_choice + 2)
     dec a
     jp nz, test_bad_identity
+IFDEF NETCHESSZX_SPECTRANEXT
+    ; LINK focus starts on the stored link: MQTT 0, DIRECT 1, MATCH 2.
+    ld a, 1
+    ld (_netchesszx_transport), a
+    ld (LINK_MATCH), a
+    ld c, LINK_FOCUS_MQTT
+    call test_init_link_focus
+    xor a
+    ld (_netchesszx_transport), a
+    ld c, LINK_FOCUS_MATCH
+    call test_init_link_focus
+    xor a
+    ld (LINK_MATCH), a
+    ld c, LINK_FOCUS_DIRECT
+    call test_init_link_focus
+
+    ; Matchmaking needs firmware 1.2 or later, compared as numbers.
+    ld hl, test_fw_1_2
+    ld a, 1
+    call test_fw_case
+    ld hl, test_fw_1_10
+    ld a, 1
+    call test_fw_case
+    ld hl, test_fw_2_0
+    ld a, 1
+    call test_fw_case
+    ld hl, test_fw_1_1
+    xor a
+    call test_fw_case
+    ld hl, test_fw_0_9
+    xor a
+    call test_fw_case
+    ld hl, test_fw_1
+    xor a
+    call test_fw_case
+    ; No operation 15 (older than 1.0): the stale reply is not parsed.
+    ld a, 1
+    ld (test_fw_l), a
+    ld hl, test_fw_1_2
+    xor a
+    call test_fw_case
+    xor a
+    ld (test_fw_l), a
+    ; The reply buffer lies outside the overlay page (0x2000-0x2fff).
+    ld a, (test_fw_buf + 1)
+    sub 0x20
+    cp 0x10
+    jp c, test_bad_fw_buffer
+
+    ; 1.1 firmware: a saved MATCH record opens as an incomplete, unsaved
+    ; DIRECT menu with the LINK focus on DIRECT.
+    ld hl, test_fw_1_1
+    ld (test_fw_reply), hl
+    ld a, 1
+    ld (LINK_MATCH), a
+    call test_init_saved
+    ld a, (LINK_MATCH)
+    or a
+    jp nz, test_bad_match_fallback
+    ld a, (LINK_FOCUS)
+    cp LINK_FOCUS_DIRECT
+    jp nz, test_bad_match_fallback
+    ld hl, (_setup_defined_mask)
+    ld a, h
+    or l
+    jp nz, test_bad_match_fallback
+    ld a, (_setup_cursor)
+    or a
+    jp nz, test_bad_match_fallback
+    ld a, (_setup_config_dirty)
+    dec a
+    jp nz, test_bad_match_fallback
+    ; The same firmware leaves a saved DIRECT record complete and clean.
+    call test_init_saved
+    call test_check_saved_complete
+    ; Matchmaking firmware keeps a saved MATCH record as it is.
+    ld hl, test_fw_1_2
+    ld (test_fw_reply), hl
+    ld a, 1
+    ld (LINK_MATCH), a
+    call test_init_saved
+    ld a, (LINK_MATCH)
+    dec a
+    jp nz, test_bad_match_fallback
+    ld a, (LINK_FOCUS)
+    cp LINK_FOCUS_MATCH
+    jp nz, test_bad_match_fallback
+    call test_check_saved_complete
+ENDIF
     xor a
     jr test_store_result
+
+IFDEF NETCHESSZX_SPECTRANEXT
+; C = expected LINK focus after a plain init.
+test_init_link_focus:
+    ld a, 0xff
+    ld (LINK_FOCUS), a
+    xor a
+    ld (CTX_KEY), a
+    push bc
+    call _time_config_init_ovl_entry
+    pop bc
+    ld a, (LINK_FOCUS)
+    cp c
+    ret z
+    pop hl
+    ld a, 13
+    jr test_store_result
+ENDIF
 
 test_bad_identity: ld a, 10
     jr test_store_result
@@ -484,6 +597,78 @@ test_store_result:
     ld (test_result), a
 test_done:
     jp test_done
+
+IFDEF NETCHESSZX_SPECTRANEXT
+; HL = firmware reply, A = expected LINK_MATCH_OK after a plain DIRECT init.
+test_fw_case:
+    ld (test_fw_reply), hl
+    ld c, a
+    xor a
+    ld (LINK_MATCH), a
+    ld (CTX_KEY), a
+    dec a
+    ld (LINK_MATCH_OK), a
+    push bc
+    call _time_config_init_ovl_entry
+    pop bc
+    ld a, (LINK_MATCH_OK)
+    cp c
+    ret z
+    pop hl
+    ld a, 14
+    jp test_store_result
+
+; Init from a saved, complete record (INIT_CLEAN | INIT_COMPLETE).
+test_init_saved:
+    ld a, 3
+    ld (CTX_KEY), a
+    jp _time_config_init_ovl_entry
+
+test_check_saved_complete:
+    ld hl, (_setup_defined_mask)
+    ld de, 0x0fff
+    or a
+    sbc hl, de
+    jr nz, test_check_saved_bad
+    ld a, (_setup_config_dirty)
+    or a
+    ret z
+test_check_saved_bad:
+    pop hl
+test_bad_match_fallback:
+    ld a, 15
+    jp test_store_result
+test_bad_fw_buffer:
+    ld a, 16
+    jp test_store_result
+
+; Operation 15 stub: copies the NUL-terminated test_fw_reply to HL and
+; returns test_fw_l in L (bit 0 set: the operation failed).
+_spxn_xfs_firmware_probe:
+    ld (test_fw_buf), hl
+    ex de, hl
+    ld hl, (test_fw_reply)
+test_fw_copy:
+    ld a, (hl)
+    ld (de), a
+    inc hl
+    inc de
+    or a
+    jr nz, test_fw_copy
+    ld a, (test_fw_l)
+    ld l, a
+    ret
+
+test_fw_reply: DEFW test_fw_1_2
+test_fw_l:     DEFB 0
+test_fw_buf:   DEFW 0
+test_fw_1_2:   DEFB "1.2-6e04d77b",0
+test_fw_1_10:  DEFB "1.10-0",0
+test_fw_2_0:   DEFB "2.0-0",0
+test_fw_1_1:   DEFB "1.1-0",0
+test_fw_0_9:   DEFB "0.9-0",0
+test_fw_1:     DEFB "1",0
+ENDIF
 
 ; HL = name to install before a SAVE-success init.
 test_init_with_name:

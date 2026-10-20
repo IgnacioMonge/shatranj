@@ -673,7 +673,14 @@ def check_entry_tables(root: Path) -> list[str]:
             f"{overlay_values.get('SPECTRUM_OVL_RECOVERY')!r} != Classic second atlas extra {len(ORDER) + 1}"
         )
 
-    for rel, expected in ENTRY_TABLES.items():
+    tables = dict(ENTRY_TABLES)
+    tables["asm/overlay/direct/entry_direct_spectranext.asm"] = [
+        *ENTRY_TABLES["asm/overlay/direct/entry_direct.asm"][:3],
+        ("SPECTRUM_OVL_DIRECT_READ", "_direct_read_payload_ovl"),
+        ("SPECTRUM_OVL_DIRECT_SEND", "_direct_send_text_ovl"),
+        ("SPECTRUM_OVL_DIRECT_CLOSE", "_direct_close_wait_ovl"),
+    ]
+    for rel, expected in tables.items():
         path = root / rel
         parsed = parse_entry_table(path)
         if parsed is None:

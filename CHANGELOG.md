@@ -5,6 +5,120 @@ details live under [`docs/`](docs/).
 
 ---
 
+## [Unreleased]
+
+Preparing **1.4 — Open Match**. Publication awaits the stable Spectranext
+firmware and final cartridge acceptance; no release date is assigned yet.
+
+### Added
+
+- Spectranext: a third LINK option, MATCH, finds the opponent through the
+  cartridge's matchmaking service instead of an IP address, open port, or MQTT
+  broker. One player chooses CREATE and the other JOIN, then they play over
+  the usual DIRECT protocol. The host waits on Shatranj's own screen, as a
+  DIRECT host does, and appears in the cartridge's list as `NAME (W)` or
+  `NAME (B)` (its NAME and the colour it plays; `HOST (W)`/`HOST (B)` with no
+  NAME). The guest selects from up to nine public hosts in Shatranj's right
+  panel, using UP/DOWN and ENTER or SPACE; BREAK returns to Setup. The list shows the
+  host's colour and an inverse cursor, with ikkle4 headers and hints and PLAYS
+  aligned with the colour column. The list starts half a character higher;
+  the footer sits immediately below the white separator's attribute row,
+  clear of all nine host rows. List refresh preserves the entire footer;
+  returning to Setup or entering the game panels clears it completely,
+  without leaving pixels over notifications.
+  Opening the picker selects the first host, including when it first appears
+  after an empty list. Lobby changes repaint only the list,
+  preserve selection by device identity, clear vanished hosts, and require a
+  new selection if the chosen host disappears. ENTER/SPACE replaces the picker
+  with the normal moves/chat panels and a persistent CONNECTING notice before
+  sending CONNECT. A stale selection, rejected connection or pairing failure
+  shows CONNECTION FAILED and returns to Setup; BREAK cancels to Setup.
+  There is no automatic retry or substitute host. The ROM menu is no longer
+  used. Cursor movement uses cached device identities without querying the
+  controller; periodic lobby polls run without blocking navigation. ENTER/SPACE
+  shows CONNECTING before waiting for an outstanding poll, and BREAK still
+  cancels. Initial listing and revision changes preserve queued keys. A guest
+  that another guest picked instead of a host shows `Rival is not a host`
+  and returns to Setup. When a pairing fails or the lobby reports an
+  error, the host shows CONNECTION FAILED and then waits in the lobby again;
+  the guest returns to Setup once, without WAITING HOST or reopening its picker.
+  CANCEL leaves the lobby and, when the firmware reports the name, restores
+  the cartridge's own name (an old `(W)`/`(B)` mark removed), or the blank
+  name of a cartridge that had none, including the normal 16-digit serial
+  fallback. Lobby cancellation and setup failures cancel the pending match
+  before closing its descriptor. After a game, a lobby failure or a
+  power cut, the
+  cartridge keeps the marked name until a later host session is cancelled, and
+  a guest removes that mark through a short lobby session before opening the
+  picker, so a former host is never listed as one while it joins. MATCH is
+  offered only on Spectranext firmware 1.2 or later
+  (FuseX 0.4 reports 1.2); with older firmware LINK keeps MQTT and DIRECT, and
+  a saved MATCH setup reopens as DIRECT to be completed. Focusing LINK with
+  older or unreadable firmware shows `MATCH NEEDS FIRMWARE 1.2+` in the usual
+  notification area until focus leaves the row. The two players need different
+  public IP addresses.
+- The linked BOARD Z80 test now also covers the Spectranext overlay and two
+  ordinary moves, and every `make tap-spectranext` runs it. It rejects
+  firmware built with the z88dk nightly `v26468`, whose `zsdcc` turns every
+  moved piece into a queen or misplaces the en-passant square; build with the
+  pinned z88dk `762578732c` (`docs/maintenance.md`).
+- Maintainers on Windows can test MATCH with two hidden Spectranext FuseX
+  instances that pair and play without taking over the desktop: a local STUN
+  responder, a launcher that writes a CREATE or JOIN MATCH setup, a pairing
+  script and an optional match API proxy for a cartridge on the same network
+  (`tools/fusex_ctl.py`, `docs/maintenance.md`, FuseX MATCH Pairing).
+  The harness defaults to official FuseX 0.6, which fixes replacement of
+  existing XFS files and MATCH naming after a failed or cancelled session.
+  The LAN test instructions also require refreshing the proxy's public IP
+  when it changes, so cartridge pairing keeps using the local endpoint.
+
+### Changed
+
+- Maintenance handoff and hardware records consolidate MATCH's accepted
+  behavior, including responsive cursor navigation with multiple hosts, and
+  remaining hardware checks, removing obsolete diagnostics, branch dependencies
+  and test-session details.
+- Release preparation updates the English and Spanish guides, desktop manual,
+  Spectrum What's New screen and web landing page for 1.4 Open Match.
+  The Pages builder can stage an unpublished version with
+  `--preview-codename` while the changelog remains undated. The Classic
+  MENU_LOGIC size reference accounts for the new What's New text. The main
+  ZXESPEmu launcher descriptor uses release version 1.4.0.
+- Windows packaging CI smoke-tests the deployed Windows platform plugin,
+  matching the distributed package instead of requiring an offscreen plugin.
+- Classic Setup headings reuse MENU_CONFIG instead of resident storage,
+  reducing the resident by 31 bytes without changing its BSS or stack gap.
+- Spectranext: DIRECT links only the controller-string API used by MATCH,
+  leaving unused controller-message and version routines out of its overlay.
+  The SDK still includes the complete controller-info API by default.
+- Spectranext builds track the MATCH picker and SDK headers as overlay and
+  atlas dependencies, so changing them cannot silently reuse stale artifacts.
+  ABI references record the picker context constants and existing input/render
+  helper exports without changing existing entry points.
+
+### Fixed
+
+- Spectranext DIRECT and established MATCH sessions close the descriptor
+  normally when returning to Setup, after attempting BYE even if that send
+  fails, and after draining EOF. Established MATCH teardown no longer releases
+  the transport through a redundant lobby LEAVE before ROM CLOSE; lobby
+  cancellation and setup-error cleanup retain their CANCEL path. This follows
+  the controller's distinction between established and pending connections.
+  Returning to Setup is confirmed on the updated physical cartridge.
+- Spectranext intentional disconnect waits for the peer to close after a
+  successful BYE, bounded by the existing 150-frame send budget. Receiving
+  BYE retires recovery before closing immediately, so a MATCH tunnel is not
+  torn down while the exit message is still queued. Failed sends still close;
+  unexpected EOF retains recovery.
+- Spectrum MOVES headers compare player names exactly, so valid names such as
+  `AD` and `A_X` no longer leave `WHITE` or `BLACK` on screen because of a
+  hash collision. Unchanged names still avoid repainting. Classic retains
+  this correction within its existing resident and BSS size limits.
+- Spectranext DIRECT conformance tests share the SDK declarations with the
+  link tests, so the MATCH additions no longer break the 50/60 Hz parity builds.
+- The recovery-capture Z80 vector links the resident SDCC frame helpers,
+  keeping its test executable aligned with the shipped implementation.
+
 ## [1.3] - 2026-10-13 - Sealed Move
 
 Shatranj 1.3 lets Stockfish play from the desktop client, resumes interrupted
@@ -487,3 +601,6 @@ Initial public release of Shatranj for ZX Spectrum 48K and Windows.
 - Saved-game restoration and takeback are not available in 1.0.
 - Direct TCP requires a reachable host; MQTT is the alternative when direct
   routing is unavailable.
+
+[Unreleased]: https://github.com/IgnacioMonge/shatranj/compare/v1.3...main
+[1.3]: https://github.com/IgnacioMonge/shatranj/releases/tag/v1.3

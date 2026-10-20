@@ -13,11 +13,12 @@ from test_spectrum_asm_vectors import required_tool, symbol_address
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("build", type=Path)
 parser.add_argument("--next", action="store_true")
+parser.add_argument("--spectranext", action="store_true")
 args = parser.parse_args()
 mapping = (args.build / "SHATRANJ.map").read_text()
 code = (args.build / "SHATRANJ_CODE.bin").read_bytes()
 overlay = (args.build / "SHATRANJ_BOARD.OVL").read_bytes()
-base = 0x6000 if args.next else 0x6800
+base = 0x6000 if args.next else 0x2000 if args.spectranext else 0x6800
 assert overlay[0] == 4
 entry = int.from_bytes(overlay[1:3], "little")
 assert base <= entry < base + len(overlay)
@@ -87,4 +88,39 @@ with tempfile.TemporaryDirectory(prefix="board-action-z80-") as directory:
         assert ram[0x5e40:0x5e45] == expected_undo
         assert ram[0x5e00:0x5e08] == image[0x5e00:0x5e08], 'context changed'
         assert ram[0x5e20:0x5e26] == image[0x5e20:0x5e26], 'borrowed text changed'
-    print(f"BOARD {'Next' if args.next else 'Classic'}: {len(cases)} real-entry cases passed; semantic state, rejection, undo and SP")
+    # Plain moves: z88dk 26468's zsdcc at --max-allocs-per-node 50000 stored
+    # undo->from into the promotion flag, so every moved piece became a queen.
+    initial = bytearray(b"rnbqkbnrpppppppp" + b"." * 32 + b"PPPPPPPPRNBQKBNR")
+    for token, start, end, ep in ((b"e2e4", 52, 36, 44), (b"g1f3", 62, 45, 255)):
+        image = bytearray(65536)
+        origin = symbol_address(mapping, "__CODE_head")
+        image[origin:origin + len(code)] = code
+        image[base:base + len(overlay)] = overlay
+        image[0x5f60:0x5fa0] = initial
+        image[0x5fa0:0x5fe0] = rules(initial)
+        for address, value in zip(state_addresses, (0, 15, 255)):
+            image[address] = value
+        image[0x5e20:0x5e26] = token + b"\0\0"
+        image[0x5e00:0x5e08] = bytes([0x20, 0x5e, start // 8, start % 8,
+                                     end // 8, end % 8, 0x40, 0x5e])
+        image[0x5e40:0x5e45] = b'\xa5' * 5
+        harness = (b'\x31\x58\xff\x21\x00\x5e\xcd' + entry.to_bytes(2, 'little') +
+                   b'\x7d\x32\x80\x5e\xed\x73\x81\x5e')
+        done = 0x5000 + len(harness)
+        image[0x5000:done + 1] = harness + b'\x76'
+        source.write_bytes(image)
+        subprocess.run([required_tool('z88dk-ticks'), '-mz80', '-l', '0',
+                        '-pc', '5000', '-end', f'{done:x}', '-counter', '1000000',
+                        '-output', str(output), str(source)],
+                       capture_output=True, check=True)
+        ram = output.read_bytes()
+        expected = initial.copy()
+        expected[end], expected[start] = initial[start], ord('.')
+        assert ram[0x5e80] == 1, token
+        assert ram[0x5f60:0x5fa0] == expected, (token, chr(ram[0x5f60 + end]))
+        assert ram[0x5fa0:0x5fe0] == rules(expected), token
+        assert bytes(ram[a] for a in state_addresses) == bytes([1, 15, ep]), token
+        assert ram[0x5e40:0x5e45] == bytes([start, end, ord('.'), 15, 255]), token
+        assert ram[0x5e81:0x5e83] == b'\x58\xff', 'unbalanced stack'
+    target = 'Next' if args.next else 'Spectranext' if args.spectranext else 'Classic'
+    print(f"BOARD {target}: {len(cases) + 2} real-entry cases passed; semantic state, rejection, undo and SP")

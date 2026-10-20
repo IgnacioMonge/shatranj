@@ -17,5 +17,7 @@ void spectrum_input_flush_until_release(void);
 void spectrum_input_suppress_until_release(uint8_t key) NETCHESSZX_FASTCALL;
 uint8_t spectrum_key_edit_pressed(void);
 uint8_t spectrum_key_poll(void);
+/* Read-only queue head: waits may check BREAK without consuming other keys. */
+extern volatile uint8_t spectrum_input_pending_event;
 
 #endif

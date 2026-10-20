@@ -7,6 +7,7 @@ PUBLIC test_result
 EXTERN spectrum_input_queue_clear
 EXTERN spectrum_input_queue_latch
 EXTERN _spectrum_key_poll
+EXTERN _spectrum_input_pending_event
 
 test_start:
     ld sp, 0xff00
@@ -16,9 +17,15 @@ test_start:
     call spectrum_input_queue_latch
     ld a, 'b'
     call spectrum_input_queue_latch
+    ld a, (_spectrum_input_pending_event)
+    cp 'a'
+    jr nz, test_bad_order
     call _spectrum_key_poll
     ld a, l
     cp 'a'
+    jr nz, test_bad_order
+    ld a, (_spectrum_input_pending_event)
+    cp 'b'
     jr nz, test_bad_order
     call _spectrum_key_poll
     ld a, l

@@ -144,11 +144,17 @@ SECTION bss_high_scratch
 ORG 0xfd01
 PUBLIC _direct_rx_payload
 PUBLIC _direct_rx_payload2
+PUBLIC _direct_rx_payload_end
 _direct_rx_payload: DEFS 48
 _direct_rx_payload2: DEFS 48
-; MOVES header label keys; the panel code zeroes them when it blanks the row.
+_direct_rx_payload_end:
+; Keep the exact MOVES cache below the IM2 vector. Its 22 initialized bytes
+; count in the resident payload, paid for by constant-address ULA reductions.
+SECTION data_user
+INCLUDE "asm/app/player_name_layout.inc"
 PUBLIC _spectrum_moves_header_shown
-_spectrum_moves_header_shown: DEFS 2
+_spectrum_moves_header_shown: DEFS 2 * (PLAYER_NAME_MAX + 1), 0
+spectrum_moves_header_shown_end:
 ENDIF
 SECTION bss_user
 ENDIF

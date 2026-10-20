@@ -86,6 +86,17 @@
         "spectranext_net",
         "text",
         "uart"
+      ],
+      "allowed_symbols": [
+        "clear_right_panel_rows",
+        "compute_pixel_base",
+        "current_attr",
+        "draw_ikkle_inline",
+        "draw_text64_line_attr_fast",
+        "pixel_down_hl",
+        "spectrum_render_ikkle_abs_at",
+        "spectrum_gui_set_status",
+        "spectrum_gui_notify_persistent"
       ]
     },
     "fileui": {
@@ -179,7 +190,12 @@
         "time"
       ],
       "allowed_symbols": [
+        "clear_right_panel_rows",
+        "draw_ikkle_inline",
+        "draw_right_hline",
         "edit_max",
+        "game_setup_msg",
+        "session_setup_msg",
         "setup_action_focus",
         "setup_config_dirty",
         "setup_time_focus",
@@ -273,7 +289,8 @@
         "setup_room_editing",
         "setup_time_focus",
         "setup_timezone_text",
-        "setup_timezone_value"
+        "setup_timezone_value",
+        "spxn_xfs_firmware_probe"
       ]
     },
     "time": {

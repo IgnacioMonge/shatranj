@@ -330,6 +330,7 @@ SESSION_OUTGOING_TEST_SRC := src/common/protocol/game_protocol.c \
                              tests/spectrum/test_session_outgoing.c
 STATUS_OVERLAY_TEST := $(BUILD_DIR)/netchesszx_status_overlay_test.exe
 STATUS_OVERLAY_TEST_SRC := tests/spectrum/test_status_overlay.c
+STATUS_OVERLAY_SPECTRANEXT_TEST := $(BUILD_DIR)/netchesszx_status_overlay_spectranext_test.exe
 GUI_LOG_TEST := $(BUILD_DIR)/netchesszx_gui_log_test.exe
 GUI_LOG_TEST_SRC := tests/spectrum/test_gui_log.c
 TIME_TEST := $(BUILD_DIR)/netchesszx_time_test.exe
@@ -435,6 +436,7 @@ UART_ASM := asm/uart/$(UART_BACKEND)_uart.asm
 endif
 SCREEN_ASM ?= $(if $(filter next,$(UART_BACKEND)),asm/next/screen.asm,asm/spectrum/screen.asm)
 SCREEN_INCLUDE_DEPS := $(wildcard asm/ula/*.inc) asm/app/screen_dispatch.inc \
+                       asm/overlay/menu_config/setup_headers.inc \
                        $(wildcard $(dir $(SCREEN_ASM))board_*.inc) \
                        $(wildcard $(dir $(SCREEN_ASM))piece_*.inc)
 OVERLAY_LOADER_ASM ?= asm/esxdos/overlay_loader.asm
@@ -501,6 +503,7 @@ SPXN_TIME_OVERLAY_SRC :=
 SPXN_ATOMIC_SRC :=
 SPXN_ATOMIC_OBJ :=
 SPXN_RESOLVE_C :=
+SPXN_MATCH_C :=
 SPXN_XFS_SOURCE :=
 SPXN_XFS_OVERLAY_ASM :=
 
@@ -536,6 +539,9 @@ SPXN_CLOCK_HEADERS := $(SPXN_DIR_ABS)/spxudp.h \
 SPXN_ATOMIC_SRC := $(SPXN_DIR_ABS)/spxf_replace.asm
 SPXN_ATOMIC_OBJ := $(BUILD_DIR)/spxf_replace_ovl.o
 SPXN_RESOLVE_C := $(SPXN_DIR_ABS)/spxresolve.c
+# The MATCH host's lobby (mailbox + operation 21) links into DIRECT only.
+SPXN_MATCH_C := $(SPXN_DIR_ABS)/spxmatch.c $(SPXN_DIR_ABS)/spxinfo.c
+SPXN_MATCH_HEADERS := $(SPXN_DIR_ABS)/spxmatch.h $(SPXN_DIR_ABS)/spxinfo.h
 SPXN_XFS_SOURCE := $(SPXN_DIR_ABS)/adapters/xfs_compat.asm
 SPXN_XFS_OVERLAY_ASM := $(BUILD_DIR)/xfs_compat.asm
 SPXN_TIME_OVERLAY_SRC := asm/overlay/time/entry_time.asm \
@@ -543,10 +549,10 @@ SPXN_TIME_OVERLAY_SRC := asm/overlay/time/entry_time.asm \
                          $(SPXN_CLOCK_C) \
                          $(SPXN_CLOCK_HEADERS)
 ATLAS_BINDING_PATHS += $(SPXN_RESIDENT_C) $(SPXN_RESIDENT_ASM) \
-                       $(SPXN_RESOLVE_C) $(SPXN_XFS_SOURCE) \
+                       $(SPXN_RESOLVE_C) $(SPXN_MATCH_C) $(SPXN_MATCH_HEADERS) $(SPXN_XFS_SOURCE) \
                        $(SPXN_CLOCK_C) $(SPXN_CLOCK_HEADERS)
 ATLAS_BINDING_DEPS += $(SPXN_RESIDENT_C) $(SPXN_RESIDENT_ASM) \
-                      $(SPXN_RESOLVE_C) $(SPXN_XFS_SOURCE)
+                      $(SPXN_RESOLVE_C) $(SPXN_MATCH_C) $(SPXN_MATCH_HEADERS) $(SPXN_XFS_SOURCE)
 ESX_COMMON_ASM :=
 ESX_FILEUI_ASM :=
 ESX_SAVELOAD_ASM :=
@@ -561,6 +567,7 @@ NEXT_OVERLAY_LOADER_ASM := asm/next/overlay_loader_next.asm
 NEXT_GRAPHICS_BANK_ASM := asm/next/extension_bank_next.asm
 NEXT_GRAPHICS_BANK_LAYOUT := asm/next/extension_bank_layout.asm
 NEXT_EXTENSION_INCLUDES := asm/next/screen_extension_stubs_top.asm \
+                           asm/overlay/menu_config/setup_headers.inc \
                            asm/next/screen_extension_stubs_tail.asm $(NEXT_VISUAL_ASSETS) \
                            $(wildcard asm/next/board_*.inc) asm/next/screen.asm \
                            src/spectrum/ui/layout_next.h
@@ -683,8 +690,11 @@ OVERLAY_SRC := asm/overlay/rules/entry_rules.asm \
                $(SPXN_TIME_OVERLAY_SRC) \
                $(SPXN_ATOMIC_SRC) \
                $(SPXN_RESOLVE_C) \
+               $(SPXN_MATCH_C) \
+               $(SPXN_MATCH_HEADERS) \
                $(SPXN_XFS_OVERLAY_ASM) \
                asm/overlay/direct/entry_direct.asm \
+               $(if $(filter spectranext,$(NET_BACKEND)),asm/overlay/direct/entry_direct_spectranext.asm asm/overlay/direct/match_picker.asm src/spectrum/overlay/match_picker.inc) \
                src/spectrum/overlay/direct_ovl.c \
                asm/overlay/menu_config/entry_menu_config.asm \
                asm/overlay/menu_logic/entry_menu_logic.asm \
@@ -891,13 +901,13 @@ $(SESSION_DIRECT_PARITY_NEXT_60_TEST): $(SESSION_DIRECT_PARITY_TEST_SRC) $(BOARD
 		-D__z88dk_fastcall= $(HOST_GC_CFLAGS) \
 		$(SESSION_DIRECT_PARITY_TEST_SRC) $(SPECTRUM_INTERACTION_SRC) src/spectrum/ui/setup.c $(HOST_GC_LDFLAGS) -o $@
 
-$(SESSION_DIRECT_PARITY_SPECTRANEXT_TEST): $(SESSION_DIRECT_PARITY_TEST_SRC) $(BOARD_APPLY_IMPL) tests/session/direct_parity.h src/spectrum/app/app.c $(SESSION_APP_DEPS) src/spectrum/app/time.h src/spectrum/overlay/direct_ovl.c src/spectrum/session/timing.h | $(BUILD_DIR)
+$(SESSION_DIRECT_PARITY_SPECTRANEXT_TEST): $(SESSION_DIRECT_PARITY_TEST_SRC) $(BOARD_APPLY_IMPL) tests/session/direct_parity.h tests/spectrum/spectranext_api_fixture.h src/spectrum/app/app.c $(SESSION_APP_DEPS) src/spectrum/app/time.h src/spectrum/overlay/direct_ovl.c src/spectrum/session/timing.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -DNETCHESSZX_HOST_TEST -DNETCHESSZX_HOST_SESSION_TEST \
 		-DNETCHESSZX_SPECTRANEXT -DNETCHESSZX_RECOVERY \
 		-D__z88dk_fastcall= $(HOST_GC_CFLAGS) \
 		$(SESSION_DIRECT_PARITY_TEST_SRC) $(SPECTRUM_INTERACTION_SRC) src/spectrum/ui/setup.c $(HOST_GC_LDFLAGS) -o $@
 
-$(SESSION_DIRECT_PARITY_SPECTRANEXT_60_TEST): $(SESSION_DIRECT_PARITY_TEST_SRC) $(BOARD_APPLY_IMPL) tests/session/direct_parity.h src/spectrum/app/app.c $(SESSION_APP_DEPS) src/spectrum/app/time.h src/spectrum/overlay/direct_ovl.c src/spectrum/session/timing.h | $(BUILD_DIR)
+$(SESSION_DIRECT_PARITY_SPECTRANEXT_60_TEST): $(SESSION_DIRECT_PARITY_TEST_SRC) $(BOARD_APPLY_IMPL) tests/session/direct_parity.h tests/spectrum/spectranext_api_fixture.h src/spectrum/app/app.c $(SESSION_APP_DEPS) src/spectrum/app/time.h src/spectrum/overlay/direct_ovl.c src/spectrum/session/timing.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -DNETCHESSZX_HOST_TEST -DNETCHESSZX_HOST_SESSION_TEST \
 		-DNETCHESSZX_SPECTRANEXT -DNETCHESSZX_RECOVERY -DNETCHESSZX_SESSION_FRAME_HZ=60 \
 		-D__z88dk_fastcall= $(HOST_GC_CFLAGS) \
@@ -982,6 +992,9 @@ $(SESSION_OUTGOING_TEST): $(SESSION_OUTGOING_TEST_SRC) src/spectrum/config/sessi
 $(STATUS_OVERLAY_TEST): $(STATUS_OVERLAY_TEST_SRC) src/spectrum/overlay/status_ovl.c src/spectrum/overlay/overlay_context.h src/spectrum/render_status.h src/spectrum/session/event.h src/spectrum/config/session.h src/spectrum/session/identity.h src/spectrum/session/state.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -DNETCHESSZX_HOST_TEST -D__z88dk_fastcall= \
 		$(STATUS_OVERLAY_TEST_SRC) -o $@
+
+$(STATUS_OVERLAY_SPECTRANEXT_TEST): $(STATUS_OVERLAY_TEST_SRC) src/spectrum/overlay/status_ovl.c src/spectrum/overlay/overlay_context.h src/spectrum/render_status.h src/spectrum/session/event.h src/spectrum/config/session.h src/spectrum/session/identity.h src/spectrum/session/state.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -DNETCHESSZX_HOST_TEST -DNETCHESSZX_SPECTRANEXT -D__z88dk_fastcall= 		$(STATUS_OVERLAY_TEST_SRC) -o $@
 
 status-overlay-test: $(STATUS_OVERLAY_TEST)
 	./$(STATUS_OVERLAY_TEST)
@@ -1092,22 +1105,32 @@ $(FILEUI_POLICY_TEST): $(FILEUI_POLICY_TEST_SRC) src/spectrum/overlay/fileui_ovl
 fileui-policy-test: $(FILEUI_POLICY_TEST)
 	./$(FILEUI_POLICY_TEST)
 
-$(SPECTRANEXT_LINK_TEST): $(SPECTRANEXT_LINK_TEST_SRC) tests/spectrum/spectranext_api_fixture.h src/spectrum/transport/net.c src/spectrum/overlay/direct_ovl.c src/spectrum/overlay/mqtt_connect_ovl.c src/spectrum/overlay/mqtt_tx_ovl.c src/spectrum/overlay/time_ovl.c | $(BUILD_DIR)
+$(SPECTRANEXT_LINK_TEST): $(SPECTRANEXT_LINK_TEST_SRC) tests/spectrum/spectranext_api_fixture.h src/spectrum/transport/net.c src/spectrum/overlay/direct_ovl.c src/spectrum/overlay/match_picker.inc src/spectrum/overlay/mqtt_connect_ovl.c src/spectrum/overlay/mqtt_tx_ovl.c src/spectrum/overlay/time_ovl.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast \
 		$(HOST_INCLUDED_C_CFLAGS) $(HOST_GC_CFLAGS) $(SPECTRANEXT_LINK_TEST_SRC) \
 		$(HOST_GC_LDFLAGS) -o $@
 
-spectranext-network-test: $(SPECTRANEXT_LINK_TEST) tests/tools/test_spectranext_build.py
+spectranext-network-test: $(SPECTRANEXT_LINK_TEST) $(STATUS_OVERLAY_SPECTRANEXT_TEST) tests/tools/test_spectranext_build.py
 	./$(SPECTRANEXT_LINK_TEST)
+	./$(STATUS_OVERLAY_SPECTRANEXT_TEST)
 	"$(PYTHON)" tests/tools/test_spectranext_build.py
+	"$(PYTHON)" tests/tools/test_match_picker_render.py
+	"$(PYTHON)" tests/tools/test_direct_close_wait.py
 
-spectranext-conformance-test: spectranext-network-test $(SESSION_PING_SPECTRANEXT_TEST) $(SESSION_POLL_SPECTRANEXT_TEST) $(SESSION_POLL_SPECTRANEXT_60_TEST) $(SESSION_DIRECT_PARITY_SPECTRANEXT_TEST) $(SESSION_DIRECT_PARITY_SPECTRANEXT_60_TEST) tests/tools/test_spcx_direct_conformance.py
+spectranext-conformance-test: spectranext-network-test moves-header-test $(SESSION_PING_SPECTRANEXT_TEST) $(SESSION_POLL_SPECTRANEXT_TEST) $(SESSION_POLL_SPECTRANEXT_60_TEST) $(SESSION_DIRECT_PARITY_SPECTRANEXT_TEST) $(SESSION_DIRECT_PARITY_SPECTRANEXT_60_TEST) tests/tools/test_spcx_direct_conformance.py
 	./$(SESSION_PING_SPECTRANEXT_TEST)
 	./$(SESSION_POLL_SPECTRANEXT_TEST)
 	./$(SESSION_POLL_SPECTRANEXT_60_TEST)
 	./$(SESSION_DIRECT_PARITY_SPECTRANEXT_TEST)
 	./$(SESSION_DIRECT_PARITY_SPECTRANEXT_60_TEST)
 	"$(PYTHON)" -m unittest tests.tools.test_spcx_direct_conformance
+
+.PHONY: moves-header-test
+moves-header-test: tests/spectrum/test_moves_header_z80.py tests/spectrum/test_panel_addresses_z80.py
+	"$(PYTHON)" tests/spectrum/test_moves_header_z80.py
+	"$(PYTHON)" tests/spectrum/test_panel_addresses_z80.py
+
+test: moves-header-test
 
 spectranext-clock-test: $(SPECTRANEXT_LINK_TEST)
 	./$(SPECTRANEXT_LINK_TEST)
@@ -1303,6 +1326,7 @@ tap-spectranext:
 		OVERLAY_BLOCK_SIZE=4096 OVERLAY_SIZE_LIMIT=4096 \
 		BUILD_DIR=$(BUILD_DIR)/spectranext RELEASE_DIR=$(RELEASE_DIR)/Spectranext \
 		LOWMEM_LAYOUT=spectranext tap
+	"$(PYTHON)" tests/tools/test_board_action_z80.py $(BUILD_DIR)/spectranext --spectranext
 
 spectranext-size-report: tap-spectranext tools/gen_size_report.py
 	"$(PYTHON)" tools/gen_size_report.py --map $(BUILD_DIR)/spectranext/$(ZX_NAME).map --code-bin $(BUILD_DIR)/spectranext/$(ZX_NAME)_CODE.bin --tap $(RELEASE_DIR)/Spectranext/$(ZX_NAME).tap --ovl $(RELEASE_DIR)/Spectranext/$(ZX_NAME).OVL --dat $(RELEASE_DIR)/Spectranext/$(ZX_NAME).DAT --overlay-sizes $(BUILD_DIR)/spectranext/overlay_sizes.json --output $(BUILD_DIR)/spectranext/size_report.json
@@ -1620,7 +1644,7 @@ endif
 
 # Overlay recipes stay in tools/build_overlays.py so the Make command line
 # stays under the Windows 8191-character cap. Export what the builder reads.
-export SPXN_ATOMIC_OBJ SPXN_ATOMIC_SRC SPXN_RESOLVE_C SPXN_XFS_OVERLAY_ASM
+export SPXN_ATOMIC_OBJ SPXN_ATOMIC_SRC SPXN_RESOLVE_C SPXN_MATCH_C SPXN_XFS_OVERLAY_ASM
 export ATLAS_EXTRA_ARGS ATLAS_BINDING_ARGS ATLAS_EXTRA ATLAS_FINAL BUILD_DIR BUILD_DIR_UP CONFIG_OVL_CFLAGS EDIT_BUF_OVL ESX_COMMON_ASM ESX_FILEUI_ASM ESX_FILEUI_OBJ ESX_SAVELOAD_ASM ESX_SAVELOAD_OBJ GAME_PROTOCOL_MACH_SRC JOURNAL_HOOK MAKE MQTT_CONNECT_OVL_CFLAGS OVERLAY_BLOCK_SIZE OVERLAY_SIZE_LIMIT OVL_ATLAS_TABLE OVL_DEFS PYTHON RESIDENT_EXTRA_ASM SPXN_CLOCK_C SPXN_CLOCK_HEADERS SPXN_CLOCK_OVL_CFLAGS SPXN_DIR_ABS STJ_SAVELOAD ZCC ZX_NAME ZX_OVL ZX_OVL_CFLAGS ZX_Z80ASM
 
 $(ZX_OVL): $(ZX_TAP) $(BUILD_CONFIG_STAMP) $(SPECTRUM_HEADERS) $(OVERLAY_SRC) tools/build_overlays.py tools/gen_overlay_defs.py tools/gen_overlay_atlas.py | $(BUILD_DIR) $(RELEASE_DIR)

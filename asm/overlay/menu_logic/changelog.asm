@@ -254,34 +254,34 @@ chlog_title_line:
     ret
 
 chlog_title:
-    DEFM "What's new in 1.3", 0
+    DEFM "What's new in 1.4", 0
 
 ; row, attribute, text; a zero row ends the list.
 chlog_lines:
     DEFB 7, chlog_attr_accent
-    DEFM "Changes:", 0
+    DEFM "Open Match", 0
     DEFB 8, chlog_attr_text
-    DEFM ". Play against Stockfish via Qt", 0
+    DEFM ". Spectranext: find a rival with MATCH", 0
     DEFB 9, chlog_attr_text
-    DEFM ". End-of-game statistics (S)", 0
+    DEFM ". CREATE: show your name and colour", 0
     DEFB 10, chlog_attr_text
-    DEFM ". Player names in the MOVES headers", 0
+    DEFM ". JOIN: choose from up to nine hosts", 0
     DEFB 11, chlog_attr_text
-    DEFM ". Resume a game after a crash or reset", 0
+    DEFM ". UP/DOWN selects, ENTER/SPACE joins", 0
     DEFB 12, chlog_attr_text
-    DEFM ". Saves keep the full move list", 0
+    DEFM ". BREAK cancels back to Setup", 0
     DEFB 13, chlog_attr_text
-    DEFM ". Menu groups open on their first action", 0
+    DEFM ". Cursor stays responsive during refresh", 0
     DEFB 14, chlog_attr_text
-    DEFM ". No auto rematch: the host asks", 0
+    DEFM ". Clear connection and exit feedback", 0
     DEFB 15, chlog_attr_text
-    DEFM ". Faster moves, setup and start", 0
+    DEFM ". Correct player names in MOVES", 0
     DEFB 16, chlog_attr_text
-    DEFM ". Clocks keep time during disk use", 0
+    DEFM "MATCH needs firmware 1.2+", 0
     DEFB 17, chlog_attr_text
-    DEFM ". Spectranext: launch from the web", 0
+    DEFM "Players need different public IPs", 0
     DEFB 18, chlog_attr_accent
-    DEFM "And many, many more fixes!", 0
+    DEFM "DIRECT and MQTT remain available", 0
     DEFB 0
 
 ; Key hint in the small ikkle font, like About's: pixel y, 64-column

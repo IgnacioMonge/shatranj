@@ -40,6 +40,13 @@ When the opponent is ready, the bottom bar ends with `VS ZX`, `VS NXT`,
 `VS SPCX`, `VS PC`, `VS MAC` or `VS LNX`, showing which machine you play
 against. Press **Disconnect** to leave.
 
+### Spectranext MATCH
+
+Shatranj 1.4 adds MATCH on Spectranext cartridges with firmware 1.2 or later.
+It pairs two cartridges through their firmware service. The desktop client
+continues to use Direct or MQTT; choose one of those modes on both sides
+when playing desktop-to-Spectranext.
+
 ## Playing
 
 - On your turn, click the piece and then the target square. Legal targets are

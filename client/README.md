@@ -2,7 +2,7 @@
 
 [Español](README.es.md) · [Project documentation](../docs/README.md)
 
-Qt desktop client for Shatranj 1.3. Windows, macOS, and Linux use the same
+Qt desktop client for Shatranj 1.4. Windows, macOS, and Linux use the same
 implementation and support both transports:
 
 - **Direct TCP**: a host listens for one guest; the guest connects to the

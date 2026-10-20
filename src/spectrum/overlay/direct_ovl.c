@@ -10,6 +10,8 @@
 #ifndef NETCHESSZX_HOST_TEST
 #include "spxn.h"
 #include "spxn_stream.h"
+#include "spxmatch.h"
+#include "spxinfo.h"
 #endif
 
 #define WAIT_LONG 2000u
@@ -159,10 +161,13 @@ static uint8_t spxn_direct_drain_ovl(void)
         direct_link_closed = 1u;
         return 0u;
     }
-    if (flags == 0) {
+    /* A matched stream keeps the connect notification raised; on a
+       connected stream it is not news, so it must not starve this yield. */
+    if ((flags & ~SPXN_POLLCON) == 0) {
         /* Match the ESP/UART read cadence. Besides keeping session timers in
            protocol frames, this yields to the cartridge/emulator I/O worker
-           so a later TCP segment can make POLLIN observable. */
+           so a later TCP segment can make POLLIN observable. The yield also
+           scans the keyboard. */
         net_wait_frame();
     }
     if ((flags & SPXN_POLLIN) != 0) {
@@ -203,24 +208,345 @@ static uint8_t spxn_direct_listen_ovl(void)
     return 1u;
 }
 
+/* ROM arguments live in the overlay scratch: the ROM cannot read this
+   overlay's page, and a stack address (0xffxx) that GETHOSTBYNAME leaves in
+   DE reaches SOCKET as D=0xff, where the firmware takes E as the socket's
+   protocol selector. */
+#ifdef NETCHESSZX_HOST_TEST
+static char direct_match_host_arg[sizeof(NETCHESSZX_MATCH_HOST)];
+static uint8_t direct_ip4_arg[4];
+#define DIRECT_MATCH_HOST_ARG direct_match_host_arg
+#define DIRECT_IP4_ARG direct_ip4_arg
+#define DIRECT_MATCH_HOST_COPY strcpy
+#else
+#define DIRECT_MATCH_HOST_ARG \
+    ((char *)NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR)
+#define DIRECT_IP4_ARG \
+    ((uint8_t *)NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR + \
+     sizeof(NETCHESSZX_MATCH_HOST))
+#define DIRECT_MATCH_HOST_COPY spectrum_append_text
+#endif
+
+/* Two serial strings share the scratch once ROM CONNECT no longer needs the
+   service name and address. */
+#ifdef NETCHESSZX_HOST_TEST
+static char direct_serial_arg[2u * SPXINFO_STRING_SIZE];
+#define DIRECT_SERIAL_ARG direct_serial_arg
+#else
+#define DIRECT_SERIAL_ARG ((char *)NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_ADDR)
+#endif
+typedef char direct_serial_args_fit[
+    (2u * SPXINFO_STRING_SIZE <= NETCHESSZX_LOWRAM_OVERLAY_SCRATCH_SIZE)
+        ? 1 : -1];
+
+/* MATCH host lobby state survives between wait batches in low RAM. */
+#ifdef NETCHESSZX_HOST_TEST
+static uint8_t match_phase;
+static uint8_t match_ticks;
+static uint8_t match_socket;
+static char match_saved_name[NETCHESSZX_LOWRAM_SPXN_MATCH_SAVED_NAME_SIZE];
+#define MATCH_PHASE match_phase
+#define MATCH_TICKS match_ticks
+#define MATCH_SOCKET match_socket
+#define MATCH_SAVED_NAME match_saved_name
+#else
+#define MATCH_PHASE (*(uint8_t *)NETCHESSZX_LOWRAM_SPXN_MATCH_PHASE_ADDR)
+#define MATCH_TICKS (*(uint8_t *)NETCHESSZX_LOWRAM_SPXN_MATCH_TICKS_ADDR)
+#define MATCH_SOCKET (*(uint8_t *)NETCHESSZX_LOWRAM_SPXN_MATCH_SOCKET_ADDR)
+#define MATCH_SAVED_NAME \
+    ((char *)NETCHESSZX_LOWRAM_SPXN_MATCH_SAVED_NAME_ADDR)
+#endif
+#define MATCH_PHASE_IDLE 0u
+#define MATCH_PHASE_START 1u   /* MATCH start sent */
+#define MATCH_PHASE_NAME 2u    /* SET_NAME sent */
+#define MATCH_PHASE_PAUSE 3u   /* ticks count down to the next poll */
+#define MATCH_PHASE_POLL 4u    /* MATCH poll sent */
+#define MATCH_PHASE_PAIRED 5u  /* stage 3 returned; leave before re-opening */
+#define MATCH_REPLY_FRAMES 250u
+/* Saved-name byte 0 after a failed operation 21 read: cancel sends no
+   SET_NAME. An empty saved name restores a blank one. */
+#define MATCH_NAME_KEEP ((char)0xff)
+/* The lobby name reuses the service-name argument: NAME + " (W)" + NUL. */
+typedef char match_lobby_name_fits[
+    (NETCHESS_PLAYER_NAME_SIZE + 4u <= sizeof(NETCHESSZX_MATCH_HOST) &&
+     NETCHESS_PLAYER_NAME_SIZE + 3u <= SPXMATCH_NAME_MAX) ? 1 : -1];
+
+/* Open a stream socket without ROM CONNECT and start MATCH on it. */
+static uint8_t match_host_open(void)
+{
+    int16_t socket;
+
+    spxn_close();
+    MATCH_PHASE = MATCH_PHASE_IDLE;
+    MATCH_TICKS = 0u;
+    active_link = DIRECT_LISTENER_ACTIVE;
+    (void)DIRECT_MATCH_HOST_COPY(DIRECT_MATCH_HOST_ARG,
+                                 NETCHESSZX_MATCH_HOST);
+    socket = spxmatch_open(DIRECT_MATCH_HOST_ARG, DIRECT_IP4_ARG);
+    if (socket < 0) {
+        return 0u;
+    }
+    MATCH_SOCKET = (uint8_t)socket;
+    if (spxmatch_send(MATCH_SOCKET, SPXMATCH_CMD_MATCH, SPXMATCH_POLL, 0) !=
+        SPXN_OK) {
+        spxn_close();
+        return 0u;
+    }
+    MATCH_PHASE = MATCH_PHASE_START;
+    return 1u;
+}
+
+static void match_lobby_name(char *out)
+{
+    out = spectrum_append_text(out,
+                               netchesszx_player_name[0] != '\0'
+                                   ? (const char *)netchesszx_player_name
+                                   : "HOST");
+    (void)spectrum_append_text(out,
+                               netchesszx_session_identity_host_color() !=
+                                       NETCHESSZX_COLOR_WHITE
+                                   ? " (B)" : " (W)");
+}
+
+/* Bounded wait for the outstanding mailbox reply (one command at a time):
+   0 while the mailbox is still busy after MATCH_REPLY_FRAMES. */
+static uint8_t match_reply_wait(void)
+{
+    uint8_t frames = MATCH_REPLY_FRAMES;
+
+    while (spxmatch_status() == SPXMATCH_BUSY) {
+        if (--frames == 0u) {
+            return 0u;
+        }
+        net_wait_frame();
+    }
+    return 1u;
+}
+
+uint8_t direct_close_ovl(void)
+{
+    /* Established MATCH sockets close normally; lobby cancellation has its
+       own CANCEL path. LEAVE would release the transport before ROM CLOSE. */
+    spxn_close();
+    MATCH_PHASE = MATCH_PHASE_IDLE;
+    return 1u;
+}
+
+/* Keep the tunnel alive until the peer consumed BYE and closed, or the
+   existing send budget expires. CLOSE can discard a queued MATCH write. */
+#ifdef NETCHESSZX_HOST_TEST
+uint8_t direct_close_wait_ovl(uint8_t *ctx) __z88dk_fastcall
+{
+    uint8_t frames = ctx[SPECTRUM_OVL_CTX_DIRECT_CLOSE_WAIT];
+
+    while (frames-- != 0u) {
+        int16_t flags = spxn_poll();
+
+        if (flags < 0 || (flags & (SPXN_POLLNVAL | SPXN_POLLHUP)) != 0) {
+            break;
+        }
+        if ((flags & SPXN_POLLIN) != 0 &&
+            spxn_recv(SPXN_DIRECT_SCRATCH, SPECTRUM_MQTT_PACKET_MAX) <= 0) {
+            break;
+        }
+        net_wait_frame();
+    }
+    return direct_close_ovl();
+}
+
+#endif
+
+static uint8_t match_send_wait(uint8_t command, uint8_t action,
+                               const char *text)
+{
+    (void)spxmatch_send(MATCH_SOCKET, command, action, text);
+    return match_reply_wait();
+}
+
+/* SET_NAME needs the open MATCH session, so it precedes cancel. A reply
+   that never comes skips the remaining commands: none goes to a busy
+   mailbox. */
+static void match_host_cancel(void)
+{
+    if (MATCH_PHASE != MATCH_PHASE_IDLE && match_reply_wait() &&
+        (MATCH_SAVED_NAME[0] == MATCH_NAME_KEEP ||
+         match_send_wait(SPXMATCH_CMD_SET_NAME, 0u, MATCH_SAVED_NAME))) {
+        (void)match_send_wait(SPXMATCH_CMD_MATCH, SPXMATCH_CANCEL, 0);
+    }
+    MATCH_PHASE = MATCH_PHASE_IDLE;
+    spxn_close();
+}
+
+/* One mailbox step per frame. The stream is never read or written before
+   stage 3: a blocking ROM call on an unpaired socket can hang. */
+static uint8_t match_host_wait(void)
+{
+    uint16_t frames = WAIT_LONG;
+
+    while (frames-- != 0u) {
+        if (spectrum_key_poll() == DIRECT_KEY_CANCEL) {
+            match_host_cancel();
+            return SPECTRUM_LINK_CANCELLED;
+        }
+        if (MATCH_TICKS != 0u) {
+            --MATCH_TICKS;
+        } else if (MATCH_PHASE == MATCH_PHASE_IDLE) {
+            /* Register again; a refused socket retries at the re-arm pace. */
+            if (!match_host_open()) {
+                MATCH_TICKS = DIRECT_REARM_FRAMES;
+            }
+        } else if (MATCH_PHASE == MATCH_PHASE_PAUSE) {
+            (void)spxmatch_send(MATCH_SOCKET, SPXMATCH_CMD_MATCH,
+                                SPXMATCH_POLL, 0);
+            MATCH_PHASE = MATCH_PHASE_POLL;
+        } else {
+            uint16_t stage = (uint16_t)spxmatch_status();
+
+            /* The snapshot stage exists only in MATCH replies: a SET_NAME
+               reply, whatever it holds, just leads to the next poll. */
+            if (stage == SPXMATCH_BUSY) {
+                /* Keep waiting. */
+            } else if (MATCH_PHASE != MATCH_PHASE_NAME &&
+                       stage >= SPXMATCH_STAGE_CONNECTED) {
+                if (stage == SPXMATCH_STAGE_CONNECTED) {
+                    /* The socket already is the driver's connected
+                       stream. */
+                    MATCH_PHASE = MATCH_PHASE_PAIRED;
+                    active_link = 0u;
+                    return 1u;
+                }
+                /* Cancelled, error or a controller failure: cancel through
+                   MATCH and close, as the controller asks. The host shows
+                   CONNECTION FAILED, then the next wait registers again
+                   after the re-arm pause, keeping the saved name. */
+                (void)match_send_wait(SPXMATCH_CMD_MATCH, SPXMATCH_CANCEL, 0);
+                spxn_close();
+                MATCH_PHASE = MATCH_PHASE_IDLE;
+                MATCH_TICKS = DIRECT_REARM_FRAMES;
+                return SPECTRUM_LINK_FAILED;
+            } else if (MATCH_PHASE == MATCH_PHASE_START) {
+                match_lobby_name(DIRECT_MATCH_HOST_ARG);
+                (void)spxmatch_send(MATCH_SOCKET, SPXMATCH_CMD_SET_NAME, 0u,
+                                    DIRECT_MATCH_HOST_ARG);
+                MATCH_PHASE = MATCH_PHASE_NAME;
+            } else {
+                /* The controller rate-limits server refreshes: poll again
+                   on the 50th frame, about once a second. */
+                MATCH_TICKS = DIRECT_REARM_FRAMES - 1u;
+                MATCH_PHASE = MATCH_PHASE_PAUSE;
+            }
+        }
+        net_wait_frame();
+    }
+    return 0u;
+}
+
+/* Reads the cartridge name into the scratch, as cancel restores it: an
+   unnamed cartridge reads as its serial (operation 21 id 0) and becomes
+   blank, and a paired game's " (W)" or " (B)" is removed. Returns 0 without
+   operation 21, 2 when it removed a mark, else 1. The scratch is read before
+   match_host_open stages the service there. */
+static uint8_t match_read_name(void)
+{
+    char *end = DIRECT_SERIAL_ARG;
+
+    if (spxinfo_string(SPXINFO_STRING_MATCH_NAME, DIRECT_SERIAL_ARG,
+                       SPXINFO_STRING_SIZE) != SPXN_OK) {
+        return 0u;
+    }
+    while (*end != '\0') {
+        ++end;
+    }
+    if (end - DIRECT_SERIAL_ARG >=
+            NETCHESSZX_LOWRAM_SPXN_MATCH_SAVED_NAME_SIZE ||
+        (spxinfo_string(SPXINFO_STRING_SERIAL,
+                        DIRECT_SERIAL_ARG + SPXINFO_STRING_SIZE,
+                        SPXINFO_STRING_SIZE) == SPXN_OK &&
+         spectrum_streq(DIRECT_SERIAL_ARG,
+                        DIRECT_SERIAL_ARG + SPXINFO_STRING_SIZE))) {
+        DIRECT_SERIAL_ARG[0] = '\0';
+    } else if (end - DIRECT_SERIAL_ARG > 3 && end[-4] == ' ' &&
+               end[-3] == '(' && (end[-2] == 'W' || end[-2] == 'B') &&
+               end[-1] == ')') {
+        end[-4] = '\0';
+        return 2u;
+    }
+    return 1u;
+}
+
 uint8_t direct_listen_ovl(void)
 {
+    /* MATCH hosts in the lobby without the firmware menu. The cartridge name
+       is read once per listen, before SET_NAME replaces it, so that a
+       re-registration keeps the name cancel restores. */
+    if (netchesszx_link_match) {
+        /* Close the last game's socket before reopening its lobby. */
+        if (MATCH_PHASE == MATCH_PHASE_PAIRED) {
+            (void)direct_close_ovl();
+        }
+        MATCH_SAVED_NAME[0] = MATCH_NAME_KEEP;
+        if (match_read_name()) {
+            (void)spectrum_append_text(MATCH_SAVED_NAME, DIRECT_SERIAL_ARG);
+        }
+        return match_host_open();
+    }
     return spxn_direct_listen_ovl();
 }
 
-uint8_t direct_connect_ovl(void)
-{
-    uint8_t ip4be[4];
+#include "match_picker.inc"
 
-    spxn_close();
+uint8_t direct_connect_ovl(uint8_t *ctx) __z88dk_fastcall
+{
+    uint8_t *ip4be = DIRECT_IP4_ARG;
+
+    /* JOIN, before the picker: a name a host session left marked
+       would list this guest as a host. A short session restores it. */
+    if (netchesszx_link_match) {
+        if (ctx[SPECTRUM_OVL_CTX_DIRECT_UNMARK] == SPECTRUM_OVL_DIRECT_MATCH_PICK) {
+            return match_guest_pick();
+        }
+        if (ctx[SPECTRUM_OVL_CTX_DIRECT_UNMARK] == SPECTRUM_OVL_DIRECT_MATCH_UNMARK) {
+            if (match_read_name() == 2u) {
+                (void)spectrum_append_text(MATCH_SAVED_NAME, DIRECT_SERIAL_ARG);
+                if (match_host_open()) {
+                    match_host_cancel();
+                }
+            }
+            return 1u;
+        }
+        if (ctx[SPECTRUM_OVL_CTX_DIRECT_UNMARK] == SPECTRUM_OVL_DIRECT_MATCH_JOIN) {
+            uint8_t result = match_guest_join();
+            if (result != 1u) return result;
+        }
+    }
     active_link = DIRECT_LISTENER_ACTIVE;
     direct_link_closed = 0u;
-    if (spxn_resolve(netchesszx_direct_host, ip4be) != SPXN_OK) {
-        return 0u;
-    }
-    if (spxn_connect(ip4be, netchesszx_direct_port) != SPXN_OK) {
+    /* MATCH arrives already paired by the preceding picker call. */
+    if (!netchesszx_link_match) {
         spxn_close();
-        return 0u;
+        if (spxn_resolve(netchesszx_direct_host, ip4be) != SPXN_OK) {
+            return 0u;
+        }
+        if (spxn_connect(ip4be, netchesszx_direct_port) != SPXN_OK) {
+            spxn_close();
+            return 0u;
+        }
+    } else if (
+        /* The guest must be the initiator. Another guest that picked this one
+           from its own menu leaves no host. Without operation 21 (first 1.2
+           beta) a read fails and the check is skipped. */
+        spxinfo_string(SPXINFO_STRING_SERIAL, DIRECT_SERIAL_ARG,
+                       SPXINFO_STRING_SIZE) == SPXN_OK &&
+        spxinfo_string(SPXINFO_STRING_MATCH_INITIATOR,
+                       DIRECT_SERIAL_ARG + SPXINFO_STRING_SIZE,
+                       SPXINFO_STRING_SIZE) == SPXN_OK &&
+        !spectrum_streq(DIRECT_SERIAL_ARG,
+                        DIRECT_SERIAL_ARG + SPXINFO_STRING_SIZE)) {
+        (void)direct_close_ovl();
+        return SPECTRUM_LINK_NOT_HOST;
+    }
+    if (netchesszx_link_match) {
+        MATCH_PHASE = MATCH_PHASE_PAIRED;
     }
     active_link = 0u;
     return 1u;
@@ -231,6 +557,10 @@ uint8_t direct_wait_pc_connect_ovl(void)
     uint16_t frames = WAIT_LONG;
     uint8_t rearm = 0u;
 
+    /* MATCH waits in the lobby: there is no listener to accept from. */
+    if (netchesszx_link_match) {
+        return match_host_wait();
+    }
     if (active_link != DIRECT_LISTENER_RETRY) {
         active_link = DIRECT_LISTENER_ACTIVE;
     }
@@ -307,7 +637,7 @@ uint8_t direct_read_payload_ovl(uint8_t *ctx) __z88dk_fastcall
     }
     if (direct_link_closed) {
         /* All bytes observed with POLLIN have already been delivered. */
-        spxn_close();
+        (void)direct_close_ovl();
         return 0xfeu;
     }
     return (uint8_t)SPECTRUM_NET_READ_TIMEOUT;

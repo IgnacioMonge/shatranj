@@ -35,7 +35,14 @@
 
 #define NETCHESSZX_APP_CONFIG_FLAG_ROLE 0x01u
 #define NETCHESSZX_APP_CONFIG_FLAG_TRANSPORT 0x02u
+#ifdef NETCHESSZX_SPECTRANEXT
+/* Spectranext only: DIRECT through the matchmaking service. Classic
+   and Next never read this file, so the bit stays reserved there. */
+#define NETCHESSZX_APP_CONFIG_FLAG_MATCH 0x04u
+#define NETCHESSZX_APP_CONFIG_FLAG_RESERVED_MASK 0xf8u
+#else
 #define NETCHESSZX_APP_CONFIG_FLAG_RESERVED_MASK 0xfcu
+#endif
 
 #define NETCHESSZX_APP_CONFIG_GAME_COLOR 0x01u
 #define NETCHESSZX_APP_CONFIG_GAME_NOTATION 0x02u
@@ -178,6 +185,12 @@ static uint8_t netchesszx_app_config_validate(const uint8_t *record)
             NETCHESSZX_DIRECT_HOST_MAX + 1u)) {
         return 0u;
     }
+#ifdef NETCHESSZX_SPECTRANEXT
+    if ((flags & NETCHESSZX_APP_CONFIG_FLAG_MATCH) != 0u) {
+        /* A DIRECT link that needs no address; never combined with MQTT. */
+        return (uint8_t)((flags & NETCHESSZX_APP_CONFIG_FLAG_TRANSPORT) == 0u);
+    }
+#endif
     if ((flags & NETCHESSZX_APP_CONFIG_FLAG_TRANSPORT) != 0u) {
         return netchesszx_app_config_room_valid(
             record + NETCHESSZX_APP_CONFIG_ROOM_OFF);

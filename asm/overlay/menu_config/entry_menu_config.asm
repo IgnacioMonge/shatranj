@@ -15,9 +15,17 @@ PUBLIC _menu_config_nav_ovl_entry
 PUBLIC _menu_config_piece_set_options_asm
 
 EXTERN _spectrum_info_line
+IFDEF NETCHESSZX_CLASSIC_BOOT
+EXTERN clear_right_panel_rows
+EXTERN draw_ikkle_inline
+EXTERN draw_right_hline
+EXTERN game_setup_msg
+EXTERN session_setup_msg
+ELSE
 EXTERN _spectrum_info_show_game_setup
-EXTERN _spectrum_overlay_context
 EXTERN _spectrum_info_show_setup
+ENDIF
+EXTERN _spectrum_overlay_context
 EXTERN _setup_choice
 EXTERN _setup_focus_choice
 EXTERN _setup_focus_board_theme
@@ -47,10 +55,15 @@ SETUP_CLEAR_ENDPOINT EQU 0xfe
 CTX_KEY         EQU 0x5fe0
 CTX_FORCE_LO    EQU 0x5fe1
 CTX_CLEAR_FROM  EQU 0x5fe3
+CTX_NOTICE      EQU 0x5fe5
 CTX_FLAGS       EQU 0x5fe6
 PAINT_MASK_ALL EQU 0x0bef
 
 INCLUDE "asm/app/player_name_layout.inc"
+IFDEF NETCHESSZX_SPECTRANEXT
+INCLUDE "asm/app/link_match_layout.inc"
+EXTERN _spectrum_gui_notify_persistent
+ENDIF
 KEY_UP          EQU 0x81
 KEY_DOWN        EQU 0x82
 FLAG_PAINT      EQU 0x02
@@ -79,6 +92,15 @@ menu_config_run_dirty:
     call nz, menu_config_info_line
     bit 1, c
     ld hl, menu_config_line_link
+IFDEF NETCHESSZX_SPECTRANEXT
+    ; Firmware without matchmaking offers no MATCH.
+    ld a, (LINK_MATCH_OK)
+    or a
+    jr nz, menu_config_run_link
+    ld hl, menu_config_line_link2
+menu_config_run_link:
+    bit 1, c
+ENDIF
     call nz, menu_config_info_line
     bit 5, c
     jr nz, menu_config_run_game_header
@@ -340,6 +362,11 @@ menu_config_paint_attrs_masked:
     ld a, (_setup_choice + 5)
     ld (menu_config_piece_selected), a
     call menu_config_paint_binary_attrs
+IFDEF NETCHESSZX_SPECTRANEXT
+    ld a, (menu_config_paint_mask)
+    bit 1, a
+    call nz, menu_config_paint_link3
+ENDIF
     ld a, (menu_config_paint_mask)
     bit 2, a
     call nz, menu_config_paint_room_attrs
@@ -355,8 +382,24 @@ menu_config_paint_attrs_masked:
     ld a, (menu_config_paint_mask + 1)
     bit 3, a
     call nz, menu_config_paint_name_attrs
+IFDEF NETCHESSZX_SPECTRANEXT
+    ld a, (LINK_MATCH_OK)
+    or a
+    jr nz, menu_config_notice_done
+    ld a, (_setup_cursor)
+    dec a                   ; LINK row
+    jr nz, menu_config_notice_done
+    ld hl, menu_config_firmware_notice
+    call _spectrum_gui_notify_persistent
+menu_config_notice_done:
+ENDIF
     ld l, 1
     ret
+
+IFDEF NETCHESSZX_SPECTRANEXT
+menu_config_firmware_notice:
+    DEFB "MATCH NEEDS FIRMWARE 1.2+", 0
+ENDIF
 
 menu_config_pack_choices:
     ld b, 5
@@ -418,6 +461,22 @@ menu_config_nav_paint:
 menu_config_nav_mark_next:
     ld a, (_setup_cursor)
     call menu_config_nav_mark_row
+IFDEF NETCHESSZX_SPECTRANEXT
+    ; Entering/leaving LINK refreshes the hint only on unsupported firmware.
+    ld a, (LINK_MATCH_OK)
+    or a
+    jr nz, menu_config_nav_done
+    ld a, (CTX_FORCE_LO)
+    and 2
+    jr z, menu_config_nav_done
+    ld a, (_setup_cursor)
+    dec a
+    jr z, menu_config_nav_notice
+    ld a, 1                 ; NOTICE_SELECT
+menu_config_nav_notice:
+    ld (CTX_NOTICE), a
+menu_config_nav_done:
+ENDIF
     ld l, 1
     ret
 
@@ -494,6 +553,20 @@ menu_config_nav_order_time:
 
 menu_config_nav_visible:
     ld e, a
+IFDEF NETCHESSZX_SPECTRANEXT
+    ; Same rule as SETUP's su_visible_a: MATCH's endpoint takes no focus.
+    sub ROW_LINK2
+    cp 2
+    jr nc, menu_config_nav_not_match
+    ld a, (_setup_choice + 1)
+    or a
+    jr nz, menu_config_nav_not_match
+    ld a, (LINK_MATCH)
+    or a
+    jr nz, menu_config_nav_false
+menu_config_nav_not_match:
+    ld a, e
+ENDIF
     cp ROW_LINK2
     jr nz, menu_config_nav_check_port
     ld a, (_setup_choice + 1)
@@ -775,6 +848,11 @@ menu_config_paint_room_attrs:
     ld a, (menu_config_values)
     bit 1, a
     jr nz, menu_config_room_mqtt
+IFDEF NETCHESSZX_SPECTRANEXT
+    ld a, (LINK_MATCH)
+    or a
+    jr nz, menu_config_room_match
+ENDIF
     ; DIRECT keeps IP and PORT as independent controls. The 4-pixel shift
     ; puts ':' and PORT[0] in one ULA cell, so PORT's span owns that cell
     ; and ':' inherits PORT's colour. IP never paints into 0x593d.
@@ -800,6 +878,91 @@ menu_config_room_width_done:
     call menu_config_text_selected
     call menu_config_focus_box
     jp menu_config_option_span
+
+IFDEF NETCHESSZX_SPECTRANEXT
+; MATCH's fixed "SELECT HOST"/"SPECTRANEXT LOBBY" answer takes no focus. Its span runs to
+; the row end so it also recolours the PORT cells DIRECT left behind.
+menu_config_room_match:
+    ld a, 4
+    ld c, 2
+    call menu_config_text_selected
+    ld e, 0
+    ld b, 32 - (NETCHESSZX_SETUP_ROOM_VALUE_ATTR & 0x1f)
+    jp menu_config_option_span
+
+; LINK in screen order MQTT, DIRECT, MATCH. Options are painted right to
+; left: each focus marker shares its attribute cell with the previous
+; option's last cell, and that option's span must win the letter colour.
+menu_config_paint_link3:
+    ld a, (menu_config_visible_l)
+    bit 1, a
+    ret z
+    ld hl, NETCHESSZX_SETUP_ATTR_BASE + NETCHESSZX_SETUP_SCREEN_ROW_LINK * 32
+    ld b, NETCHESSZX_SETUP_LINK_LABEL_WIDTH
+    call menu_config_header_span
+    ; C = selected option (0xff while LINK is unanswered).
+    ld c, 0xff
+    ld a, (menu_config_defined_l)
+    bit 1, a
+    jr z, menu_config_link3_focus
+    ld a, (_setup_choice + 1)
+    or a
+    ld c, LINK_FOCUS_MQTT
+    jr nz, menu_config_link3_focus
+    ld a, (LINK_MATCH)
+    add a, LINK_FOCUS_DIRECT
+    ld c, a
+menu_config_link3_focus:
+    ; B = focused option (0xff unless the cursor is on LINK).
+    ld b, 0xff
+    ld a, (menu_config_cursor)
+    cp ROW_LINK1
+    jr nz, menu_config_link3_paint
+    ld a, (LINK_FOCUS)
+    ld b, a
+menu_config_link3_paint:
+    ; Start at MATCH, or at DIRECT when the firmware has no matchmaking.
+    ld a, (LINK_MATCH_OK)
+    inc a
+menu_config_link3_option:
+    push af
+    push bc
+    ; D = selected, E = focused for option A.
+    ld d, 0
+    cp c
+    jr nz, menu_config_link3_not_selected
+    inc d
+menu_config_link3_not_selected:
+    ld e, 0
+    cp b
+    jr nz, menu_config_link3_not_focused
+    inc e
+menu_config_link3_not_focused:
+    ld hl, menu_config_link3_cells
+    add a, a
+    add a, l
+    ld l, a
+    jr nc, menu_config_link3_cell
+    inc h
+menu_config_link3_cell:
+    ld a, (hl)
+    inc hl
+    ld b, (hl)
+    ld l, a
+    ld h, (NETCHESSZX_SETUP_ATTR_BASE + NETCHESSZX_SETUP_SCREEN_ROW_LINK * 32) / 256
+    call menu_config_option_span
+    pop bc
+    pop af
+    sub 1
+    jr nc, menu_config_link3_option
+    ret
+
+; Attribute cell (low byte) and width of MQTT, DIRECT and MATCH.
+menu_config_link3_cells:
+    DEFB (NETCHESSZX_SETUP_ATTR_BASE + NETCHESSZX_SETUP_SCREEN_ROW_LINK * 32 + 3) & 0xff, 3
+    DEFB (NETCHESSZX_SETUP_ATTR_BASE + NETCHESSZX_SETUP_SCREEN_ROW_LINK * 32 + 6) & 0xff, 4
+    DEFB (NETCHESSZX_SETUP_ATTR_BASE + NETCHESSZX_SETUP_SCREEN_ROW_LINK * 32 + 10) & 0xff, 3
+ENDIF
 
 menu_config_direct_ip_width:
     ld de, _last_ip
@@ -885,6 +1048,12 @@ menu_config_port_attrs:
     ld a, (menu_config_visible_l)
     bit 3, a
     ret z
+IFDEF NETCHESSZX_SPECTRANEXT
+    ; MATCH has no PORT; its marker would cut into the fixed answer.
+    ld a, (LINK_MATCH)
+    or a
+    ret nz
+ENDIF
     ; Colon plus five port digits occupy attrs 29-31 (':' shares PORT[0]'s
     ; cell and therefore PORT's colour). All five digits stay on-screen.
     ld hl, NETCHESSZX_SETUP_PORT_ATTR
@@ -1237,7 +1406,13 @@ menu_config_board_swatch_bar:
 menu_config_line_game:
     DEFB NETCHESSZX_SETUP_SCREEN_ROW_GAME, "GAME  CREATE    JOIN", 0
 menu_config_line_link:
+IFDEF NETCHESSZX_SPECTRANEXT
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_LINK, "LINK  MQTT  DIRECT  MATCH", 0
+menu_config_line_link2:
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_LINK, "LINK  MQTT  DIRECT", 0
+ELSE
     DEFB NETCHESSZX_SETUP_SCREEN_ROW_LINK, "LINK  MQTT      DIRECT", 0
+ENDIF
 menu_config_line_color:
     DEFB NETCHESSZX_SETUP_SCREEN_ROW_COLOR, "COLOR  WHITE     BLACK", 0
 menu_config_line_notation:
@@ -1254,7 +1429,13 @@ menu_config_line_hints:
     DEFB NETCHESSZX_SETUP_SCREEN_ROW_HINTS, "HINTS  OFF       ON", 0
 menu_config_binary_attrs:
     DEFB 1, 0x00, NETCHESSZX_SETUP_GAME_LABEL_WIDTH, NETCHESSZX_SETUP_GAME_LEFT_WIDTH, NETCHESSZX_SETUP_GAME_RIGHT_WIDTH
+IFDEF NETCHESSZX_SPECTRANEXT
+    ; Three LINK options are painted by menu_config_paint_link3. Visible-mask
+    ; bit 15 is never set, so this entry only keeps the choice-bit numbering.
+    DEFB 0x80, 0x81, 0, 0, 0
+ELSE
     DEFB 2, 0x41, NETCHESSZX_SETUP_LINK_LABEL_WIDTH, NETCHESSZX_SETUP_LINK_LEFT_WIDTH, NETCHESSZX_SETUP_LINK_RIGHT_WIDTH
+ENDIF
     DEFB 32, 0x05, NETCHESSZX_SETUP_COLOR_LABEL_WIDTH, NETCHESSZX_SETUP_COLOR_LEFT_WIDTH, NETCHESSZX_SETUP_COLOR_RIGHT_WIDTH
     DEFB 64, 0x06, NETCHESSZX_SETUP_NOTATION_LABEL_WIDTH, NETCHESSZX_SETUP_NOTATION_LEFT_WIDTH, NETCHESSZX_SETUP_NOTATION_RIGHT_WIDTH
     DEFB 2, 0x89, NETCHESSZX_SETUP_HINTS_LABEL_WIDTH, NETCHESSZX_SETUP_HINTS_LEFT_WIDTH, NETCHESSZX_SETUP_HINTS_RIGHT_WIDTH
@@ -1303,3 +1484,7 @@ menu_config_nav_scratch:
     DEFB 0
 menu_config_paint_mask:
     DEFW 0
+
+IFDEF NETCHESSZX_CLASSIC_BOOT
+INCLUDE "asm/overlay/menu_config/setup_headers.inc"
+ENDIF

@@ -14,6 +14,8 @@
 #define SPECTRUM_LINK_PAYLOAD_MAX 48u
 #define SPECTRUM_LINK_READ_TIMEOUT (-3)
 #define SPECTRUM_LINK_CANCELLED 2u
+#define SPECTRUM_LINK_NOT_HOST 3u
+#define SPECTRUM_LINK_FAILED 4u
 #define SPECTRUM_LINK_PAYLOAD_RETAINED 0x01u
 #define SPECTRUM_LINK_PAYLOAD_GAME_ROUTE 0x02u
 #define SPECTRUM_LINK_PREFLIGHT_FAILED 0u
@@ -52,6 +54,11 @@ void spectrum_net_clock_retry_cancel(void);
 
 #define spectrum_link_listen spectrum_net_listen
 #define spectrum_link_connect_host spectrum_net_connect_host
+#ifdef NETCHESSZX_SPECTRANEXT
+void spectrum_net_close_direct(uint8_t wait_frames) NETCHESSZX_FASTCALL;
+uint8_t spectrum_net_select_host(void);
+uint8_t spectrum_net_join_host(void);
+#endif
 #define spectrum_link_wait_pc_connect spectrum_net_wait_pc_connect
 #define spectrum_link_direct_peer_mark_valid spectrum_net_direct_peer_mark_valid
 #define spectrum_link_read_payload spectrum_net_read_payload

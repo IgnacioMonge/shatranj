@@ -1,14 +1,15 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "common/protocol/platform_protocol.h"
 
 #define NETCHESSZX_HOST_TEST 1
 #define __z88dk_fastcall
 
 static uint8_t netchesszx_host_ula[6144];
 #define MOVES_HEADER_SCREEN netchesszx_host_ula
-/* Resident on the firmware: the text key each header label last showed. */
-static uint8_t spectrum_moves_header_shown[2];
+/* Resident on the firmware: the exact text each header label last showed. */
+static char spectrum_moves_header_shown[2][NETCHESS_PLAYER_NAME_SIZE];
 
 #include "spectrum/overlay/status_ovl.c"
 
@@ -18,6 +19,9 @@ const char netchesszx_mqtt_host[] = "broker.example";
 char netchesszx_mqtt_code[NETCHESSZX_MQTT_CODE_MAX + 1u];
 char netchesszx_direct_host[NETCHESSZX_DIRECT_HOST_MAX + 1u];
 uint16_t netchesszx_direct_port;
+#ifdef NETCHESSZX_SPECTRANEXT
+uint8_t netchesszx_link_match;
+#endif
 
 uint8_t netchesszx_local_color;
 char netchesszx_player_name_line[NETCHESS_PROTO_NAME_LINE_SIZE] =
@@ -115,32 +119,70 @@ static uint8_t header_byte(uint8_t scan, uint8_t col)
                                scan * 256u + col];
 }
 
-static void expect_header(const char *white, const char *black,
-                          const char *label)
+static void expect_header_update(const char *white, const char *black,
+                                 const char *label)
 {
     char expected[2][24];
+    uint8_t count = 0u;
 
-    /* The resident panel restore blanks the row once and forgets what the
-       labels showed; repaints are in place, so the labels always cover the
-       full ten-character width. */
-    memset(netchesszx_host_ula, 0, sizeof(netchesszx_host_ula));
-    memset(spectrum_moves_header_shown, 0, sizeof(spectrum_moves_header_shown));
     test_label_count = 0u;
     (void)status_moves_header_ovl(0);
-    snprintf(expected[0], sizeof(expected[0]), "%u,%u,%02x,%-10s",
+    if (white != NULL) {
+        snprintf(expected[count++], sizeof(expected[0]), "%u,%u,%02x,%-10s",
              (unsigned)NETCHESSZX_INFO_HEADER_ROW,
              (unsigned)NETCHESSZX_MOVES_HEADER_WHITE_TEXT_COL,
              (unsigned)NETCHESSZX_ATTR_STATUS, white);
-    snprintf(expected[1], sizeof(expected[1]), "%u,%u,%02x,%-10s",
+    }
+    if (black != NULL) {
+        snprintf(expected[count++], sizeof(expected[0]), "%u,%u,%02x,%-10s",
              (unsigned)NETCHESSZX_INFO_HEADER_ROW,
              (unsigned)NETCHESSZX_MOVES_HEADER_BLACK_TEXT_COL,
              (unsigned)NETCHESSZX_ATTR_STATUS, black);
-    if (test_label_count != 2u || strcmp(test_labels[0], expected[0]) != 0 ||
-        strcmp(test_labels[1], expected[1]) != 0) {
+    }
+    if (test_label_count != count ||
+        (count > 0u && strcmp(test_labels[0], expected[0]) != 0) ||
+        (count > 1u && strcmp(test_labels[1], expected[1]) != 0)) {
         fprintf(stderr, "FAIL %s: labels '%s' '%s'\n", label,
                 test_labels[0], test_labels[1]);
         ++failures;
     }
+}
+
+static void expect_header(const char *white, const char *black,
+                          const char *label)
+{
+    memset(netchesszx_host_ula, 0, sizeof(netchesszx_host_ula));
+    memset(spectrum_moves_header_shown, 0, sizeof(spectrum_moves_header_shown));
+    expect_header_update(white, black, label);
+}
+
+static void test_moves_header_changes(void)
+{
+    netchesszx_local_color = NETCHESSZX_COLOR_WHITE;
+    netchesszx_player_name[0] = '\0';
+    netchesszx_peer_name[0] = '\0';
+    expect_header("WHITE", "BLACK", "initial defaults");
+    strcpy(netchesszx_player_name, "AD");
+    expect_header_update("AD", NULL, "WHITE to colliding name AD");
+    strcpy(netchesszx_peer_name, "A_X");
+    expect_header_update(NULL, "A_X", "BLACK to colliding name A_X");
+    expect_header_update(NULL, NULL, "duplicate names skip repaint");
+    strcpy(netchesszx_player_name, "WHITE");
+    expect_header_update("WHITE", NULL, "colliding named player AD to WHITE");
+    strcpy(netchesszx_player_name, "CONSTANTIN");
+    expect_header_update("CONSTANTIN", NULL, "full-width name");
+    strcpy(netchesszx_player_name, "AD");
+    expect_header_update("AD", NULL, "short name pads old full-width name");
+    netchesszx_local_color = NETCHESSZX_COLOR_BLACK;
+    expect_header_update("A_X", "AD", "colour swap remaps names");
+    netchesszx_player_name[0] = '\0';
+    netchesszx_peer_name[0] = '\0';
+    expect_header_update("WHITE", "BLACK", "reset names restores defaults");
+    /* The firmware row clear only invalidates each cached first character. */
+    spectrum_moves_header_shown[0][0] = '\0';
+    spectrum_moves_header_shown[1][0] = '\0';
+    expect_header_update("WHITE", "BLACK", "blank row forces both labels");
+    expect_header_update(NULL, NULL, "redrawn row is cached again");
 }
 
 static void test_moves_header(void)
@@ -222,6 +264,7 @@ static void test_moves_header(void)
 int main(void)
 {
     test_moves_header();
+    test_moves_header_changes();
     test_local_ip = "255.255.255.255";
     netchesszx_direct_port = 65535u;
     set_text(netchesszx_direct_host,
@@ -317,6 +360,24 @@ int main(void)
                   "DIRECT 255.255.255.255:65535 (GUEST) VS PC",
                   "only the exact reserved name marks the engine");
     netchesszx_peer_name[0] = '\0';
+#ifdef NETCHESSZX_SPECTRANEXT
+    /* MATCH has no address to show: the firmware menu picked the peer. */
+    netchesszx_link_match = 1u;
+    expect_status(STATUS_PHASE_CONNECTING,
+                  NETCHESS_PLAT_UNKNOWN,
+                  "MATCH (GUEST) - CONNECTING",
+                  "match guest connecting");
+    netchesszx_session_role = NETCHESSZX_SESSION_ROLE_HOST;
+    expect_status(STATUS_PHASE_CONNECTING,
+                  NETCHESS_PLAT_UNKNOWN,
+                  "MATCH (HOST) - CONNECTING",
+                  "match host connects instead of listening");
+    expect_status(STATUS_PHASE_GAME,
+                  NETCHESS_PLAT_SPCX,
+                  "MATCH (HOST) VS SPCX",
+                  "match host in game");
+    netchesszx_link_match = 0u;
+#endif
 
     if (failures != 0u) {
         return 1;

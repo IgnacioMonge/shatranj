@@ -624,8 +624,8 @@ uint8_t spectrum_gui_show_about(void)
 }
 
 #ifndef NETCHESSZX_HIGH_SCRATCH
-/* Classic keeps these two bytes above its IM2 vector (overlay_loader.asm). */
-uint8_t spectrum_moves_header_shown[2];
+/* Classic includes this cache in its resident DATA (overlay_loader.asm). */
+char spectrum_moves_header_shown[2][NETCHESS_PLAYER_NAME_SIZE];
 #endif
 
 uint8_t spectrum_gui_about_visible(void)

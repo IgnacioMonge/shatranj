@@ -2,7 +2,7 @@
 
 [English](README.md) · [Documentación del proyecto](../docs/README.es.md)
 
-Cliente de escritorio Qt para Shatranj 1.3. Windows, macOS y Linux utilizan la
+Cliente de escritorio Qt para Shatranj 1.4. Windows, macOS y Linux utilizan la
 misma implementación y admiten ambos transportes:
 
 - **Direct TCP**: el anfitrión escucha a un invitado; el invitado conecta con

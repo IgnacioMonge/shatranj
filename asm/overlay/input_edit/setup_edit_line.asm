@@ -19,6 +19,9 @@ EXTERN _spectrum_gui_edit_show
 
 INCLUDE "ui_layout.inc"
 INCLUDE "asm/app/player_name_layout.inc"
+IFDEF NETCHESSZX_SPECTRANEXT
+INCLUDE "asm/app/link_match_layout.inc"
+ENDIF
 
 ROW_TIME   EQU 4
 ROW_COLOR  EQU 5
@@ -65,6 +68,22 @@ setup_edit_line:
     ld hl, _netchesszx_mqtt_code
     jr setup_edit_selected
 setup_edit_direct:
+IFDEF NETCHESSZX_SPECTRANEXT
+    ; MATCH has nothing to type: the JOIN guest picks the peer in the
+    ; host picker, and the CREATE host waits in the lobby.
+    ld a, (LINK_MATCH)
+    or a
+    jr z, setup_edit_ip
+    xor a
+    ld (setup_edit_flags), a
+    ld hl, setup_edit_match_line
+    ld a, (_setup_choice)
+    or a
+    jp nz, setup_edit_draw_line
+    ld hl, setup_edit_lobby_line
+    jp setup_edit_draw_line
+setup_edit_ip:
+ENDIF
     ld a, 8
     ld (setup_edit_flags), a
     ld a, (_setup_choice)
@@ -195,6 +214,9 @@ setup_edit_terminate:
     ld (hl), 0
 setup_edit_draw:
     ld hl, setup_edit_line_buf
+IFDEF NETCHESSZX_SPECTRANEXT
+setup_edit_draw_line:
+ENDIF
     call _spectrum_info_line
     ld a, (setup_edit_flags)
     bit 1, a
@@ -291,6 +313,12 @@ setup_edit_label_name:
     DEFB NETCHESSZX_SETUP_SCREEN_ROW_NAME, "NAME  "
 setup_edit_text_mqtt_host:
     DEFB "HIVEMQ", 0
+IFDEF NETCHESSZX_SPECTRANEXT
+setup_edit_match_line:
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_LINK + 1, "PEER  SELECT HOST", 0
+setup_edit_lobby_line:
+    DEFB NETCHESSZX_SETUP_SCREEN_ROW_LINK + 1, "PEER  SPECTRANEXT LOBBY", 0
+ENDIF
 setup_edit_row:
     DEFB 0
 setup_edit_flags:

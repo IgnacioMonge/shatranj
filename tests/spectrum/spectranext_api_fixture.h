@@ -50,6 +50,32 @@ struct spxudp_socket {
 #define SPXTIME_SNTP_PACKET_SIZE 48u
 #define SPXTIME_SNTP_PORT 123u
 
+/* spxmatch.h and spxinfo.h (firmware 1.2 matchmaking host). */
+#define SPXMATCH_CMD_MATCH       16u
+#define SPXMATCH_CMD_GET_PEER    17u
+#define SPXMATCH_CMD_CONNECT     18u
+#define SPXMATCH_MAX_PEERS        9u
+struct spxmatch_snapshot {
+    uint8_t stage, count;
+    uint16_t revision;
+    char device[65];
+    char name[24];
+    uint8_t requires_code;
+};
+#define SPXMATCH_CMD_SET_NAME    19u
+#define SPXMATCH_POLL             0u
+#define SPXMATCH_CANCEL           1u
+#define SPXMATCH_LEAVE            2u
+#define SPXMATCH_STAGE_CONNECTED  3u
+#define SPXMATCH_STAGE_CANCELLED  4u
+#define SPXMATCH_STAGE_ERROR      5u
+#define SPXMATCH_BUSY        0x0100
+#define SPXMATCH_NAME_MAX       23u
+#define SPXINFO_STRING_SERIAL 0u
+#define SPXINFO_STRING_MATCH_NAME 2u
+#define SPXINFO_STRING_MATCH_INITIATOR 5u
+#define SPXINFO_STRING_SIZE 65u
+
 int16_t spxn_status(struct spxn_status *out);
 int16_t spxn_detect(void);
 int16_t spxn_poll(void);
@@ -74,5 +100,14 @@ int16_t spxudp_recvfrom(struct spxudp_socket *socket, void *buffer,
                         uint16_t maximum,
                         struct spxudp_endpoint *source);
 void spxudp_close(struct spxudp_socket *socket);
+int16_t spxmatch_open(const char *service_host, uint8_t *ip4be);
+int16_t spxmatch_socket_index(void);
+int16_t spxmatch_send(uint8_t socket, uint8_t command, uint8_t action,
+                      const char *text);
+int16_t spxmatch_status(void);
+int16_t spxmatch_select(uint8_t socket, uint8_t command, uint8_t index,
+                        uint16_t revision);
+int16_t spxmatch_read(struct spxmatch_snapshot *out);
+int16_t spxinfo_string(uint8_t id, char *out, uint8_t capacity);
 
 #endif

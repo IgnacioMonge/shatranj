@@ -1,8 +1,5 @@
 draw_connection_indicator:
-    ld hl, ula_screen_status
-    ld a, 31
-    add a, l
-    ld l, a
+    ld hl, ula_screen_status + 31
     ld de, conn_pattern
     ld b, 8
 dci_px:
@@ -11,10 +8,7 @@ dci_px:
     inc de
     inc h
     djnz dci_px
-    ld hl, ula_attr_status
-    ld a, 31
-    add a, l
-    ld l, a
+    ld hl, ula_attr_status + 31
     ld a, (conn_attr)
     or a
     jr nz, dci_attr_ready

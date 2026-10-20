@@ -80,10 +80,7 @@ srtl_draw:
     jp draw_ikkle_text_at
 
 clear_turn_strip:
-    ld hl, ula_screen_top_turn
-    ld a, NETCHESSZX_TOP_TURN_BYTE_COL
-    add a, l
-    ld l, a
+    ld hl, ula_screen_top_turn + NETCHESSZX_TOP_TURN_BYTE_COL
     ld c, 8
 cts_scan:
     ld b, NETCHESSZX_TOP_TURN_WIDTH_BYTES
@@ -150,23 +147,16 @@ _spectrum_info_show_game:
     call clear_right_panel_rows
     jp draw_static_panels
 
-_spectrum_info_show_setup:
-    call clear_right_panel_rows
-    jr draw_connection_setup_header
-
-_spectrum_info_show_game_setup:
-    call draw_ikkle_inline
-    DEFB NETCHESSZX_INFO_SETUP_GAME_HEADER_ROW, NETCHESSZX_INFO_TEXT_COL, ATTR_MOVES_TITLE
-    DEFW game_setup_msg
-    ld a, NETCHESSZX_INFO_SETUP_GAME_HLINE_ROW
-    jp draw_right_hline
-
-draw_connection_setup_header:
-    call draw_ikkle_inline
-    DEFB NETCHESSZX_INFO_SETUP_HEADER_ROW, NETCHESSZX_INFO_TEXT_COL, ATTR_MOVES_TITLE
-    DEFW session_setup_msg
-    ld a, NETCHESSZX_INFO_SETUP_HLINE_ROW
-    jp draw_right_hline
+; Classic calls these only inside MENU_CONFIG; other targets keep their owner.
+; The Next extension also receives the outer Classic assembler flags.
+IFDEF NETCHESSZX_CLASSIC_BOOT
+IFNDEF NETCHESSZX_NEXT
+DEFC setup_headers_in_menu_config = 1
+ENDIF
+ENDIF
+IFNDEF setup_headers_in_menu_config
+INCLUDE "asm/overlay/menu_config/setup_headers.inc"
+ENDIF
 
 store_tmp_rcs:
     ld a, b
@@ -304,10 +294,7 @@ srff_attr:
     ld a, c
     cp NETCHESSZX_GAME_BOARD_TOP_ROW + 16
     jr c, srff_row
-    ld hl, ula_screen_fileui_separator
-    ld a, NETCHESSZX_GAME_BOARD_LEFT_COL
-    add a, l
-    ld l, a
+    ld hl, ula_screen_fileui_separator + NETCHESSZX_GAME_BOARD_LEFT_COL
     ld b, 16
     ld a, 0xff
 srff_sep:

@@ -6,6 +6,7 @@
 #ifdef NETCHESSZX_SPECTRANEXT
 #ifndef NETCHESSZX_HOST_TEST
 #include "spxn.h"
+#include "spxn_rom.h"
 #include "spxn_stream.h"
 #include "spxtime.h"
 #endif
@@ -350,6 +351,39 @@ uint8_t spectrum_net_connect_host(void)
     return spectrum_overlay_exec(SPECTRUM_OVL_DIRECT,
                                  SPECTRUM_OVL_DIRECT_CONNECT);
 }
+
+#ifdef NETCHESSZX_SPECTRANEXT
+void spectrum_net_close_direct(uint8_t wait_frames) NETCHESSZX_FASTCALL
+{
+    spectrum_overlay_context[SPECTRUM_OVL_CTX_DIRECT_CLOSE_WAIT] = wait_frames;
+    (void)spectrum_overlay_exec(SPECTRUM_OVL_DIRECT, SPECTRUM_OVL_DIRECT_CLOSE);
+}
+
+/* Leave the lobby open while the app replaces the picker with game panels. */
+uint8_t spectrum_net_select_host(void)
+{
+    uint8_t result;
+    spectrum_net_close_direct(0u);
+    direct_reset_rx_state();
+    spectrum_overlay_context[SPECTRUM_OVL_CTX_DIRECT_UNMARK] = SPECTRUM_OVL_DIRECT_MATCH_UNMARK;
+    (void)spectrum_overlay_exec(SPECTRUM_OVL_DIRECT,
+                                SPECTRUM_OVL_DIRECT_CONNECT);
+    spectrum_overlay_context[SPECTRUM_OVL_CTX_DIRECT_UNMARK] = SPECTRUM_OVL_DIRECT_MATCH_PICK;
+    result = spectrum_overlay_exec(SPECTRUM_OVL_DIRECT, SPECTRUM_OVL_DIRECT_CONNECT);
+    spectrum_overlay_context[SPECTRUM_OVL_CTX_DIRECT_UNMARK] = 0u;
+    return result;
+}
+
+uint8_t spectrum_net_join_host(void)
+{
+    uint8_t result;
+
+    spectrum_overlay_context[SPECTRUM_OVL_CTX_DIRECT_UNMARK] = SPECTRUM_OVL_DIRECT_MATCH_JOIN;
+    result = spectrum_overlay_exec(SPECTRUM_OVL_DIRECT, SPECTRUM_OVL_DIRECT_CONNECT);
+    spectrum_overlay_context[SPECTRUM_OVL_CTX_DIRECT_UNMARK] = 0u;
+    return result;
+}
+#endif
 
 uint8_t spectrum_net_wait_pc_connect(void)
 {

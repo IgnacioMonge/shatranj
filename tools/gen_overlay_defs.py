@@ -87,8 +87,6 @@ REQUIRED_SYMBOLS = [
     "_spectrum_render_status",
     "_spectrum_render_status_error",
     "_spectrum_render_connection",
-    "_spectrum_info_show_setup",
-    "_spectrum_info_show_game_setup",
     "_spectrum_info_show_preflight",
     "_spectrum_info_line",
     "_spectrum_render_moves",
@@ -161,6 +159,19 @@ LINK_ONLY_SYMBOLS = [
 ]
 
 OPTIONAL_SYMBOLS = [
+    "clear_right_pixel_band_abs",
+    "draw_text64_line_attr_fast",
+    "current_attr",
+    "_spectrum_input_suppress_until_release",
+    "_spectrum_input_pending_event",
+    # Classic Setup headers live in MENU_CONFIG; other targets keep the API.
+    "_spectrum_info_show_setup",
+    "_spectrum_info_show_game_setup",
+    "clear_right_panel_rows",
+    "draw_ikkle_inline",
+    "draw_right_hline",
+    "game_setup_msg",
+    "session_setup_msg",
     # Changelog text page (menu_logic/changelog.asm); ULA targets only.
     "font_packed",
     "font_lut",
@@ -358,6 +369,9 @@ PORT_OPTIONAL_SYMBOLS = [
     "_spxn_send_all",
     "_spxn_recv",
     "_spxn_close",
+    "_spxn_internal_require_closed",  # spxmatch_open in DIRECT
+    "_spxn_internal_adopt_stream",
+    "_spxn_internal_stream_fd",  # spxmatch_socket_index in DIRECT
     "_spxtime_idle",
     "_spxn_rom_detect",
     "_spxn_rom_hlcall",
@@ -380,6 +394,7 @@ PORT_OPTIONAL_SYMBOLS = [
     "_esx_commit",
     "_spxf_replace_atomic",
     "_spxn_xfs_fseek",
+    "_spxn_xfs_firmware_probe",
     "_spxn_dat_bind",
     "_spxn_xfs_dir_scratch",
     "_spxn_xfs_state_end",
