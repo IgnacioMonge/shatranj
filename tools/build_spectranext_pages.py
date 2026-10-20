@@ -24,14 +24,14 @@ SITE = ROOT / "packaging/spectranext/site"
 
 # Landing gallery: screenshot, English caption, Spanish caption.
 SHOTS = (
-    ("shatranj-1.3-classic-stats.png", "End-of-game statistics",
-     "Estadísticas de fin de partida"),
-    ("shatranj-1.3-classic-stockfish.png", "Playing Stockfish from a Spectrum",
-     "Jugando contra Stockfish desde un Spectrum"),
-    ("shatranj-1.3-next-names-menu.png", "Spectrum Next: names and rolling menu",
-     "Spectrum Next: nombres y menú rotatorio"),
-    ("shatranj-1.3-next-resume.png", "Resuming after a power cut",
-     "Reanudar tras un corte de corriente"),
+    ("shatranj-1.4-spectranext-match-setup.png", "Spectranext: choose MATCH",
+     "Spectranext: elige MATCH"),
+    ("shatranj-1.4-spectranext-match-host.png", "MATCH: host your own game",
+     "MATCH: crea tu propia partida"),
+    ("shatranj-1.4-spectranext-match-lobby.png", "MATCH: find a waiting opponent",
+     "MATCH: encuentra un rival esperando"),
+    ("shatranj-1.4-spectranext-match-game.png", "Spectranext: playing through MATCH",
+     "Spectranext: partida mediante MATCH"),
 )
 
 

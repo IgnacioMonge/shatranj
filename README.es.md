@@ -50,24 +50,25 @@ necesitan cuentas ni un servidor central de partidas.
 
 ## Novedades de la versión 1.4 — Open Match
 
-- **Encuentra rival en Spectranext con MATCH:** CREATE anuncia tu nombre y
-  color; JOIN abre la lista propia de Shatranj con hasta nueve anfitriones.
-  Sin intercambiar direcciones, abrir puertos ni acordar una sala MQTT.
-- **Selector fluido:** ARRIBA/ABAJO mueve el cursor mientras se actualiza la
-  sala; ENTER o SPACE conecta y BREAK vuelve a Setup.
-- **Conexión y salida claras:** CONNECTING aparece antes del emparejamiento;
-  un fallo devuelve al invitado a Setup y una desconexión intencional deja
-  recibir BYE al rival antes de cerrar el túnel.
-- **Nombres correctos:** las cabeceras MOVES del Spectrum distinguen nombres
-  como `AD` y `A_X`.
+- **Encuentra rival y juega desde tu Spectrum.** MATCH añade una sala de
+  jugadores a Spectranext: sin intercambiar IP, abrir puertos del router ni
+  acordar una sala MQTT. Elige a tu rival en Shatranj y conecta.
+- **Crea la partida a tu gusto.** Elige CREATE, tu nombre y si juegas con
+  blancas o negras. Los demás jugadores ven tu nombre y color en la sala.
+- **Únete a un rival que esté esperando.** Elige JOIN para ver la lista de
+  anfitriones y pulsa ENTER o SPACE sobre el jugador al que quieres retar.
+- **Conserva todas las opciones de juego.** MATCH incluye los mismos relojes,
+  chat, retrocesos, guardado/restauración y estadísticas de Shatranj. DIRECT y
+  MQTT siguen conectando los Spectrum con los clientes de escritorio,
+  incluidos los rivales controlados por Stockfish.
 
 MATCH necesita **firmware de Spectranext 1.2 o posterior** y jugadores con
 distintas IP públicas. Los firmwares anteriores compatibles conservan DIRECT
 y MQTT. Siguen disponibles Stockfish, recuperación, estadísticas y partidas
 guardadas.
 
-Consulta el [changelog](CHANGELOG.md) para ver todos los cambios. Este árbol
-prepara la 1.4; el enlace de descarga ofrece la última versión estable publicada.
+Consulta las [notas de la release](https://github.com/IgnacioMonge/shatranj/releases/tag/v1.4)
+para las descargas y el [changelog](CHANGELOG.md) para ver todos los cambios.
 
 ## Índice
 
@@ -205,6 +206,21 @@ conexión directa entre pares no es conveniente, siempre que ambos clientes
 puedan acceder al broker.
 
 ## Galería
+
+### Novedades de la 1.4 — MATCH en Spectranext
+
+Capturas de la release 1.4 en FuseX, con la edición para Spectranext.
+
+<table>
+  <tr>
+    <td align="center" width="50%"><strong>Elige MATCH en Setup</strong><br><img src="docs/screenshots/shatranj-1.4-spectranext-match-setup.png" alt="Configuración de Shatranj 1.4 para Spectranext con JOIN y MATCH seleccionados" width="400"></td>
+    <td align="center" width="50%"><strong>Crea tu propia partida</strong><br><img src="docs/screenshots/shatranj-1.4-spectranext-match-host.png" alt="Anfitrión de Shatranj 1.4 esperando rival en MATCH" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><strong>Encuentra un rival esperando</strong><br><img src="docs/screenshots/shatranj-1.4-spectranext-match-lobby.png" alt="Lista de anfitriones MATCH de Shatranj 1.4 con nombres y colores" width="400"></td>
+    <td align="center" width="50%"><strong>Conectados y jugando</strong><br><img src="docs/screenshots/shatranj-1.4-spectranext-match-game.png" alt="Partida de Shatranj 1.4 entre dos jugadores conectados mediante MATCH" width="400"></td>
+  </tr>
+</table>
 
 ### Novedades de la 1.3
 

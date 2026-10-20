@@ -49,23 +49,23 @@ required.
 
 ## What's new in 1.4 — Open Match
 
-- **Find a Spectranext opponent with MATCH:** CREATE advertises your name
-  and colour; JOIN opens Shatranj's own list of up to nine hosts. No address,
-  port forwarding or MQTT room to exchange.
-- **Responsive host selection:** UP/DOWN moves the cursor while the lobby
-  refreshes; ENTER or SPACE connects, and BREAK returns to Setup.
-- **Clear connection and exit feedback:** CONNECTING appears before pairing;
-  failed connections return the guest to Setup, and intentional disconnects
-  let the peer receive BYE before closing the tunnel.
-- **Correct player names:** Spectrum MOVES headers distinguish names such as
-  `AD` and `A_X`.
+- **Meet and play from your Spectrum.** MATCH brings an opponent lobby to
+  Spectranext: no IP addresses to exchange, router ports to open or MQTT room
+  to agree on. Choose a player in Shatranj and connect.
+- **Host a game your way.** Choose CREATE, your player name and whether you
+  play white or black. Other players see your name and colour in the lobby.
+- **Join a waiting opponent.** Choose JOIN to browse the live host list, then
+  press ENTER or SPACE on the player you want to challenge.
+- **Keep the full game.** MATCH includes the same clocks, chat, takebacks,
+  save/restore and statistics as other Shatranj games. DIRECT and MQTT still
+  connect Spectrums to the desktop clients, including Stockfish opponents.
 
 MATCH needs **Spectranext firmware 1.2 or later** and players on different
 public IP addresses. Older supported firmware keeps DIRECT and MQTT.
 Stockfish, recovery, statistics and existing saved games remain available.
 
-See the [changelog](CHANGELOG.md) for the complete changes. This checkout
-prepares 1.4; the download link serves the latest published stable release.
+See the [release notes](https://github.com/IgnacioMonge/shatranj/releases/tag/v1.4)
+for downloads and the [changelog](CHANGELOG.md) for the complete changes.
 
 ## Contents
 
@@ -194,6 +194,21 @@ Both clients connect to the same broker and room. MQTT is useful when a direct
 peer connection is inconvenient, provided both clients can reach that broker.
 
 ## Gallery
+
+### New in 1.4 — MATCH on Spectranext
+
+Captured from the 1.4 release in FuseX, showing the Spectranext edition.
+
+<table>
+  <tr>
+    <td align="center" width="50%"><strong>Choose MATCH in Setup</strong><br><img src="docs/screenshots/shatranj-1.4-spectranext-match-setup.png" alt="Shatranj 1.4 Spectranext setup with JOIN and MATCH selected" width="400"></td>
+    <td align="center" width="50%"><strong>Host your own game</strong><br><img src="docs/screenshots/shatranj-1.4-spectranext-match-host.png" alt="Shatranj 1.4 MATCH host waiting for an opponent" width="400"></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><strong>Find a waiting opponent</strong><br><img src="docs/screenshots/shatranj-1.4-spectranext-match-lobby.png" alt="Shatranj 1.4 MATCH host list showing player names and colours" width="400"></td>
+    <td align="center" width="50%"><strong>Paired and playing</strong><br><img src="docs/screenshots/shatranj-1.4-spectranext-match-game.png" alt="Shatranj 1.4 game between two players connected through MATCH" width="400"></td>
+  </tr>
+</table>
 
 ### New in 1.3
 
