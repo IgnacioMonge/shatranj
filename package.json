@@ -7,21 +7,21 @@
     },
     {
       "name": "SHATRANJ.tap",
-      "sha256": "4a90b2c319ef15fa5558103037d8cfade03dd79daa185b20f909be0ae74ab198",
-      "size": 42123
+      "sha256": "6b6e27692d89a7693fa5367f03e27164a65ac536c84fd2d0943f8a963d58c82f",
+      "size": 42361
     },
     {
       "name": "SHATRANJ.OVL",
-      "sha256": "a671571890511e1ba281043ce66faebb1f9d223079a0cadb2c0e4372195d3ea7",
-      "size": 41967
+      "sha256": "da3719033cd6b599c60ea67f1584ab5a42e3bed649f2e085847e46faf4cc35c5",
+      "size": 43323
     },
     {
       "name": "SHATRANJ.DAT",
-      "sha256": "43b481bd3f21e197652138ea6660d78d96b38c862d66d8556feef9ab550e303c",
+      "sha256": "8d89337d722f96d13ce022e48bccb9e553b3bfe3a5ea6f2353bb7332cc31b81e",
       "size": 7513
     }
   ],
   "minimum_firmware": "1.0",
   "resource": "Shatranj direct HTTPS",
-  "version": "1.3"
+  "version": "1.4"
 }

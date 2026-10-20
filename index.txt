@@ -1,5 +1,5 @@
 type=file name=boot.zx size=55
-type=file name=SHATRANJ.tap size=42123
-type=file name=SHATRANJ.OVL size=41967
+type=file name=SHATRANJ.tap size=42361
+type=file name=SHATRANJ.OVL size=43323
 type=file name=SHATRANJ.DAT size=7513
 type=file name=package.json size=687
