@@ -15,6 +15,8 @@ details live under [`docs/`](docs/).
 
 ### Removed
 
+- The experimental space demo and its C, Qt and Z80 tests from the source tree
+  and build targets. Shatranj's cursor and board-navigation tests remain.
 - Internal handoffs, audits, planning records, unused documentation images and
   local emulator utilities from the public source tree. Application sources,
   build inputs, tests and release packages are preserved.

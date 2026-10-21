@@ -20,8 +20,6 @@
 /client/** -export-ignore
 /tests -export-ignore
 /tests/** -export-ignore
-/examples -export-ignore
-/examples/** -export-ignore
 /licenses -export-ignore
 /licenses/** -export-ignore
 /.github -export-ignore

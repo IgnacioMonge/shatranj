@@ -263,20 +263,6 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-    # The demonstrator links the productive cursor and its own presentation
-    # binding, without the chess, session, transport or application libraries.
-    add_executable(shatranj-space-demo
-        ../examples/space_demo/desktop.cpp
-        ../examples/space_demo/demo.c
-        ../src/spectrum/ui/cell_cursor.c
-        ../src/common/space/rect.c
-    )
-    target_include_directories(shatranj-space-demo PRIVATE ../src ../examples/space_demo)
-    target_link_libraries(shatranj-space-demo PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
-    set_target_properties(shatranj-space-demo PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
-    add_test(NAME pc-space-demo COMMAND shatranj-space-demo --self-test "${CMAKE_BINARY_DIR}/space-preview")
-    set_tests_properties(pc-space-demo PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
     function(shatranj_add_desktop_test target test_name source)
         add_executable(${target} ${source})
         target_include_directories(${target} PRIVATE ../src)
@@ -424,9 +410,6 @@ if(BUILD_TESTING)
     endforeach()
 
     if(WIN32)
-        # The offscreen plugin has no Windows system-font backend. The native
-        # plugin renders this unshown test widget without opening a window.
-        set_tests_properties(pc-space-demo PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
         # Qt DLLs live outside the build tree; without this, ctest fails with
         # STATUS_DLL_NOT_FOUND (0xc0000135) unless the caller hand-edits PATH.
         set_tests_properties(pc-desktop-session-controller
@@ -441,8 +424,7 @@ if(BUILD_TESTING)
                              pc-mqtt-tx-failure
                              pc-engine-flow
                              pc-piece-renderer
-                             pc-ux-widgets
-                             pc-space-demo PROPERTIES
+                             pc-ux-widgets PROPERTIES
             ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt${QT_VERSION_MAJOR}::Core>"
         )

@@ -53,7 +53,7 @@ recursos y los requisitos de firmware. Puedes pasar `PORT`, `MQTT_HOST`,
 | `src/pc/`, `client/` | Aplicación Qt y entradas de compilación de escritorio |
 | `assets/` | Gráficos, fuentes e iconos del juego |
 | `tools/`, `packaging/` | Generación de recursos, validación y empaquetado |
-| `tests/`, `examples/` | Pruebas de regresión, fixtures y ejemplo gráfico compartido |
+| `tests/` | Pruebas de regresión y fixtures |
 
 ## Referencia
 

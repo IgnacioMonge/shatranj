@@ -1043,34 +1043,15 @@ SPACE_HEADERS := $(wildcard src/common/space/*.h)
 $(BUILD_DIR)/netchesszx_space_rect_test.exe: tests/common/test_space_rect.c $(SPACE_RECT_SRC) $(SPACE_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $< $(SPACE_RECT_SRC) -o $@
 
-SPACE_DEMO_SRC := examples/space_demo/demo.c src/spectrum/ui/cell_cursor.c
-SPACE_DEMO_HEADERS := examples/space_demo/demo.h src/spectrum/ui/cell_cursor.h src/spectrum/ui/space_navigation.h $(SPACE_HEADERS)
-
-$(BUILD_DIR)/netchesszx_space_demo_test.exe: tests/common/test_space_demo.c $(SPACE_DEMO_SRC) $(SPACE_RECT_SRC) $(SPACE_DEMO_HEADERS) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Iexamples/space_demo $< $(SPACE_DEMO_SRC) $(SPACE_RECT_SRC) -o $@
-
-$(BUILD_DIR)/netchesszx_cell_cursor_test.exe: tests/spectrum/test_cell_cursor.c src/spectrum/ui/cell_cursor.c $(SPACE_DEMO_HEADERS) | $(BUILD_DIR)
+$(BUILD_DIR)/netchesszx_cell_cursor_test.exe: tests/spectrum/test_cell_cursor.c src/spectrum/ui/cell_cursor.c src/spectrum/ui/cell_cursor.h src/spectrum/ui/space_navigation.h $(SPACE_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $< src/spectrum/ui/cell_cursor.c -o $@
 
 .PHONY: space-test
-space-test: $(BUILD_DIR)/netchesszx_space_rect_test.exe $(BUILD_DIR)/netchesszx_space_demo_test.exe $(BUILD_DIR)/netchesszx_cell_cursor_test.exe
+space-test: $(BUILD_DIR)/netchesszx_space_rect_test.exe $(BUILD_DIR)/netchesszx_cell_cursor_test.exe
 	./$(BUILD_DIR)/netchesszx_space_rect_test.exe
-	./$(BUILD_DIR)/netchesszx_space_demo_test.exe
 	./$(BUILD_DIR)/netchesszx_cell_cursor_test.exe
 
 test: space-test
-
-.PHONY: space-demo-tap
-space-demo-tap: $(SPACE_DEMO_SRC) $(SPACE_RECT_SRC) $(SPACE_DEMO_HEADERS) examples/space_demo/spectrum.c | $(BUILD_DIR)
-	@mkdir -p $(BUILD_DIR)/space-demo
-	$(ZCC) +zx -vn -startup=31 -clib=sdcc_iy -compiler=sdcc -Cs--no-reg-params -SO3 \
-		-DNETCHESSZX_SDCC_IY -Isrc -Iexamples/space_demo -m \
-		examples/space_demo/spectrum.c $(SPACE_DEMO_SRC) $(SPACE_RECT_SRC) \
-		-o $(BUILD_DIR)/space-demo/SPACEDEMO -create-app
-
-.PHONY: space-demo-check
-space-demo-check: space-demo-tap
-	"$(PYTHON)" tests/tools/test_space_demo_z80.py
 
 $(BUILD_DIR)/netchesszx_ux_interaction_test.exe: tests/spectrum/test_ux_interaction.c $(SPECTRUM_INTERACTION_SRC) src/spectrum/ui/interaction.h src/spectrum/ui/cell_cursor.h src/spectrum/ui/space_navigation.h src/spectrum/app/ux_ports.h $(SPACE_RECT_SRC) $(SPACE_HEADERS) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -DNETCHESSZX_HOST_TEST $< $(SPECTRUM_INTERACTION_SRC) $(SPACE_RECT_SRC) -o $@

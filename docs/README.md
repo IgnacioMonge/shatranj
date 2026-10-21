@@ -52,7 +52,7 @@ passed to Make when building preconfigured Spectrum packages.
 | `src/pc/`, `client/` | Qt application and desktop build entry points |
 | `assets/` | Game graphics, fonts and icons |
 | `tools/`, `packaging/` | Asset generation, validation and release packaging |
-| `tests/`, `examples/` | Regression tests, fixtures and the shared rendering example |
+| `tests/` | Regression tests and fixtures |
 
 ## Reference
 
