@@ -18,6 +18,8 @@ details live under [`docs/`](docs/).
 - Internal handoffs, audits, planning records, unused documentation images and
   local emulator utilities from the public source tree. Application sources,
   build inputs, tests and release packages are preserved.
+- Internal records from published Git history and release tags. Existing
+  clones must be replaced or rebased onto the cleaned history before pushing.
 
 ## [1.4] - 2026-10-21 - Open Match
 
