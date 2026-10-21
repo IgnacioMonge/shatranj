@@ -344,7 +344,7 @@ anfitrión ve `S:STATS  RESTART? Y/N` y el invitado `S:STATS  WAITING
 OPPONENT`: S abre las estadísticas, cualquier tecla vuelve y la Y del
 anfitrión solicita el reinicio. Rechazar la partida nueva, o BREAK, termina
 la sesión para ambos. Qt ofrece **Game stats** a ambos jugadores y
-**Restart Game** al anfitrión. Las [estadísticas](docs/game-stats.md)
+**Restart Game** al anfitrión. Las estadísticas
 incluyen tiempos de turnos completados y capturas; cargar una partida inicia
 una muestra parcial.
 

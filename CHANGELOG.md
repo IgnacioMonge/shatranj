@@ -7,6 +7,18 @@ details live under [`docs/`](docs/).
 
 ## [Unreleased]
 
+### Changed
+
+- Public source archives use an explicit export list. The developer guides
+  focus on building, testing and the source layout, with working public links.
+  Asset tests also run without local emulator launcher descriptors.
+
+### Removed
+
+- Internal handoffs, audits, planning records, unused documentation images and
+  local emulator utilities from the public source tree. Application sources,
+  build inputs, tests and release packages are preserved.
+
 ## [1.4] - 2026-10-21 - Open Match
 
 ### Added

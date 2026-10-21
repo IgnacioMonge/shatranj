@@ -26,8 +26,8 @@ reports deltas without failing on growth. Pass `SIZE_CHECK_FLAGS=--fail-on-growt
 when a branch is expected to be size-neutral or smaller.
 
 `make full-check` is the release gate and always enables `--fail-on-growth`.
-The tracked baseline therefore records the deliberately accepted 1.2 image;
-later growth must be reviewed and re-baselined explicitly.
+The tracked baseline records reviewed size limits; growth beyond them must be
+reviewed and re-baselined explicitly.
 
 Classic has two distinct margins: ordinary resident/BSS growth ends at the
 fixed IM2 pointer at `0xfcff`, while `SP_GAP` includes that pointer through

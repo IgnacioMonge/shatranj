@@ -4,8 +4,8 @@ This is the client-neutral NetChessZX wire contract. Spectrum, PC, and future cl
 
 ## Ownership
 
-`docs/session-core-contract.md` is authoritative: PC executes the canonical
-common reducers; ZX and Next execute the compact Spectrum FSMs. These are the
+PC executes the common reducers in `src/common/session/`; ZX and Next execute
+the compact state machines in `src/spectrum/session/`. These are the
 only two implementation families and must produce the same target-neutral wire
 semantics.
 
@@ -96,7 +96,7 @@ must process these START replies by payload, not by client type. Receivers
 enforce the inbound lateral route for `MOVE`: a `MOVE` received on any other
 topic is inert and does not credit liveness, mutate state, reach the UI, or
 produce a reply. Other payload families retain their current payload-dispatched
-behavior; see `docs/session-core-contract.md`.
+behavior, covered by the cross-client tests in `tests/session/`.
 
 An MQTT host installs a retained CONNECT Last Will on its own `pres_w` or
 `pres_b` topic with payload `F <side> <sid>`. A guest CONNECT has no Will.
@@ -160,15 +160,12 @@ unstarted; the host's journal TMP and checkpoints are unchanged (only its
 unarmed `SHATJRNL.NEW` staging is replaced, as a FILE LOAD would). Older peers
 interoperate because nothing new is sent.
 
-The milestone-1 extension drafted on 2026-09-26 (`GC1` to `NE1`) was
-withdrawn unimplemented; see `docs/game-recovery-experiment.md`.
-
 ## Compatibility Rules
 
 - Parse by payload grammar, not by peer client name.
 - `TAKEBACK`, `DRAW`, `RESET` (including a new game after OVER) and RESTORE approval (`RQ`/`RY`) share a 60-second decision deadline, measured from the first successful request transmission. Transport retries do not restart that deadline. PC uses milliseconds; Spectrum uses elapsed hardware frames at the active 50/60 Hz rate, including busy iterations and counter wrap.
 - On expiry the requester withdraws the decision: `CANCEL TAKEBACK <ply>`, `CANCEL DRAW`, `CANCEL RESET`, or `RN` before `RY`. The receiver closes its pending prompt and rejects without changing the board; the game/session remains current. TAKEBACK cancellation is correlated to its nonzero ply. A duplicate cancellation is harmless. If a TAKEBACK was already applied when cancellation crossed its ACK, the receiver replays the ACK and the requester completes that same undo rather than leaving different boards.
-- The current cancellation exchange requires confirmation where it can race with a board mutation. Exhausted cancellation retries still end the session, including between updated peers; this is an unresolved limitation, not the requested final timeout policy (`docs/handoff.md` §14). Older peers may ignore `CANCEL TAKEBACK <ply>`. Lost links and failed/uncertain transfers retain their existing failure policy; a decision deadline never cancels RESTORE after chunk transmission starts.
+- Cancellation releases the requesting UI after its first transmission and retries in the background. Exhausted cancellation retries never end a live session; a subsequent MOVE commit retires the old withdrawal. Older peers may ignore `CANCEL TAKEBACK <ply>`. Lost links and failed/uncertain transfers retain their existing failure policy; a decision deadline never cancels RESTORE after chunk transmission starts.
 - Control requests (`RESET`, `DRAW`, `TAKEBACK`, `RESIGN`) use bounded reply retries; the human-approval deadline above remains independent. Receivers must treat duplicates idempotently (re-ACK an already-accepted request instead of NACKing or re-prompting, and re-NACK a declined `DRAW` until the position changes).
 - Mixed-version RESTORE: a peer that still treats restore as host-only answers a guest `RQ` with `RN` and does not mutate the board. Host-initiated restore remains interoperable.
 - RESTORE never remaps chess colours. A local save whose `host_color` differs from the current seating is not offered; an incompatible received snapshot is answered with `RN` and leaves the active game unchanged.

@@ -237,14 +237,14 @@ class AboutStructuralTests(unittest.TestCase):
             version,
         )
         self.assertIsNotNone(match)
-        launcher_version_core = f"{match[1]}.{match[2]}.{match[3] or '0'}"
-        descriptor = json.loads(
-            (ROOT / "zxespemu-launchers.json").read_text(encoding="utf-8")
-        )
-        self.assertEqual(
-            descriptor["version"].split("-", 1)[0].split("+", 1)[0],
-            launcher_version_core,
-        )
+        # Local emulator launchers are not part of the public source export.
+        descriptor_path = ROOT / "zxespemu-launchers.json"
+        if descriptor_path.exists():
+            descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                descriptor["version"].split("-", 1)[0].split("+", 1)[0],
+                f"{match[1]}.{match[2]}.{match[3] or '0'}",
+            )
 
         with tempfile.TemporaryDirectory() as temp:
             classic_out = Path(temp) / "classic.dat"

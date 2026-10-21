@@ -26,7 +26,7 @@ muestra las estadísticas sobre el tablero, durante la partida y tras mate,
 ahogado, abandono o tablas, y las oculta al pulsarlo de nuevo; jugadas y chat
 siguen visibles y la página se actualiza tras cada jugada. El anfitrión puede solicitar **Restart Game**, con aceptación del
 invitado; rechazarlo termina la sesión para ambos. Las estadísticas cuentan turnos completados y capturas; cargar o
-restaurar inicia una muestra parcial. Consulta [las métricas](../docs/game-stats.md).
+restaurar inicia una muestra parcial.
 
 1. Selecciona `Direct` o `MQTT` e introduce el endpoint o los datos de sala.
    Opcionalmente pon tu nombre en **Preferencias → Jugador** (hasta diez de `A-Z 0-9 - _`); se recuerda
@@ -131,5 +131,4 @@ PORT=5000 MQTT_HOST=broker.example MQTT_PORT=1883 MQTT_CODE=1234 make tap
 
 En Spectrum, la línea de entrada acepta `/draw`, `/resign` y `/takeback`; FILE
 ofrece guardar y cargar. Las expectativas de protocolo están en el
-[`contrato wire`](../docs/wire-contract.md) y el
-[`contrato de sesión`](../docs/session-core-contract.md).
+[`contrato wire`](../docs/wire-contract.md).

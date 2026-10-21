@@ -89,11 +89,7 @@ the game offers DIRECT and MQTT; the resource minimum remains 1.0.
 
 ## Cartridge validation
 
-Results are recorded in [`hardware-validation.md`](hardware-validation.md).
-On 2026-10-13, on the latest stable cartridge firmware, the direct launch
-passed over LAN HTTP (one download per file) and over HTTPS from GitHub Pages
-with the title screen, and the installer under `install/` passed too. The
-server-off and power-cycle checks were not reported separately. Checklist:
+Check a new package on the cartridge with these steps:
 
 1. LAN HTTP launch (`%fs N`, `%load "boot.zx"`) with no local DAT/OVL.
 2. Stop the server after startup, then check About, a piece-set change, a

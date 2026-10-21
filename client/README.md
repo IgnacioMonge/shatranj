@@ -30,7 +30,7 @@ moves and chat stay visible, and the page updates after every move. The host
 may request **Restart Game**; the guest must consent, and
 declining it ends the session for both.
 Statistics cover completed turns and actual captures in this game; applied
-loads/restores start an empty partial sample. See [the metrics](../docs/game-stats.md).
+loads/restores start an empty partial sample.
 
 1. Select `Direct` or `MQTT` and enter the required endpoint/room settings.
    Optionally set your name in **Preferences → Player** (up to ten of `A-Z 0-9 - _`); it is remembered
@@ -133,6 +133,5 @@ PORT=5000 MQTT_HOST=broker.example MQTT_PORT=1883 MQTT_CODE=1234 make tap
 
 For Spectrum-specific input, the command line accepts `/draw`, `/resign`, and
 `/takeback`; saving and loading are available from the FILE menu. The
-protocol-level expectations remain in the canonical
-[`wire contract`](../docs/wire-contract.md) and
-[`session contract`](../docs/session-core-contract.md).
+protocol-level expectations are documented in the
+[`wire contract`](../docs/wire-contract.md).

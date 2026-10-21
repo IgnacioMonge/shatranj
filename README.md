@@ -330,7 +330,7 @@ game. Spectrum shows the result, then on the next key the host sees
 `S:STATS  RESTART? Y/N` and the guest `S:STATS  WAITING OPPONENT`: S opens
 statistics, any key returns, and the host's Y requests a restart. Declining a
 new game, or BREAK, ends the session for both players. Qt offers
-**Game stats** to both players and **Restart Game** to the host. [Statistics](docs/game-stats.md) include completed-turn times
+**Game stats** to both players and **Restart Game** to the host. Statistics include completed-turn times
 and captured pieces; loaded games start a partial sample.
 
 ### Desktop controls
