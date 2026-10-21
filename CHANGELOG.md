@@ -5,24 +5,6 @@ details live under [`docs/`](docs/).
 
 ---
 
-## [Unreleased]
-
-### Changed
-
-- Public source archives use an explicit export list. The developer guides
-  focus on building, testing and the source layout, with working public links.
-  Asset tests also run without local emulator launcher descriptors.
-
-### Removed
-
-- The experimental space demo and its C, Qt and Z80 tests from the source tree
-  and build targets. Shatranj's cursor and board-navigation tests remain.
-- Internal handoffs, audits, planning records, unused documentation images and
-  local emulator utilities from the public source tree. Application sources,
-  build inputs, tests and release packages are preserved.
-- Internal records from published Git history and release tags. Existing
-  clones must be replaced or rebased onto the cleaned history before pushing.
-
 ## [1.4] - 2026-10-21 - Open Match
 
 ### Added
@@ -34,11 +16,6 @@ details live under [`docs/`](docs/).
   Setup. The two players need different public IP addresses for normal use.
 - MATCH keeps the usual game controls, chat, clocks, save/restore and
   statistics. DIRECT and MQTT remain available across all platforms.
-- Linked BOARD tests cover the Spectranext overlay and ordinary moves on
-  every cartridge build, detecting the known z88dk nightly miscompilation.
-- Windows maintainers can test MATCH with two FuseX instances using the
-  project's local STUN, pairing and optional cartridge proxy tools. The
-  harness uses official FuseX 0.6, including its XFS replacement fixes.
 
 ### Changed
 
@@ -51,30 +28,16 @@ details live under [`docs/`](docs/).
   returns to the lobby after a pairing failure. No substitute host is chosen.
 - Older supported Spectranext firmware keeps DIRECT/MQTT, explains the 1.2
   requirement and opens a saved MATCH configuration as DIRECT.
-- Release tooling can preview Pages before assigning a release date.
-  Windows packaging tests the deployed Windows platform plugin; the main
-  ZXESPEmu descriptor uses 1.4.0. MENU_LOGIC's size reference includes the
-  release text without relaxing memory limits.
-- Classic Setup reuses MENU_CONFIG headings, saving 31 resident bytes with
-  unchanged BSS and stack gap. Spectranext DIRECT links only the controller
-  API it uses; build dependencies track the picker and SDK headers.
-- Maintenance and hardware records consolidate accepted MATCH behavior and
-  retain the remaining physical checks in one list.
 
 ### Fixed
 
-- MATCH cancellation and setup failures release the pending lobby session;
-  switching from hosting to joining removes the old host colour mark.
-  Cancelling a host session restores the cartridge's original name.
-- Intentional Spectranext disconnects let the peer receive the exit message
-  before closing the connection. Established sessions use normal socket
-  teardown; unexpected disconnects retain recovery. Returning to Setup or
-  entering the game clears the host picker without screen residue.
-- Spectrum move-list headers display player names correctly, including
-  names previously confused by a hash collision.
-- Spectranext DIRECT parity tests share the SDK declarations, and the
-  recovery-capture test links the resident helpers it exercises. ABI
-  references include MATCH context and existing helper exports.
+- Cancelling MATCH or recovering from a failed connection no longer leaves
+  a stale lobby entry. Switching from CREATE to JOIN clears the old host
+  colour mark, and cancelling CREATE restores the cartridge's original name.
+- Leaving a Spectranext game lets the opponent receive the exit message
+  before the connection closes. Unexpected disconnects still allow recovery.
+  Leaving the host list no longer leaves fragments of it on the screen.
+- Spectrum move-list headers display player names correctly.
 
 ## [1.3] - 2026-10-13 - Sealed Move
 
@@ -559,6 +522,5 @@ Initial public release of Shatranj for ZX Spectrum 48K and Windows.
 - Direct TCP requires a reachable host; MQTT is the alternative when direct
   routing is unavailable.
 
-[Unreleased]: https://github.com/IgnacioMonge/shatranj/compare/v1.4...main
 [1.4]: https://github.com/IgnacioMonge/shatranj/releases/tag/v1.4
 [1.3]: https://github.com/IgnacioMonge/shatranj/releases/tag/v1.3
